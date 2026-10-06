@@ -1,4 +1,4 @@
-import os
+﻿import os
 from pathlib import Path
 import streamlit as st
 
@@ -267,13 +267,7 @@ def render_prompt_studio_v3():
                     elif modo_sel == "Vistas":
                         progress_holder.info("🛋️ Calculando perspectivas ortogonales 360°...")
                         m_ana = ai_prompt_service_v3.analyze_furniture_for_enhancement(m_bytes)
-                        prompts_vistas = ai_prompt_service_v3.generate_multi_perspective_prompts_v3(
-                            furniture_name=m_name,
-                            fabric_analysis=f_ana,
-                            furniture_analysis=m_ana,
-                            fondo_blanco=fondo_blanco,
-                            hd=hd_toggle
-                        )
+                        prompts_vistas = ai_prompt_service_v3.generate_multi_perspective_prompts_v3(furniture_name=m_name, fabric_analysis=f_ana, furniture_analysis=m_ana, fondo_blanco=fondo_blanco, hd=hd_toggle, notas_vistas_usuario=notas_vistas_usuario)
                         vistas_nombres = [
                             ("vista_de_frente", "vista de frente"),
                             ("vista_lateral", "vista lateral"),
@@ -378,14 +372,7 @@ def render_prompt_studio_v3():
                     elif modo_sel == "Entorno":
                         progress_holder.info("✨ Diseñando entorno minimalista con IA...")
                         m_ana = ai_prompt_service_v3.analyze_furniture_for_enhancement(m_bytes)
-                        prompts_min = ai_prompt_service_v3.generate_minimalist_environment_prompt_v3(
-                            furniture_name=m_name,
-                            fabric_analysis=f_ana,
-                            furniture_analysis=m_ana,
-                            num_furniture_images=num_imgs,
-                            tipo_mueble_usuario=tipo_mueble_usuario,
-                            hd=hd_toggle
-                        )
+                        prompts_min = ai_prompt_service_v3.generate_minimalist_environment_prompt_v3(furniture_name=m_name, fabric_analysis=f_ana, furniture_analysis=m_ana, num_furniture_images=num_imgs, tipo_mueble_usuario=tipo_mueble_usuario, medidas_usuario=medidas_usuario, lugar_casa_usuario=lugar_casa_usuario, hd=hd_toggle)
                         prompts = prompts_min
 
                     st.session_state["last_studio_result_v3"] = {
@@ -472,7 +459,7 @@ def render_prompt_studio_v3():
         st.markdown('<div class="studio-card-title">⚡ Prompts Listos</div>', unsafe_allow_html=True)
         if "last_studio_result_v3" in st.session_state:
             res = st.session_state["last_studio_result_v3"]
-            p_tabs = st.tabs(["🌟 Google AI Studio", "🤖 DALL-E 3", "⚡ Flux / Midjourney"])
+            p_tabs = st.tabs(["Google AI Studio", "DALL-E 3", "Flux / Midjourney", "Razonamiento IA"])
 
             
             with p_tabs[0]:
@@ -528,7 +515,18 @@ def render_prompt_studio_v3():
                 else:
                     p_mj = res["prompts"]["midjourney_v6"]
                     st.text_area("Copia en Discord (Midjourney v6):", value=p_mj, height=300, key="txt_res_m")
-
+            with p_tabs[3]:
+                st.caption("?? Este es el razonamiento interno que Gemini us� para entender el mueble:")
+                st.code(res.get("furniture_analysis", "No hay an�lisis disponible"), language="markdown")
+                if res.get("fabric_analysis"):
+                    st.caption("?? An�lisis de la tela:")
+                    st.code(res.get("fabric_analysis"), language="markdown")
         else:
             st.info("Configura y genera para ver los prompts optimizados.")
         st.markdown('</div>', unsafe_allow_html=True)
+
+
+
+
+
+

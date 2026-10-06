@@ -182,6 +182,7 @@ shadows, drop shadows, reflections, studio lighting, dark background, room envir
         furniture_analysis: Optional[Dict[str, Any]] = None,
         num_furniture_images: int = 1,
         fondo_blanco: bool = True,
+        notas_vistas_usuario: str = "",
         hd: bool = False
     ) -> Dict[str, str]:
         
@@ -222,6 +223,7 @@ TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}.
 {white_bg}
 HARDWARE: {hardware_str}
+USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
 FABRIC (From Image 1): Apply {f_name}. Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism.
 WOOD (From Image 2): Apply {w_name}. Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.
 
@@ -247,6 +249,7 @@ TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}. Preserve original wood/legs.
 {white_bg}
 HARDWARE: {hardware_str}
+USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
 FABRIC (From Image 1): Apply {f_name}. Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism.
 
 Negative Prompt: CGI, 3D render, plastic, generic fabric, loss of weave, suede, velvet, leather, color shift, altered geometry, perspective distortion, floor shadows, grey background."""
@@ -271,6 +274,7 @@ TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}. Preserve original fabric perfectly.
 {white_bg}
 HARDWARE: {hardware_str}
+USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
 WOOD (From Image 1): Apply {w_name}. Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.
 
 Negative Prompt: altered fabric, changed upholstery, CGI, 3D render, plastic, flat wood, altered geometry, perspective distortion, floor shadows, grey background."""
@@ -298,6 +302,7 @@ Hardware constraints: {hardware_str}"""
         fabric_analysis: Optional[Dict[str, Any]] = None,
         furniture_analysis: Optional[Dict[str, Any]] = None,
         fondo_blanco: bool = True,
+        notas_vistas_usuario: str = "",
         hd: bool = False
     ) -> Dict[str, Dict[str, str]]:
         
@@ -334,6 +339,7 @@ CAMERA/GEOMETRY CONSTRAINT: {geo_constraint}
 {white_bg}
 MATERIALS: {mat_str} Preserve all wooden parts.
 HARDWARE: {hardware_str}
+USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
 
 Negative Prompt: CGI, plastic, {neg_extras}, perspective distortion, floor shadows, background objects."""
 
@@ -344,7 +350,8 @@ TOPOLOGY: {geom_struct}.
 CAMERA/GEOMETRY CONSTRAINT: {geo_constraint}
 MATERIALS: {mat_str}
 ENVIRONMENT: {white_bg}
-HARDWARE: {hardware_str}"""
+HARDWARE: {hardware_str}
+USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
 
             p_mj = f"""Commercial luxury product photography, {angle_desc} of {furn_item}, {geom_struct}. {mat_str} {geo_constraint} {hardware_str} isolated on pure solid white background #FFFFFF --no {neg_extras}, perspective distortion, floor shadows, background objects, CGI, 3D render --ar 1:1 --v 6.1 --style raw"""
             
@@ -399,6 +406,7 @@ TASK: Re-color and re-upholster the Target View Image ('{target_name}'). The Tar
 TARGET GEOMETRY: You MUST preserve the exact geometry, structural shape, and camera angle of the Target View Image (Image 2). Do NOT modify the furniture's physical structure. It is a {furn_item}.
 {white_bg}
 HARDWARE: {hardware_str}
+USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
 CRITICAL COLOR/TEXTURE CONSTRAINT: The furniture in the Target View Image MUST be changed to match this exact material: [{materials}]. Paint over the white/wrong color of the Target View Image with the exact hex color, thread pattern, and material finish from Image 1. They must look like the exact same physical product.
 
 Negative Prompt: altered geometry, changed structure, mismatched texture, shadows, drop shadows, floor shadows, background, CGI, plastic, 3D render, generic fabric, keeping the original color of image 2, white color."""
@@ -539,6 +547,9 @@ Output ONLY the text of the prompt."""
         furniture_analysis: Optional[Dict[str, Any]] = None,
         num_furniture_images: int = 1,
         tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        lugar_casa_usuario: str = "",
+        notas_vistas_usuario: str = "",
         api_key: Optional[str] = None,
         hd: bool = False
     ) -> Dict[str, str]:
@@ -617,6 +628,8 @@ CRITICAL CONSTRAINTS:
    - BASE STYLE FOR THIS GENERATION: {random_style}
    - Use warm, neutral, earthy tones (beige, taupe, soft gray, warm plaster, microcement).
    - Place the {furn_item} in its CORRECT NATURAL ROOM (e.g., a dining chair belongs in a dining room, a sofa in a living room, a bed in a bedroom).
+   - EXACT LOCATION: {lugar_casa_usuario if lugar_casa_usuario else "The natural room for this furniture"}
+   - REAL WORLD MEASUREMENTS: {medidas_usuario if medidas_usuario else "Standard realistic proportions"}
    - The environment colors must elegantly contrast with the furniture's color ({f_color} / {existing_materials}) to make the furniture pop.
 5. LIGHTING & CINEMATOGRAPHY: Strictly incorporate the lighting style specified in the BASE STYLE above. Use cinematic descriptions to make it look incredibly realistic.
 6. DEPTH OF FIELD: The background must be 40% blurred (moderate bokeh, f/2.8 lens effect), keeping the furniture perfectly sharp and in focus.
@@ -645,4 +658,9 @@ Output ONLY the text of the prompt without quotes or introductions."""
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
 
 ai_prompt_service_v3 = AIPromptServiceV3()
+
+
+
+
+
 
