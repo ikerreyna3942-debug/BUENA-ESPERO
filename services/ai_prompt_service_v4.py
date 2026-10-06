@@ -330,18 +330,30 @@ Hardware constraints: {hardware_str}"""
         else:
             mat_str = "Upholstery and materials must strictly replicate the authentic fabric weave, texture, and original color of the furniture in the reference image."
 
-        def build_prompts(angle_desc: str, geo_constraint: str, neg_extras: str):
+        def build_prompts(
+            angle_desc: str,
+            geo_constraint: str,
+            neg_extras: str,
+            environment: Optional[str] = None
+        ):
+            prompt_environment = environment or white_bg
+            mj_environment = (
+                "isolated on a pure solid white background #FFFFFF"
+                if not environment
+                else environment.removeprefix("ENVIRONMENT: ")
+            )
+            background_negatives = "" if environment else ", background objects"
             p_ai = f"""SYSTEM: You are an Architectural Visualization Expert and Master Commercial Photographer.
 TASK: Generate a mathematically precise {angle_desc} of the target item.
 TARGET ITEM: {furn_item}.
 TOPOLOGY: {geom_struct}.
 CAMERA/GEOMETRY CONSTRAINT: {geo_constraint}
-{white_bg}
+{prompt_environment}
 MATERIALS: {mat_str} Preserve all wooden parts.
 HARDWARE: {hardware_str}
 USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
 
-Negative Prompt: CGI, plastic, {neg_extras}, perspective distortion, floor shadows, background objects."""
+Negative Prompt: CGI, plastic, {neg_extras}, perspective distortion, floor shadows{background_negatives}."""
 
             p_dalle = f"""{dalle_defense}
 {dalle_shadows}
@@ -349,11 +361,11 @@ Generate a mathematically precise {angle_desc} photograph of a {furn_item}.
 TOPOLOGY: {geom_struct}.
 CAMERA/GEOMETRY CONSTRAINT: {geo_constraint}
 MATERIALS: {mat_str}
-ENVIRONMENT: {white_bg}
+ENVIRONMENT: {prompt_environment}
 HARDWARE: {hardware_str}
 USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
 
-            p_mj = f"""Commercial luxury product photography, {angle_desc} of {furn_item}, {geom_struct}. {mat_str} {geo_constraint} {hardware_str} isolated on pure solid white background #FFFFFF --no {neg_extras}, perspective distortion, floor shadows, background objects, CGI, 3D render --ar 1:1 --v 6.1 --style raw"""
+            p_mj = f"""Commercial luxury product photography, {angle_desc} of {furn_item}, {geom_struct}. {mat_str} {geo_constraint} {hardware_str} {mj_environment} USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"} --no {neg_extras}, perspective distortion, floor shadows{background_negatives}, CGI, 3D render --ar 1:1 --v 6.1 --style raw"""
             
             return {
                 "google_ai_studio": p_ai,
@@ -371,6 +383,16 @@ USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
                 "STRICT ORTHOGONAL SIDE PROFILE (90-DEGREE LATERAL VIEW)",
                 "Camera positioned at a strict 90-degree angle from the side. Full silhouette profile from side edge to side edge. Zero vanishing points.",
                 "front view, 3/4 view, back view, top view, perspective distortion"
+            ),
+            "vista_lateral_derecha": build_prompts(
+                "STRICT ORTHOGONAL RIGHT SIDE PROFILE",
+                "Camera positioned perpendicular to the furniture's right side, showing its full right-side silhouette with zero perspective distortion.",
+                "front view, left side view, 3/4 view, back view, top view"
+            ),
+            "vista_lateral_izquierda": build_prompts(
+                "STRICT ORTHOGONAL LEFT SIDE PROFILE",
+                "Camera positioned perpendicular to the furniture's left side, showing its full left-side silhouette with zero perspective distortion.",
+                "front view, right side view, 3/4 view, back view, top view"
             ),
             "vista_3_4_izquierda": build_prompts(
                 "3/4 ISOMETRIC PERSPECTIVE FACING LEFT",
@@ -391,11 +413,24 @@ USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
                 "3/4 REAR ISOMETRIC PERSPECTIVE (BACK 3/4 VIEW)",
                 "Commercial catalog 3/4 angle viewed from the rear/back corner at 45 degrees, clearly showing the backrest structure, rear tailoring, and back legs.",
                 "front view, front cushions, direct front, top-down"
+            ),
+            "vista_lifestyle": build_prompts(
+                "LIFESTYLE CATALOG VIEW IN A NATURAL ROOM",
+                "Show the complete furniture in a believable, tastefully styled interior while preserving its exact identity, proportions, and camera perspective.",
+                "isolated white background, cutout, unrelated furniture, clutter, text",
+                environment="ENVIRONMENT: Place the furniture in a refined, realistic interior appropriate to its use, with subtle decor, natural soft light, and a visible room context."
             )
         }
 
 
-    def generate_clone_views_prompt_v4(self, target_name: str, furniture_analysis: Optional[Dict[str, Any]] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
+    def generate_clone_views_prompt_v4(
+        self,
+        target_name: str,
+        furniture_analysis: Optional[Dict[str, Any]] = None,
+        fondo_blanco: bool = True,
+        hd: bool = False,
+        notas_vistas_usuario: str = ""
+    ) -> Dict[str, str]:
         ma = furniture_analysis or {}
         furn_item = ma.get("furniture_item", "furniture")
         geom_struct = ma.get("geometric_structure", "original structural geometry")
@@ -423,13 +458,15 @@ Camera/Geometry: Preserve the exact structural topology of the Target View Image
 Lighting: Professional studio lighting.
 Materials: The upholstery MUST be meticulously crafted exactly as: {materials}.
 Environment: {white_bg}
-Hardware constraints: {hardware_str}""",
-            "midjourney_v6": f"Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF. Upholstered exactly in {materials}. {hardware_str} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic --ar 1:1 --v 6.1 --style raw --cw 100"
+Hardware constraints: {hardware_str}
+USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}""",
+            "midjourney_v6": f"Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF. Upholstered exactly in {materials}. {hardware_str} USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else 'None'} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic --ar 1:1 --v 6.1 --style raw --cw 100"
         }
 
 
 
     def generate_dynamic_gemini_clone_prompt(self, ref_bytes: bytes, view_bytes: bytes, api_key: Optional[str] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
+        key = self.get_api_key(api_key)
         if not key:
             fallback = "Please set GEMINI_API_KEY to generate dynamic prompts."
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
@@ -663,10 +700,6 @@ Output ONLY the text of the prompt without quotes or introductions."""
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
 
 ai_prompt_service_v4 = AIPromptServiceV4()
-
-
-
-
 
 
 
