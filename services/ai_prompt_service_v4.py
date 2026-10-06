@@ -36,8 +36,13 @@ class AIPromptServiceV4:
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automático."""
-        models_to_try = ["gemini-3.5-flash", "gemini-3.1-pro-preview"]
+        """Prueba las opciones Flash disponibles antes de devolver un error de cuota."""
+        models_to_try = [
+            "gemini-flash-latest",
+            "gemini-2.5-flash",
+            "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
+        ]
         last_err = None
         for m in models_to_try:
             try:
@@ -467,9 +472,20 @@ USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}""",
 
     def generate_dynamic_gemini_clone_prompt(self, ref_bytes: bytes, view_bytes: bytes, api_key: Optional[str] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
         key = self.get_api_key(api_key)
+        local_prompt = (
+            "Use Image 1 as the exact upholstery color and texture reference, and edit Image 2. "
+            "Preserve the furniture identity, geometry, proportions, camera angle, seams, folds, "
+            "and lighting in Image 2. Reupholster only the upholstered surfaces to match Image 1; "
+            "make the texture follow the furniture's perspective and contours naturally. "
+            + ("Place the furniture on a pure white background without shadows. " if fondo_blanco else "Preserve the existing background. ")
+            + ("Render with high detail and realistic material texture." if hd else "Render as a photorealistic commercial product photograph.")
+        )
         if not key:
-            fallback = "Please set GEMINI_API_KEY to generate dynamic prompts."
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
+            }
             
         try:
             from google import genai
@@ -519,17 +535,31 @@ Output ONLY the text of the prompt. Do not include introductory text or explanat
             }
         except Exception as e:
             print(f"[AIPromptServiceV4] Error generating dynamic prompt: {e}")
-            fallback = f"Error generating dynamic prompt with Gemini: {str(e)}"
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
+            }
 
 
 
     def generate_dynamic_fabric_view_prompt(
         self, fabric_bytes: bytes, view_bytes: bytes, api_key: Optional[str] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
         key = self.get_api_key(api_key)
+        local_prompt = (
+            "Use Image 1 as the exact fabric color, weave, and texture reference. Edit only the "
+            "upholstery on the furniture in Image 2. Preserve its identity, geometry, proportions, "
+            "camera angle, seams, folds, and lighting. Apply the fabric realistically, following "
+            "the furniture's curves and perspective. "
+            + ("Use a pure white background without shadows. " if fondo_blanco else "Preserve the existing background. ")
+            + ("Render with high detail and realistic material texture." if hd else "Render as a photorealistic commercial product photograph.")
+        )
         if not key:
-            fallback = "Please set GEMINI_API_KEY to generate dynamic prompts."
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
+            }
             
         try:
             from google import genai
@@ -579,8 +609,11 @@ Output ONLY the text of the prompt."""
             }
         except Exception as e:
             print(f"[AIPromptServiceV4] Error generating dynamic prompt: {e}")
-            fallback = f"Error generating dynamic prompt with Gemini: {str(e)}"
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
+            }
 
     def generate_minimalist_environment_prompt_v4(
         self,
@@ -596,10 +629,6 @@ Output ONLY the text of the prompt."""
         hd: bool = False
     ) -> Dict[str, str]:
         key = self.get_api_key(api_key)
-        if not key:
-            fallback = "Please set GEMINI_API_KEY to generate minimalist prompts."
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
-            
         fa = fabric_analysis or {}
         ma = furniture_analysis or {}
         f_name = fa.get("name")
@@ -652,6 +681,24 @@ Output ONLY the text of the prompt."""
         ]
         
         random_style = f"{random.choice(architectures)}, illuminated by {random.choice(lightings)}. Subtle background decor: {random.choice(props)}."
+
+        local_prompt = f"""Create a photorealistic, high-end furniture catalog image of {furn_item}.
+Preserve the furniture's exact identity, dimensions, {geom_struct}, and {camera_angle}.
+Upholstery: {f_name}, in {f_color}, with {f_texture}. Match the supplied material faithfully.
+Show the furniture in a wide shot in {lugar_casa_usuario or "a room appropriate for this furniture"}.
+Use realistic proportions ({medidas_usuario or "standard real-world proportions"}).
+Interior: {random_style} Use warm neutral tones that complement and contrast with the furniture.
+Use cinematic natural lighting, keep the furniture sharp, and use moderate background blur.
+{f"Additional instructions: {notas_vistas_usuario}" if notas_vistas_usuario else ""}
+Preserve the furniture's original finish and create a realistic interior appropriate to its use.
+{hardware_str}
+"""
+        if not key:
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --ar 16:9 --v 6.1 --style raw"
+            }
         
         try:
             from google import genai
@@ -696,14 +743,13 @@ Output ONLY the text of the prompt without quotes or introductions."""
             }
         except Exception as e:
             print(f"[AIPromptServiceV4] Error generating minimalist prompt: {e}")
-            fallback = f"Error generating prompt: {str(e)}"
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --ar 16:9 --v 6.1 --style raw"
+            }
 
 ai_prompt_service_v4 = AIPromptServiceV4()
-
-
-
-
 
 
 
