@@ -3,7 +3,7 @@ import sys
 
 def check_file(filename):
     print(f"=== Checking {filename} ===")
-    with open(filename, "r", encoding="utf-8", errors="ignore") as f:
+    with open(filename, "r", encoding="utf-8-sig", errors="ignore") as f:
         code = f.read()
     try:
         tree = ast.parse(code, filename)
@@ -27,7 +27,6 @@ def check_file(filename):
             for arg in node.args.args:
                 assigned.add(arg.arg)
             # Find names loaded before assigned, or not assigned
-            # We can also check specific target variables
             for target in ['medidas_usuario', 'lugar_casa_usuario', 'tipo_mueble_usuario', 'notas_vistas_usuario']:
                 loads = [lineno for name, lineno in loaded if name == target]
                 stores = target in assigned
