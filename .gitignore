@@ -1,38 +1,24 @@
-# Python Bytecode and Cache
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# Virtual Environments
-.venv/
+# Environments
+.env
+.venv
+env/
 venv/
 ENV/
-env/
 env.bak/
 venv.bak/
 
-# Environment Variables & Secrets
-.env
-.env.local
-.env.*.local
-*.key
-*.pem
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 
-# IDE & Editor Settings
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
-*.swp
-*.swo
+# Credentials and secrets
+credentials.json
+.streamlit/secrets.toml
+*cache.json
+datos_general_cache.json
 
-# Operating System Files
+# OS generated files
 .DS_Store
 .DS_Store?
 ._*
@@ -40,12 +26,3 @@ venv.bak/
 .Trashes
 ehthumbs.db
 Thumbs.db
-[Dd]esktop.ini
-
-# Logs and Temporary Runtime Files
-*.log
-logs/
-temp/
-tmp/
-*.tmp
-*.bak
