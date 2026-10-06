@@ -10,7 +10,7 @@ if str(BASE_DIR) not in sys.path:
 try:
     st.set_page_config(
         page_title="Estudio de Prompts e IA",
-        page_icon="ðŸ¤–",
+        page_icon="🤖",
         layout="wide",
         initial_sidebar_state="expanded"
     )
@@ -23,21 +23,21 @@ from modules.prompt_studio_v3 import render_prompt_studio_v3 as render_v3
 from modules.prompt_studio_v4 import render_prompt_studio_v4 as render_v4
 
 def main():
-    st.sidebar.markdown("### ðŸ¤– ESTUDIO DE IA")
+    st.sidebar.markdown("### 🤖 ESTUDIO DE IA")
     st.sidebar.caption("Generador de Prompts y Perspectivas")
     
     st.sidebar.markdown("---")
     version = st.sidebar.radio(
-        "ðŸ“Œ VersiÃ³n del Estudio:",
-        ["V4 Ultimate (Nuevas Casillas)", "V3 Nivel Dios (Recomendado)", "V2 Optimizado", "V1 Clasica Original"]
+        "📌 Versión del estudio:",
+        ["V4 Ultimate (Nuevas Casillas)", "V3 Nivel Dios (Recomendado)", "V2 Optimizado", "V1 Clásica original"]
     )
     st.sidebar.markdown("---")
     
-    # NavegaciÃ³n rÃ¡pida entre aplicaciones de la suite
-    st.sidebar.markdown("### ðŸŒ Suite de Aplicaciones")
+    # Navegación rápida entre aplicaciones de la suite
+    st.sidebar.markdown("### 🌐 Suite de aplicaciones")
     st.sidebar.markdown("""
-    * ðŸ“¦ **[Alta Odoo / CatÃ¡logo](https://aplicaciones2.onrender.com/)**
-    * ðŸ¤– **[Estudio de Prompts IA](/)**
+    * 📦 **[Alta Odoo / Catálogo](https://aplicaciones2.onrender.com/)**
+    * 🤖 **[Estudio de Prompts IA](/)**
     """)
     st.sidebar.markdown("---")
     
@@ -52,6 +52,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
 

@@ -285,19 +285,35 @@ def render_prompt_studio_v4():
                             ("vista_lifestyle", "vista lifestyle con fondo ambiental")
                         ]
                         for key_v, label_v in vistas_nombres:
+                            vista_prompt = prompts_vistas.get(key_v)
+                            if not isinstance(vista_prompt, dict):
+                                continue
                             vistas_data.append({
                                 "name": label_v,
                                 "bytes": None,
-                                "prompt": prompts_vistas[key_v]
+                                "prompt": vista_prompt
                             })
                         
                         def build_all_v4(ai_key):
-                            return (
-                                "=== 1. VISTA DE FRENTE ===\n" + prompts_vistas["vista_de_frente"][ai_key] + "\n\n" +
-                                "=== 2. VISTA LATERAL ===\n" + prompts_vistas["vista_lateral"][ai_key] + "\n\n" +
-                                "=== 3. VISTA 3/4 MIRANDO ALA IZQUIERDA ===\n" + prompts_vistas["vista_3_4_izquierda"][ai_key] + "\n\n" +
-                                "=== 4. VISTA DESDE ARRIBA ===\n" + prompts_vistas["vista_desde_arriba"][ai_key] + "\n\n" +
-                                "=== 5. VISTA 3/4 POSTERIOR ===\n" + prompts_vistas["vista_3_4_posterior"][ai_key]
+                            return "\n\n".join(
+                                f"=== {i}. {vista['name'].upper()} ===\n{vista['prompt'][ai_key]}"
+                                for i, vista in enumerate(vistas_data, start=1)
+                                if vista["prompt"].get(ai_key)
+                            )
+
+                        missing_vistas = [
+                            label_v for key_v, label_v in vistas_nombres
+                            if not isinstance(prompts_vistas.get(key_v), dict)
+                        ]
+                        if missing_vistas:
+                            progress_holder.warning(
+                                "⚠️ Se omitieron vistas no disponibles: "
+                                + ", ".join(missing_vistas)
+                                + ". El resto de los prompts sí se generó."
+                            )
+                        if not vistas_data:
+                            raise RuntimeError(
+                                "Gemini no devolvió ninguna vista válida. Intenta generar de nuevo."
                             )
                         prompts = {
                             "google_ai_studio": build_all_v4("google_ai_studio"),
@@ -525,16 +541,17 @@ def render_prompt_studio_v4():
                     p_mj = res["prompts"]["midjourney_v6"]
                     st.text_area("Copia en Discord (Midjourney v6):", value=p_mj, height=300, key="txt_res_m")
             with p_tabs[3]:
-                st.caption("?? Este es el razonamiento interno que Gemini us� para entender el mueble:")
-                st.code(res.get("furniture_analysis", "No hay an�lisis disponible"), language="markdown")
+                st.caption("🧠 Análisis estructurado del mueble generado por Gemini:")
+                if res.get("furniture_analysis"):
+                    st.json(res["furniture_analysis"])
+                else:
+                    st.info("No hay análisis del mueble disponible para este resultado.")
                 if res.get("fabric_analysis"):
-                    st.caption("?? An�lisis de la tela:")
+                    st.caption("🧵 Análisis de la tela:")
                     st.json(res.get("fabric_analysis", {}))
         else:
             st.info("Configura y genera para ver los prompts optimizados.")
         st.markdown('</div>', unsafe_allow_html=True)
-
-
 
 
 
