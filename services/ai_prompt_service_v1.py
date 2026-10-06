@@ -1,4 +1,4 @@
-import os
+﻿import os
 
 import io
 
@@ -32,7 +32,7 @@ class AIPromptService:
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automático."""
+        """Llama a Gemini con lista de modelos activos y fallback automÃ¡tico."""
         models_to_try = [
             "gemini-flash-latest",
             "gemini-2.5-flash",
@@ -50,14 +50,14 @@ class AIPromptService:
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 1024) -> Image.Image:
-        """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
+        """Optimiza y redimensiona imÃ¡genes para envÃ­o ultra-rÃ¡pido a Gemini."""
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
         return img
 
     def analyze_material(self, sample_bytes: bytes, api_key: Optional[str] = None, material_type: str = "auto") -> Dict[str, Any]:
-        """Analiza una muestra de material (tela o madera) para fotografía comercial de muebles de lujo."""
+        """Analiza una muestra de material (tela o madera) para fotografÃ­a comercial de muebles de lujo."""
         key = self.get_api_key(api_key)
         if not key:
             return {
@@ -74,7 +74,7 @@ class AIPromptService:
             prompt = f"""Analyze this material sample ({material_type}) for luxury furniture product photography.
 Respond strictly in JSON with these keys:
 {{
-  "name": "Short commercial name (e.g. Heathered Salt-and-Pepper Bouclé, Warm Honey Oak Habano, Baker Linen)",
+  "name": "Short commercial name (e.g. Heathered Salt-and-Pepper BouclÃ©, Warm Honey Oak Habano, Baker Linen)",
   "color_description": "Detailed chromatic description of the exact hue, undertones, and flecks in Spanish",
   "texture_detail": "Detailed texture structure description in English (e.g. dense nubby loops over cool grey under-weave / straight vertical grain)",
   "finish_type": "Semi-gloss satin or Matte or Glossy"
@@ -101,7 +101,7 @@ Respond strictly in JSON with these keys:
 
                 "name": f"Muestra ({material_type})",
 
-                "color_description": "tono y matiz idénticos a la imagen de muestra",
+                "color_description": "tono y matiz idÃ©nticos a la imagen de muestra",
 
                 "texture_detail": "fine realistic micro-weave texture with authentic depth",
 
@@ -113,7 +113,7 @@ Respond strictly in JSON with these keys:
 
     def analyze_furniture_for_enhancement(self, furniture_bytes, api_key: Optional[str] = None) -> Dict[str, Any]:
 
-        """Analiza el mueble para generar un prompt de ultra nitidez y desborrosamiento sin alterar color ni geometría."""
+        """Analiza el mueble para generar un prompt de ultra nitidez y desborrosamiento sin alterar color ni geometrÃ­a."""
 
         key = self.get_api_key(api_key)
 
@@ -141,7 +141,7 @@ Respond strictly in valid JSON:
 
 {
 
-  "furniture_item": "Specific furniture piece name and angle (e.g. curved bouclé sofa in 3/4 perspective, wooden dining armchair)",
+  "furniture_item": "Specific furniture piece name and angle (e.g. curved bouclÃ© sofa in 3/4 perspective, wooden dining armchair)",
 
   "camera_angle": "Exact camera perspective and framing (e.g. strict horizontal eye-level side profile, 45-degree elevated isometric view, low-angle frontal shot)",
 
@@ -553,7 +553,7 @@ angled view, perspective view, 3/4 view, side view, front view, isometric, persp
 
         p_lifestyle = f"""INSTRUCTION: Analyze {ref_imgs} of '{furniture_name}' to identify its exact category, precise structural geometry, physical materials, and color.
 
-GENERATE: Place this exact, unmodified furniture piece into a realistic, medium-luxury minimalist interior environment, as if staged in a high-end modern client's home. The furniture must serve as the absolute central focal point of the composition. SIEMPRE cambia de lugar las cosas, la decoración y los muebles de alrededor para que no se vea genérico. Aleatoriza la disposición y varía la composición.
+GENERATE: Place this exact, unmodified furniture piece into a realistic, medium-luxury minimalist interior environment, as if staged in a high-end modern client's home. The furniture must serve as the absolute central focal point of the composition. SIEMPRE cambia de lugar las cosas, la decoraciÃ³n y los muebles de alrededor para que no se vea genÃ©rico. Aleatoriza la disposiciÃ³n y varÃ­a la composiciÃ³n.
 
 ENVIRONMENT & LIGHTING: The surrounding room should feature clean architectural lines, neutral tones, subtle elegant decor, and soft natural lighting coming from large windows.
 
@@ -650,5 +650,6 @@ ai_prompt_service = AIPromptService()
 
 
 ai_prompt_service = AIPromptService()
+
 
 

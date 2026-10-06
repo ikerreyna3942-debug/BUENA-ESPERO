@@ -159,12 +159,17 @@ def render_prompt_studio_v4():
         )
 
         tipo_mueble_usuario = ""
+        medidas_usuario = ""
+        lugar_casa_usuario = ""
+        notas_vistas_usuario = ""
         if modo_sel == "Entorno":
-            st.markdown("##### 🏷️ Ubicación / Tipo de Mueble (Opcional)")
-            tipo_mueble_usuario = st.text_input(
-                "Ayuda a la IA especificando el mueble (ej. Silla de comedor, Sofá, Cama) para que lo ubique en su espacio real:", 
-                key="txt_tipo_mueble_v4"
-            )
+            st.markdown("##### 📍 Contexto del Entorno")
+            tipo_mueble_usuario = st.text_input("Tipo de mueble (ej. Silla de comedor, Sofá, Cama):", key="txt_tipo_mueble_v4")
+            medidas_usuario = st.text_input("Medidas (ej. 200cm largo x 90cm ancho):", key="txt_medidas_v4")
+            lugar_casa_usuario = st.text_input("Lugar de la casa (ej. Sala principal, Habitación luxury):", key="txt_lugar_casa_v4")
+        if modo_sel == "Vistas":
+            st.markdown("##### 📝 Notas Adicionales")
+            notas_vistas_usuario = st.text_area("Notas extras para la IA al generar vistas:", key="txt_notas_vistas_v4")
 
         if modo_sel == "Vistas + Tela y Madera":
             st.markdown("##### 📸 Vistas Adicionales del Mueble")
@@ -520,10 +525,12 @@ def render_prompt_studio_v4():
                 st.code(res.get("furniture_analysis", "No hay an�lisis disponible"), language="markdown")
                 if res.get("fabric_analysis"):
                     st.caption("?? An�lisis de la tela:")
-                    st.code(res.get("fabric_analysis"), language="markdown")
+                    st.json(res.get("fabric_analysis", {}))
         else:
             st.info("Configura y genera para ver los prompts optimizados.")
         st.markdown('</div>', unsafe_allow_html=True)
+
+
 
 
 

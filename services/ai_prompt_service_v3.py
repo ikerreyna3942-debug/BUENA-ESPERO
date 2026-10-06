@@ -1,4 +1,4 @@
-import os
+﻿import os
 import io
 import json
 from pathlib import Path
@@ -8,21 +8,21 @@ from pydantic import BaseModel, Field
 
 # Modelos Pydantic para Structured Outputs Avanzados
 class MaterialAnalysisV3(BaseModel):
-    name: str = Field(description="Nombre comercial corto y premium (ej. Heathered Salt-and-Pepper Bouclé)")
-    color_description: str = Field(description="Descripción cromática exacta (RGB/Hex conceptual) y subtonos")
+    name: str = Field(description="Nombre comercial corto y premium (ej. Heathered Salt-and-Pepper BouclÃ©)")
+    color_description: str = Field(description="DescripciÃ³n cromÃ¡tica exacta (RGB/Hex conceptual) y subtonos")
     texture_detail: str = Field(description="Estructura micro-textil (ej. dense nubby loops over cool grey under-weave)")
-    light_interaction: str = Field(description="Cómo interactúa con la luz (ej. absorbs light, highly reflective, matte satin sheen)")
+    light_interaction: str = Field(description="CÃ³mo interactÃºa con la luz (ej. absorbs light, highly reflective, matte satin sheen)")
 
 class FurnitureAnalysisV3(BaseModel):
-    furniture_item: str = Field(description="Nombre y estilo arquitectónico (ej. mid-century modern curved modular sofa)")
-    camera_angle: str = Field(description="Ángulo de cámara en grados y perspectiva geométrica (ej. 45-degree elevated isometric, strict 0-degree frontal)")
-    lighting_direction: str = Field(description="Dirección exacta de la luz y tipo de sombra (ej. Key light from top-left, soft diffuse fill, gentle drop shadow)")
-    geometric_structure: str = Field(description="Descripción topológica de la forma (ej. sharp 90-degree corners, sweeping organic curves)")
-    existing_materials: str = Field(description="Tapicería y partes rígidas actuales")
+    furniture_item: str = Field(description="Nombre y estilo arquitectÃ³nico (ej. mid-century modern curved modular sofa)")
+    camera_angle: str = Field(description="Ãngulo de cÃ¡mara en grados y perspectiva geomÃ©trica (ej. 45-degree elevated isometric, strict 0-degree frontal)")
+    lighting_direction: str = Field(description="DirecciÃ³n exacta de la luz y tipo de sombra (ej. Key light from top-left, soft diffuse fill, gentle drop shadow)")
+    geometric_structure: str = Field(description="DescripciÃ³n topolÃ³gica de la forma (ej. sharp 90-degree corners, sweeping organic curves)")
+    existing_materials: str = Field(description="TapicerÃ­a y partes rÃ­gidas actuales")
 
 class AIPromptServiceV3:
     def __init__(self):
-        self.default_api_key = "AIzaSyDlWM2_lrP-x-GP2wQrgmLL76Ouz9w7How"
+        self.default_api_key = ""
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -36,7 +36,7 @@ class AIPromptServiceV3:
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automático."""
+        """Llama a Gemini con lista de modelos activos y fallback automÃ¡tico."""
         models_to_try = ["gemini-3.5-flash", "gemini-3.1-pro-preview"]
         last_err = None
         for m in models_to_try:
@@ -48,7 +48,7 @@ class AIPromptServiceV3:
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 800) -> Image.Image:
-        """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
+        """Optimiza y redimensiona imÃ¡genes para envÃ­o ultra-rÃ¡pido a Gemini."""
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -210,7 +210,7 @@ shadows, drop shadows, reflections, studio lighting, dark background, room envir
             hardware_str += " High Definition, 8k, extremely detailed, highly realistic"
         white_bg = self._build_white_isolation_str(fondo_blanco)
 
-        # DALL-E 3 Anti-Plástico
+        # DALL-E 3 Anti-PlÃ¡stico
         dalle_defense = "[ENGINE: Disable CGI, Disable Octane Render, Disable 3D Models, Force 35mm RAW Photography, Force real-world textile micro-imperfections]"
         dalle_shadows = "[SHADOWS: 0% ground shadows, 0% drop shadows, strict digital cutout]"
 
@@ -658,6 +658,7 @@ Output ONLY the text of the prompt without quotes or introductions."""
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
 
 ai_prompt_service_v3 = AIPromptServiceV3()
+
 
 
 

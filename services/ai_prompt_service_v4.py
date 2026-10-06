@@ -22,7 +22,7 @@ class FurnitureAnalysisV4(BaseModel):
 
 class AIPromptServiceV4:
     def __init__(self):
-        self.default_api_key = "AIzaSyDlWM2_lrP-x-GP2wQrgmLL76Ouz9w7How"
+        self.default_api_key = ""
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -658,6 +658,7 @@ Output ONLY the text of the prompt without quotes or introductions."""
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
 
 ai_prompt_service_v4 = AIPromptServiceV4()
+
 
 
 

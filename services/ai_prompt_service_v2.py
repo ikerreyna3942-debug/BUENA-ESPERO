@@ -1,4 +1,4 @@
-import os
+﻿import os
 import io
 import json
 from pathlib import Path
@@ -8,17 +8,17 @@ from pydantic import BaseModel, Field
 
 # Modelos Pydantic para Structured Outputs
 class MaterialAnalysis(BaseModel):
-    name: str = Field(description="Nombre comercial corto (ej. Bouclé Gris Sal y Pimienta, Roble Miel, Baker Linen)")
-    color_description: str = Field(description="Descripción cromática detallada del tono, subtonos y brillos en español")
-    texture_detail: str = Field(description="Descripción de la estructura de la textura en inglés (ej. dense nubby loops, straight vertical grain)")
+    name: str = Field(description="Nombre comercial corto (ej. BouclÃ© Gris Sal y Pimienta, Roble Miel, Baker Linen)")
+    color_description: str = Field(description="DescripciÃ³n cromÃ¡tica detallada del tono, subtonos y brillos en espaÃ±ol")
+    texture_detail: str = Field(description="DescripciÃ³n de la estructura de la textura en inglÃ©s (ej. dense nubby loops, straight vertical grain)")
     finish_type: str = Field(description="Tipo de acabado: Mate, Semi-brillante (Satin), o Brillante (Glossy)")
 
 class FurnitureAnalysis(BaseModel):
-    furniture_item: str = Field(description="Nombre específico y ángulo del mueble (ej. curved bouclé sofa in 3/4 perspective, wooden dining armchair)")
+    furniture_item: str = Field(description="Nombre especÃ­fico y Ã¡ngulo del mueble (ej. curved bouclÃ© sofa in 3/4 perspective, wooden dining armchair)")
     camera_angle: str = Field(description="Perspectiva exacta y encuadre (ej. strict horizontal eye-level side profile, 45-degree elevated isometric)")
-    geometric_structure: str = Field(description="Descripción exacta de la forma estructural (ej. straight 4-seater modular with square edges)")
-    existing_materials: str = Field(description="Descripción de la tapicería y partes de madera existentes")
-    lighting_type: str = Field(description="Iluminación actual de la foto")
+    geometric_structure: str = Field(description="DescripciÃ³n exacta de la forma estructural (ej. straight 4-seater modular with square edges)")
+    existing_materials: str = Field(description="DescripciÃ³n de la tapicerÃ­a y partes de madera existentes")
+    lighting_type: str = Field(description="IluminaciÃ³n actual de la foto")
 
 class AIPromptServiceV2:
     def __init__(self):
@@ -36,7 +36,7 @@ class AIPromptServiceV2:
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automático."""
+        """Llama a Gemini con lista de modelos activos y fallback automÃ¡tico."""
         models_to_try = [
             "gemini-flash-latest",
             "gemini-2.5-flash",
@@ -54,7 +54,7 @@ class AIPromptServiceV2:
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 1024) -> Image.Image:
-        """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
+        """Optimiza y redimensiona imÃ¡genes para envÃ­o ultra-rÃ¡pido a Gemini."""
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -239,7 +239,7 @@ Negative Prompt: altered fabric, changed upholstery, color shift, flat colors, c
         # Imagen 3 prefiere prompts claros y directos.
         
         # 2. ChatGPT (DALL-E 3)
-        # DALL-E 3 no lee las imágenes 1 y 2 literalmente como un ID, así que el prompt debe describir textualmente
+        # DALL-E 3 no lee las imÃ¡genes 1 y 2 literalmente como un ID, asÃ­ que el prompt debe describir textualmente
         prompt_dalle = f"""Generate a photorealistic, ultra-high-definition e-commerce catalog image of a {furn_item}. 
 Crucial Structure: The furniture features {geom_struct} viewed from a {camera_angle}. 
 Material Design: The upholstery must be a highly detailed {f_name} ({f_texture}) in {f_color}. The wooden components (legs, frame) must be {w_name} ({w_texture}) with a {w_finish} finish. 
@@ -249,7 +249,7 @@ Environment: {white_bg} Do not add any shadows under the furniture. It must look
         prompt_mj = f"""Commercial product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_color} {f_texture}, {w_name} wooden legs and frame with {w_finish} finish. Shot from {camera_angle}, studio lighting, highly detailed macro texture, 8k resolution, photorealistic, catalog style --no {bg_neg}, suede, velvet, leather, shadows --ar 1:1 --v 6.1 --style raw"""
 
         return {
-            "google_ai_studio": prompt_ai_studio, # Usable también para Gemini Pro
+            "google_ai_studio": prompt_ai_studio, # Usable tambiÃ©n para Gemini Pro
             "chatgpt_dalle3": prompt_dalle,
             "midjourney_v6": prompt_mj
         }
@@ -358,7 +358,7 @@ Negative Prompt: full view, wide shot, distant camera."""
 
         # Vista ambientado
         p_lifestyle = f"""{base_prompt}
-GENERATE: Place the {furn_item} into a realistic, medium-luxury minimalist interior environment, as if staged in a high-end modern client's home. SIEMPRE cambia de lugar las cosas, la decoración y los muebles de alrededor para que no se vea genérico. Aleatoriza la disposición y varía la composición.
+GENERATE: Place the {furn_item} into a realistic, medium-luxury minimalist interior environment, as if staged in a high-end modern client's home. SIEMPRE cambia de lugar las cosas, la decoraciÃ³n y los muebles de alrededor para que no se vea genÃ©rico. Aleatoriza la disposiciÃ³n y varÃ­a la composiciÃ³n.
 CAMERA CONSTRAINT: Depth of field effect. Foreground macro-sharp, background blurred 60% bokeh. No white background.
 Negative Prompt: white background, studio shot, floating furniture, changed texture, changed color."""
 
@@ -384,3 +384,4 @@ Negative Prompt: white background, studio shot, floating furniture, changed text
 
 
 ai_prompt_service_v2 = AIPromptServiceV2()
+
