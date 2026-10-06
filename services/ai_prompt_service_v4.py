@@ -1,4 +1,4 @@
-import os
+﻿import os
 import io
 import json
 from pathlib import Path
@@ -7,20 +7,20 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 # Modelos Pydantic para Structured Outputs Avanzados
-class MaterialAnalysisV3(BaseModel):
+class MaterialAnalysisV4(BaseModel):
     name: str = Field(description="Nombre comercial corto y premium (ej. Heathered Salt-and-Pepper Bouclé)")
     color_description: str = Field(description="Descripción cromática exacta (RGB/Hex conceptual) y subtonos")
     texture_detail: str = Field(description="Estructura micro-textil (ej. dense nubby loops over cool grey under-weave)")
     light_interaction: str = Field(description="Cómo interactúa con la luz (ej. absorbs light, highly reflective, matte satin sheen)")
 
-class FurnitureAnalysisV3(BaseModel):
+class FurnitureAnalysisV4(BaseModel):
     furniture_item: str = Field(description="Nombre y estilo arquitectónico (ej. mid-century modern curved modular sofa)")
     camera_angle: str = Field(description="Ángulo de cámara en grados y perspectiva geométrica (ej. 45-degree elevated isometric, strict 0-degree frontal)")
     lighting_direction: str = Field(description="Dirección exacta de la luz y tipo de sombra (ej. Key light from top-left, soft diffuse fill, gentle drop shadow)")
     geometric_structure: str = Field(description="Descripción topológica de la forma (ej. sharp 90-degree corners, sweeping organic curves)")
     existing_materials: str = Field(description="Tapicería y partes rígidas actuales")
 
-class AIPromptServiceV3:
+class AIPromptServiceV4:
     def __init__(self):
         self.default_api_key = "AIzaSyDlWM2_lrP-x-GP2wQrgmLL76Ouz9w7How"
 
@@ -57,7 +57,7 @@ class AIPromptServiceV3:
     def analyze_material(self, sample_bytes: bytes, api_key: Optional[str] = None, material_type: str = "auto") -> Dict[str, Any]:
         key = self.get_api_key(api_key)
         if not key:
-            return MaterialAnalysisV3(
+            return MaterialAnalysisV4(
                 name=f"Premium Material ({material_type})",
                 color_description="true neutral color",
                 texture_detail="ultra-detailed high-res texture",
@@ -80,14 +80,14 @@ Pay special attention to how light hits the threads/wood grain."""
                 contents=[prompt, img],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=MaterialAnalysisV3,
+                    response_schema=MaterialAnalysisV4,
                     temperature=0.1
                 )
             )
             return json.loads(res.text)
         except Exception as e:
-            print(f"[AIPromptServiceV3] Error analyzing material: {e}")
-            return MaterialAnalysisV3(
+            print(f"[AIPromptServiceV4] Error analyzing material: {e}")
+            return MaterialAnalysisV4(
                 name=f"Fallback Material ({material_type})",
                 color_description="detected color",
                 texture_detail="detected texture",
@@ -97,7 +97,7 @@ Pay special attention to how light hits the threads/wood grain."""
     def analyze_furniture_for_enhancement(self, furniture_bytes, api_key: Optional[str] = None) -> Dict[str, Any]:
         key = self.get_api_key(api_key)
         if not key:
-            return FurnitureAnalysisV3(
+            return FurnitureAnalysisV4(
                 furniture_item="furniture product",
                 camera_angle="original camera angle",
                 lighting_direction="soft studio lighting",
@@ -126,14 +126,14 @@ CRITICAL: You MUST accurately describe the EXACT color (name, shade, and hex est
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=FurnitureAnalysisV3,
+                    response_schema=FurnitureAnalysisV4,
                     temperature=0.1
                 )
             )
             return json.loads(res.text)
         except Exception as e:
-            print(f"[AIPromptServiceV3] Error analyzing furniture: {e}")
-            return FurnitureAnalysisV3(
+            print(f"[AIPromptServiceV4] Error analyzing furniture: {e}")
+            return FurnitureAnalysisV4(
                 furniture_item="furniture piece",
                 camera_angle="original perspective",
                 lighting_direction="original lighting",
@@ -173,7 +173,7 @@ shadows, drop shadows, reflections, studio lighting, dark background, room envir
             "chatgpt_dalle3": prompt_base
         }
 
-    def generate_material_swap_prompt_v3(
+    def generate_material_swap_prompt_v4(
         self,
         mode: str,
         furniture_name: str,
@@ -296,7 +296,7 @@ Hardware constraints: {hardware_str}"""
             "midjourney_v6": prompt_mj
         }
 
-    def generate_multi_perspective_prompts_v3(
+    def generate_multi_perspective_prompts_v4(
         self,
         furniture_name: str,
         fabric_analysis: Optional[Dict[str, Any]] = None,
@@ -390,7 +390,7 @@ USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
         }
 
 
-    def generate_clone_views_prompt_v3(self, target_name: str, furniture_analysis: Optional[Dict[str, Any]] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
+    def generate_clone_views_prompt_v4(self, target_name: str, furniture_analysis: Optional[Dict[str, Any]] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
         ma = furniture_analysis or {}
         furn_item = ma.get("furniture_item", "furniture")
         geom_struct = ma.get("geometric_structure", "original structural geometry")
@@ -476,7 +476,7 @@ Output ONLY the text of the prompt. Do not include introductory text or explanat
                 "midjourney_v6": generated_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
             }
         except Exception as e:
-            print(f"[AIPromptServiceV3] Error generating dynamic prompt: {e}")
+            print(f"[AIPromptServiceV4] Error generating dynamic prompt: {e}")
             fallback = f"Error generating dynamic prompt with Gemini: {str(e)}"
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
 
@@ -536,11 +536,11 @@ Output ONLY the text of the prompt."""
                 "midjourney_v6": generated_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
             }
         except Exception as e:
-            print(f"[AIPromptServiceV3] Error generating dynamic prompt: {e}")
+            print(f"[AIPromptServiceV4] Error generating dynamic prompt: {e}")
             fallback = f"Error generating dynamic prompt with Gemini: {str(e)}"
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
 
-    def generate_minimalist_environment_prompt_v3(
+    def generate_minimalist_environment_prompt_v4(
         self,
         furniture_name: str,
         fabric_analysis: Optional[Dict[str, Any]] = None,
@@ -653,11 +653,12 @@ Output ONLY the text of the prompt without quotes or introductions."""
                 "midjourney_v6": generated_prompt + " --ar 16:9 --v 6.1 --style raw"
             }
         except Exception as e:
-            print(f"[AIPromptServiceV3] Error generating minimalist prompt: {e}")
+            print(f"[AIPromptServiceV4] Error generating minimalist prompt: {e}")
             fallback = f"Error generating prompt: {str(e)}"
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
 
-ai_prompt_service_v4 = AIPromptServiceV3()
+ai_prompt_service_v4 = AIPromptServiceV4()
+
 
 
 
