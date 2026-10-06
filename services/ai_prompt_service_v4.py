@@ -375,7 +375,12 @@ USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
             "vista_3_4_izquierda": build_prompts(
                 "3/4 ISOMETRIC PERSPECTIVE FACING LEFT",
                 "Classic commercial catalog 3/4 perspective angled 45 degrees, object facing toward the left. Elevated 15 degrees to show depth, seat cushion, and left armrest clearly.",
-                "flat front, flat side, facing right, rear view, bird's-eye"
+                "flat front view, strict side view, back view, top view"
+            ),
+            "vista_3_4_derecha": build_prompts(
+                "3/4 ISOMETRIC PERSPECTIVE FACING RIGHT",
+                "Classic commercial catalog 3/4 perspective angled 45 degrees, object facing toward the right. Elevated 15 degrees to show depth, seat cushion, and right armrest clearly.",
+                "flat front view, strict side view, back view, top view"
             ),
             "vista_desde_arriba": build_prompts(
                 "DIRECT TOP-DOWN CENITAL BIRD'S-EYE VIEW",
@@ -658,6 +663,8 @@ Output ONLY the text of the prompt without quotes or introductions."""
             return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
 
 ai_prompt_service_v4 = AIPromptServiceV4()
+
+
 
 
 

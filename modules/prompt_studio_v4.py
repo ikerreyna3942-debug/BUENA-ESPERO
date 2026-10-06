@@ -276,9 +276,13 @@ def render_prompt_studio_v4():
                         vistas_nombres = [
                             ("vista_de_frente", "vista de frente"),
                             ("vista_lateral", "vista lateral"),
-                            ("vista_3_4_izquierda", "vista 3/4 mirando ala izquierda"),
+                            ("vista_lateral_derecha", "vista lateral (derecha)"),
+                            ("vista_lateral_izquierda", "vista lateral (izquierda)"),
+                            ("vista_3_4_izquierda", "vista 3/4 mirando a la izquierda"),
+                            ("vista_3_4_derecha", "vista 3/4 mirando a la derecha"),
                             ("vista_desde_arriba", "vista desde arriba"),
-                            ("vista_3_4_posterior", "vista 3/4 posterior")
+                            ("vista_3_4_posterior", "vista 3/4 posterior"),
+                            ("vista_lifestyle", "vista lifestyle con fondo ambiental")
                         ]
                         for key_v, label_v in vistas_nombres:
                             vistas_data.append({
@@ -529,6 +533,7 @@ def render_prompt_studio_v4():
         else:
             st.info("Configura y genera para ver los prompts optimizados.")
         st.markdown('</div>', unsafe_allow_html=True)
+
 
 
 
