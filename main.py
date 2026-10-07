@@ -36,8 +36,10 @@ def main():
     # Navegación rápida entre aplicaciones de la suite
     st.sidebar.markdown("### 🌐 Suite de aplicaciones")
     st.sidebar.markdown("""
-    * 📦 **[Alta Odoo / Catálogo](https://aplicaciones2.onrender.com/)**
-    * 🤖 **[Estudio de Prompts IA](/)**
+    * [PROMPT](https://buena-espero.onrender.com)
+    * [BASE DE DATOS](https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849)
+    * [ALTA DE ODO](https://app-vkz2.onrender.com/)
+    * [FOTOS BASE](https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849)
     """)
     st.sidebar.markdown("---")
     
@@ -52,4 +54,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
