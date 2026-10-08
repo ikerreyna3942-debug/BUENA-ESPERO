@@ -4,36 +4,6 @@ import zipfile
 from pathlib import Path
 import streamlit as st
 
-FOLDER_TELAS_DRIVE_ID = "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
-FOLDER_MADERAS_DRIVE_ID = "1Jq2u1A6-xKi1YigUYSIzLauUww_RJ5Lx"
-
-@st.cache_data(ttl=300)
-def cargar_telas_menu_v3():
-    from services.sheets_service import sheets_service
-    return sheets_service.get_drive_folder_files(FOLDER_TELAS_DRIVE_ID, recursive=True)
-
-@st.cache_data(ttl=300)
-def cargar_maderas_menu_v3():
-    from services.sheets_service import sheets_service
-    drive_maderas = sheets_service.get_drive_folder_files(FOLDER_MADERAS_DRIVE_ID, recursive=True)
-    
-    app_dir = Path(__file__).resolve().parent.parent
-    maderas_dir = app_dir / "muestras_madera"
-    local_maderas = []
-    if maderas_dir.exists():
-        for f in sorted(maderas_dir.glob("*.jpg")):
-            clean_name = f.stem.replace("_", " ")
-            local_maderas.append({
-                "id": f.name,
-                "name": clean_name,
-                "filename": f.name,
-                "link": "",
-                "local_path": str(f)
-            })
-    
-    combined = local_maderas + [m for m in drive_maderas if not any(l["name"].upper() == m["name"].upper() for l in local_maderas)]
-    return combined
-
 def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = "cp"):
     """Renderiza un botón que copia el texto al portapapeles nativamente en 1 clic."""
     import json
@@ -79,7 +49,6 @@ def render_prompt_studio_v3():
     if "clear_key_v3" not in st.session_state:
         st.session_state.clear_key_v3 = 0
     from services.ai_prompt_service_v3 import ai_prompt_service_v3
-    from services.sheets_service import sheets_service
 
     st.markdown("""
 <style>
@@ -140,14 +109,6 @@ def render_prompt_studio_v3():
                 st.session_state["clear_key_v3"] = c + 1
                 st.rerun()
 
-    lista_telas = cargar_telas_menu_v3()
-    map_telas = {t["name"].upper(): t for t in lista_telas}
-    opciones_telas = [""] + [t["name"] for t in lista_telas]
-
-    lista_maderas = cargar_maderas_menu_v3()
-    map_maderas = {m["name"].upper(): m for m in lista_maderas}
-    opciones_maderas = [""] + [m["name"] for m in lista_maderas]
-
     col1, col2, col3 = st.columns([1.25, 0.7, 1.45])
 
     tela_bytes = None
@@ -168,7 +129,7 @@ def render_prompt_studio_v3():
         )
 
         st.markdown("---")
-        st.markdown("##### 🛋️ Foto del Mueble Original (Arrastra o sube aquí)")
+        st.markdown("##### 🛋️ Foto del Mueble Original (Arrastra aquí tu foto)")
         mueble_up = st.file_uploader(
             "Arrastra la(s) foto(s) del mueble",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
@@ -183,11 +144,11 @@ def render_prompt_studio_v3():
         if modo_sel == "Entorno":
             st.markdown("##### 📍 Contexto del Entorno")
             tipo_mueble_usuario = st.text_input("Tipo de mueble (ej. Silla de comedor, Sofá modular, Cama king):", key=f"txt_tipo_mueble_v3_{st.session_state.clear_key_v3}")
-            medidas_usuario = st.text_input("Medidas estimadas (ej. 220cm largo x 95cm fondo):", key=f"txt_medidas_v3_{st.session_key_v3}" if hasattr(st, "session_key_v3") else f"txt_medidas_v3_{st.session_state.clear_key_v3}")
+            medidas_usuario = st.text_input("Medidas estimadas (ej. 220cm largo x 95cm fondo):", key=f"txt_medidas_v3_{st.session_state.clear_key_v3}")
             lugar_casa_usuario = st.text_input("Lugar / Habitación (ej. Sala de estar contemporánea, Comedor principal):", key=f"txt_lugar_casa_v3_{st.session_state.clear_key_v3}")
 
         if modo_sel == "Vistas + Tela y Madera":
-            st.markdown("##### 📸 Vistas Adicionales del Mueble")
+            st.markdown("##### 📸 Vistas Adicionales del Mueble (Arrastra aquí)")
             vistas_up = st.file_uploader(
                 "Arrastra las fotos de las vistas a estandarizar",
                 type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
@@ -196,42 +157,28 @@ def render_prompt_studio_v3():
             )
             tela_bytes = None
             madera_bytes = None
+
         elif modo_sel in ["Solo Tela", "Tela + Madera", "Vistas + Tela", "Entorno"]:
-            st.markdown("##### 🧵 Muestra de Tela (Opcional para Entorno)")
-            t_tab1, t_tab2 = st.tabs(["📂 Menú Oficial", "📤 Subir Foto"])
-            with t_tab1:
-                sel_t_nombre = st.selectbox("Elige tela del catálogo:", opciones_telas, key=f"sb_tela_oficial_v3_{st.session_state.clear_key_v3}")
-            with t_tab2:
-                tela_up = st.file_uploader("Arrastra aquí tu foto de tela", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_tela_v3_{st.session_state.clear_key_v3}")
-            
+            st.markdown("##### 🧵 Muestra de Tela (Arrastra aquí tu foto)")
+            tela_up = st.file_uploader(
+                "Arrastra aquí la foto de la muestra de tela",
+                type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
+                key=f"st_tela_v3_{st.session_state.clear_key_v3}"
+            )
             if tela_up:
                 tela_name = tela_up.name
                 tela_bytes = tela_up.getvalue()
-            elif sel_t_nombre:
-                obj_t = map_telas.get(sel_t_nombre.upper())
-                if obj_t and obj_t.get("id"):
-                    tela_name = sel_t_nombre
-                    tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
 
         if modo_sel in ["Solo Madera", "Tela + Madera"]:
-            st.markdown("##### 🪵 Muestra de Madera")
-            m_tab1, m_tab2 = st.tabs(["📂 Menú Oficial", "📤 Subir Foto"])
-            with m_tab1:
-                sel_m_nombre = st.selectbox("Elige madera del catálogo:", opciones_maderas, key=f"sb_madera_oficial_v3_{st.session_state.clear_key_v3}")
-            with m_tab2:
-                madera_up = st.file_uploader("Arrastra aquí tu foto de madera", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_madera_v3_{st.session_state.clear_key_v3}")
-            
+            st.markdown("##### 🪵 Muestra de Madera (Arrastra aquí tu foto)")
+            madera_up = st.file_uploader(
+                "Arrastra aquí la foto de la muestra de madera",
+                type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
+                key=f"st_madera_v3_{st.session_state.clear_key_v3}"
+            )
             if madera_up:
                 madera_name = madera_up.name
                 madera_bytes = madera_up.getvalue()
-            elif sel_m_nombre:
-                obj_m = map_maderas.get(sel_m_nombre.upper())
-                if obj_m:
-                    madera_name = sel_m_nombre
-                    if obj_m.get("local_path") and os.path.exists(obj_m["local_path"]):
-                        madera_bytes = Path(obj_m["local_path"]).read_bytes()
-                    elif obj_m.get("id"):
-                        madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
 
         st.markdown("---")
         st.markdown("##### 💬 Comentarios / Notas adicionales (Opcional)")
@@ -249,9 +196,9 @@ def render_prompt_studio_v3():
             elif modo_sel == "Vistas + Tela y Madera" and not ('vistas_up' in locals() and vistas_up):
                 st.error("⚠️ Sube al menos una vista adicional.")
             elif modo_sel in ["Solo Tela", "Vistas + Tela"] and not tela_bytes:
-                st.error("⚠️ Selecciona o sube una muestra de tela.")
+                st.error("⚠️ Arrastra una muestra de tela.")
             elif modo_sel == "Solo Madera" and not madera_bytes:
-                st.error("⚠️ Selecciona o sube una muestra de madera.")
+                st.error("⚠️ Arrastra una muestra de madera.")
             elif modo_sel == "Tela + Madera" and (not tela_bytes or not madera_bytes):
                 st.error("⚠️ Requiere muestra de tela y madera.")
             else:
@@ -465,10 +412,10 @@ def render_prompt_studio_v3():
                     pass
 
         if tela_bytes:
-            st.image(tela_bytes, caption=f"Tela: {tela_name or 'Seleccionada'}", use_container_width=True)
+            st.image(tela_bytes, caption=f"Tela: {tela_name or 'Cargada'}", use_container_width=True)
 
         if madera_bytes:
-            st.image(madera_bytes, caption=f"Madera: {madera_name or 'Seleccionada'}", use_container_width=True)
+            st.image(madera_bytes, caption=f"Madera: {madera_name or 'Cargada'}", use_container_width=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -532,6 +479,6 @@ def render_prompt_studio_v3():
                     if wa:
                         st.markdown(f"**🪵 Madera:** `{wa.get('name', 'N/A')}` | `{wa.get('color_description', 'N/A')}`")
         else:
-            st.info("👈 Configura los parámetros a la izquierda y presiona **⚡ GENERAR PROMPTS**.")
+            st.info("👈 Arrastra tus fotos a la izquierda y presiona **⚡ GENERAR PROMPTS**.")
 
         st.markdown('</div>', unsafe_allow_html=True)
