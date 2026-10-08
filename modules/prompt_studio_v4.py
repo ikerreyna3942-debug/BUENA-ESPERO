@@ -1,4 +1,6 @@
-﻿import os
+import os
+import io
+import zipfile
 from pathlib import Path
 import streamlit as st
 
@@ -74,7 +76,8 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
     components.html(html_code, height=44)
 
 def render_prompt_studio_v4():
-    if "clear_key_v4" not in st.session_state: st.session_state.clear_key_v4 = 0
+    if "clear_key_v4" not in st.session_state:
+        st.session_state.clear_key_v4 = 0
     from services.ai_prompt_service_v4 import ai_prompt_service_v4
     from services.sheets_service import sheets_service
 
@@ -94,8 +97,8 @@ def render_prompt_studio_v4():
     with c_head_left:
         st.markdown("""
 <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-    <span style="font-size:22px; font-weight:800; color:#F59E0B;">⚡ Estudio Prompts Exitosos</span>
-    <span class="studio-badge">Ultra-Precisión</span>
+    <span style="font-size:22px; font-weight:800; color:#F59E0B;">⚡ Estudio V4 (Ultra-Precisión)</span>
+    <span class="studio-badge">Fidelidad Cromática 100%</span>
 </div>
         """, unsafe_allow_html=True)
         col_comp_btn, col_comp_info = st.columns([1, 2])
@@ -108,16 +111,34 @@ def render_prompt_studio_v4():
                 "materialidad (vetas de madera, tramado de telas premium) y atmósferas minimalistas o cálidas. "
                 "Tu estilo es hiperrealista, fotográfico, elegante, de resolución 8k y renderizado fotorrealista."
             )
-            render_copy_button(sys_prompt, label="comportamiento", key="cp_comp")
+            render_copy_button(sys_prompt, label="Comportamiento", key="cp_comp_v4")
         with col_comp_info:
-            st.info("⚙️ Configuración (AI Studio): Modelo: Nano Banana Pro | Output format: Text | Thinking level: High | Stop sequence: Ninguna | Output length: Max (8192) | Temperatura: 0.0 | Top-P: 0.95")
+            st.info("⚙️ Configuración (AI Studio): Modelo: Nano Banana Pro | Output format: Text | Thinking level: High | Output length: 8192 | Temperatura: 0.0 | Top-P: 0.95")
 
     with c_head_right:
-        if st.button("🗑️ Limpiar Todo", key="btn_clear_studio", use_container_width=True):
-            c = st.session_state.get("clear_key_v4", 0)
-            st.session_state.clear()
-            st.session_state["clear_key_v4"] = c + 1
-            st.rerun()
+        col_dl, col_clr = st.columns(2)
+        with col_dl:
+            if "last_studio_result_v4" in st.session_state:
+                res = st.session_state["last_studio_result_v4"]
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                    prompt_txt = res["prompts"].get("google_ai_studio", "") or res["prompts"].get("chatgpt_dalle3", "")
+                    if prompt_txt:
+                        zip_file.writestr(f"prompt_{res.get('mueble_name', 'generado')}.txt", prompt_txt)
+                st.download_button(
+                    label="📦 Descargar Kit",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"kit_v4_{res.get('mueble_name', 'prompt')}.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    key="btn_dl_kit_v4"
+                )
+        with col_clr:
+            if st.button("🗑️ Limpiar Todo", key="btn_clear_studio_v4", use_container_width=True):
+                c = st.session_state.get("clear_key_v4", 0)
+                st.session_state.clear()
+                st.session_state["clear_key_v4"] = c + 1
+                st.rerun()
 
     lista_telas = cargar_telas_menu_v4()
     map_telas = {t["name"].upper(): t for t in lista_telas}
@@ -143,16 +164,13 @@ def render_prompt_studio_v4():
             ["Solo Tela", "Solo Madera", "Tela + Madera", "Solo mueble", "Vistas", "Vistas + Tela y Madera", "Vistas + Tela", "Entorno"],
             horizontal=True,
             label_visibility="collapsed",
-            key="studio_mode_radio_v4"
+            key=f"studio_mode_radio_v4_{st.session_state.clear_key_v4}"
         )
-        
-        fondo_blanco = st.toggle("⬜ Extraer Mueble (Fondo Blanco)", value=True, help="Le ordena a la IA extraer el mueble, preservando color, textura y geometría, colocándolo sobre blanco puro sin sombras ni reflejos.")
-        hd_toggle = st.toggle("📺 Alta Definición (HD)", value=False)
 
         st.markdown("---")
-        st.markdown("##### 🛋️ Foto del Mueble Original")
+        st.markdown("##### 🛋️ Foto del Mueble Original (Arrastra o sube aquí)")
         mueble_up = st.file_uploader(
-            "",
+            "Arrastra la(s) foto(s) del mueble",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
             key=f"st_mueble_v4_{st.session_state.clear_key_v4}",
             accept_multiple_files=True
@@ -161,27 +179,28 @@ def render_prompt_studio_v4():
         tipo_mueble_usuario = ""
         medidas_usuario = ""
         lugar_casa_usuario = ""
-        notas_vistas_usuario = ""
+        
         if modo_sel == "Entorno":
             st.markdown("##### 📍 Contexto del Entorno")
-            tipo_mueble_usuario = st.text_input("Tipo de mueble (ej. Silla de comedor, Sofá, Cama):", key="txt_tipo_mueble_v4")
-            medidas_usuario = st.text_input("Medidas (ej. 200cm largo x 90cm ancho):", key="txt_medidas_v4")
-            lugar_casa_usuario = st.text_input("Lugar de la casa (ej. Sala principal, Habitación luxury):", key="txt_lugar_casa_v4")
-        if modo_sel == "Vistas":
-            st.markdown("##### 📝 Notas Adicionales")
-            notas_vistas_usuario = st.text_area("Notas extras para la IA al generar vistas:", key="txt_notas_vistas_v4")
+            tipo_mueble_usuario = st.text_input("Tipo de mueble (ej. Silla de comedor, Sofá modular, Cama king):", key=f"txt_tipo_mueble_v4_{st.session_state.clear_key_v4}")
+            medidas_usuario = st.text_input("Medidas estimadas (ej. 220cm largo x 95cm fondo):", key=f"txt_medidas_v4_{st.session_state.clear_key_v4}")
+            lugar_casa_usuario = st.text_input("Lugar / Habitación (ej. Sala de estar contemporánea, Comedor principal):", key=f"txt_lugar_casa_v4_{st.session_state.clear_key_v4}")
 
         if modo_sel == "Vistas + Tela y Madera":
             st.markdown("##### 📸 Vistas Adicionales del Mueble")
-            vistas_up = st.file_uploader("Sube las fotos de las vistas que quieres estandarizar", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_vistas_v4_{st.session_state.clear_key_v4}", accept_multiple_files=True)
+            vistas_up = st.file_uploader(
+                "Arrastra las fotos de las vistas a estandarizar",
+                type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
+                key=f"st_vistas_v4_{st.session_state.clear_key_v4}",
+                accept_multiple_files=True
+            )
             tela_bytes = None
             madera_bytes = None
         elif modo_sel in ["Solo Tela", "Tela + Madera", "Vistas + Tela", "Entorno"]:
-            st.markdown("##### 🧵 2. Muestra de Tela (Opcional para Entorno)")
-
+            st.markdown("##### 🧵 Muestra de Tela (Opcional para Entorno)")
             t_tab1, t_tab2 = st.tabs(["📂 Menú Oficial", "📤 Subir Foto"])
             with t_tab1:
-                sel_t_nombre = st.selectbox("Elige tela del catálogo:", opciones_telas, key="sb_tela_oficial_v4")
+                sel_t_nombre = st.selectbox("Elige tela del catálogo:", opciones_telas, key=f"sb_tela_oficial_v4_{st.session_state.clear_key_v4}")
             with t_tab2:
                 tela_up = st.file_uploader("Arrastra aquí tu foto de tela", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_tela_v4_{st.session_state.clear_key_v4}")
             
@@ -194,12 +213,11 @@ def render_prompt_studio_v4():
                     tela_name = sel_t_nombre
                     tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
 
-
         if modo_sel in ["Solo Madera", "Tela + Madera"]:
             st.markdown("##### 🪵 Muestra de Madera")
             m_tab1, m_tab2 = st.tabs(["📂 Menú Oficial", "📤 Subir Foto"])
             with m_tab1:
-                sel_m_nombre = st.selectbox("Elige madera del catálogo:", opciones_maderas, key="sb_madera_oficial_v4")
+                sel_m_nombre = st.selectbox("Elige madera del catálogo:", opciones_maderas, key=f"sb_madera_oficial_v4_{st.session_state.clear_key_v4}")
             with m_tab2:
                 madera_up = st.file_uploader("Arrastra aquí tu foto de madera", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_madera_v4_{st.session_state.clear_key_v4}")
             
@@ -215,17 +233,25 @@ def render_prompt_studio_v4():
                     elif obj_m.get("id"):
                         madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
 
+        st.markdown("---")
+        st.markdown("##### 💬 Comentarios / Notas adicionales (Opcional)")
+        notas_usuario = st.text_area(
+            "Indica detalles específicos para la IA (si está vacío, no afectará):",
+            placeholder="Ej: Mantener cojines en tono marfil, respetar las patas cónicas de madera clara...",
+            key=f"txt_notas_usuario_v4_{st.session_state.clear_key_v4}"
+        )
+
         st.markdown("<br>", unsafe_allow_html=True)
 
         if st.button("⚡ GENERAR PROMPTS", type="primary", use_container_width=True, key="btn_gen_prompts_v4"):
             if not mueble_up:
                 st.error("⚠️ Sube la foto del mueble primero.")
-            elif modo_sel == "Vistas + Tela y Madera" and not vistas_up:
+            elif modo_sel == "Vistas + Tela y Madera" and not ('vistas_up' in locals() and vistas_up):
                 st.error("⚠️ Sube al menos una vista adicional.")
             elif modo_sel in ["Solo Tela", "Vistas + Tela"] and not tela_bytes:
-                st.error("⚠️ Selecciona una tela.")
+                st.error("⚠️ Selecciona o sube una muestra de tela.")
             elif modo_sel == "Solo Madera" and not madera_bytes:
-                st.error("⚠️ Selecciona una madera.")
+                st.error("⚠️ Selecciona o sube una muestra de madera.")
             elif modo_sel == "Tela + Madera" and (not tela_bytes or not madera_bytes):
                 st.error("⚠️ Requiere muestra de tela y madera.")
             else:
@@ -250,11 +276,12 @@ def render_prompt_studio_v4():
                         progress_holder.info("🪵 Analizando veta y textura de la madera...")
                         w_ana = ai_prompt_service_v4.analyze_material(madera_bytes, material_type="wood")
                     
-                    elif modo_sel == "Solo mueble":
-                        progress_holder.info("🔄 Analizando mueble para extracción...")
+                    if modo_sel == "Solo mueble":
+                        progress_holder.info("🔄 Analizando mueble para extracción en fondo blanco...")
                         m_ana = ai_prompt_service_v4.analyze_furniture_for_enhancement(m_bytes)
-                        prompts = ai_prompt_service_v4.generate_extraction_prompt(m_name, m_ana)
-                    if modo_sel in ["Solo Tela", "Solo Madera", "Tela + Madera"]:
+                        prompts = ai_prompt_service_v4.generate_extraction_prompt(m_name, m_ana, notas_usuario=notas_usuario)
+
+                    elif modo_sel in ["Solo Tela", "Solo Madera", "Tela + Madera"]:
                         progress_holder.info("🛋️ Analizando geometría del mueble...")
                         m_ana = ai_prompt_service_v4.analyze_furniture_for_enhancement(m_bytes)
                         mode_map = {"Solo Tela": "fabric_only", "Solo Madera": "wood_only", "Tela + Madera": "dual"}
@@ -265,14 +292,18 @@ def render_prompt_studio_v4():
                             wood_analysis=w_ana,
                             furniture_analysis=m_ana,
                             num_furniture_images=num_imgs,
-                            fondo_blanco=fondo_blanco,
-                            hd=hd_toggle
+                            notas_usuario=notas_usuario
                         )
                     
                     elif modo_sel == "Vistas":
                         progress_holder.info("🛋️ Calculando perspectivas ortogonales 360°...")
                         m_ana = ai_prompt_service_v4.analyze_furniture_for_enhancement(m_bytes)
-                        prompts_vistas = ai_prompt_service_v4.generate_multi_perspective_prompts_v4(furniture_name=m_name, fabric_analysis=f_ana, furniture_analysis=m_ana, fondo_blanco=fondo_blanco, hd=hd_toggle, notas_vistas_usuario=notas_vistas_usuario)
+                        prompts_vistas = ai_prompt_service_v4.generate_multi_perspective_prompts_v4(
+                            furniture_name=m_name,
+                            fabric_analysis=f_ana,
+                            furniture_analysis=m_ana,
+                            notas_usuario=notas_usuario
+                        )
                         vistas_nombres = [
                             ("vista_de_frente", "vista de frente"),
                             ("vista_lateral", "vista lateral"),
@@ -301,20 +332,6 @@ def render_prompt_studio_v4():
                                 if vista["prompt"].get(ai_key)
                             )
 
-                        missing_vistas = [
-                            label_v for key_v, label_v in vistas_nombres
-                            if not isinstance(prompts_vistas.get(key_v), dict)
-                        ]
-                        if missing_vistas:
-                            progress_holder.warning(
-                                "⚠️ Se omitieron vistas no disponibles: "
-                                + ", ".join(missing_vistas)
-                                + ". El resto de los prompts sí se generó."
-                            )
-                        if not vistas_data:
-                            raise RuntimeError(
-                                "Gemini no devolvió ninguna vista válida. Intenta generar de nuevo."
-                            )
                         prompts = {
                             "google_ai_studio": build_all_v4("google_ai_studio"),
                             "chatgpt_dalle3": build_all_v4("chatgpt_dalle3"),
@@ -332,7 +349,7 @@ def render_prompt_studio_v4():
                             return v_file, ai_prompt_service_v4.generate_dynamic_fabric_view_prompt(
                                 fabric_bytes=fab_bytes,
                                 view_bytes=v_file.getvalue(),
-                                fondo_blanco=fondo_blanco
+                                notas_usuario=notas_usuario
                             )
                             
                         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -350,7 +367,7 @@ def render_prompt_studio_v4():
                             result = ""
                             for i, p in enumerate(prompts_vistas):
                                 result += f"=== PROMPT PARA VISTA {i+1} ===\n{p[ai_key]}\n\n"
-                            return result
+                            return result.strip()
 
                         prompts = {
                             "google_ai_studio": build_tela_vistas("google_ai_studio"),
@@ -368,7 +385,7 @@ def render_prompt_studio_v4():
                             return v_file, ai_prompt_service_v4.generate_dynamic_gemini_clone_prompt(
                                 ref_bytes=m_bytes[0],
                                 view_bytes=v_file.getvalue(),
-                                fondo_blanco=fondo_blanco
+                                notas_usuario=notas_usuario
                             )
                             
                         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -386,7 +403,7 @@ def render_prompt_studio_v4():
                             result = ""
                             for i, p in enumerate(prompts_vistas):
                                 result += f"=== PROMPT PARA VISTA {i+1} ===\n{p[ai_key]}\n\n"
-                            return result
+                            return result.strip()
 
                         prompts = {
                             "google_ai_studio": build_clones("google_ai_studio"),
@@ -395,10 +412,18 @@ def render_prompt_studio_v4():
                         }
 
                     elif modo_sel == "Entorno":
-                        progress_holder.info("✨ Diseñando entorno minimalista con IA...")
+                        progress_holder.info("✨ Diseñando entorno arquitectónico con IA...")
                         m_ana = ai_prompt_service_v4.analyze_furniture_for_enhancement(m_bytes)
-                        prompts_min = ai_prompt_service_v4.generate_minimalist_environment_prompt_v4(furniture_name=m_name, fabric_analysis=f_ana, furniture_analysis=m_ana, num_furniture_images=num_imgs, tipo_mueble_usuario=tipo_mueble_usuario, medidas_usuario=medidas_usuario, lugar_casa_usuario=lugar_casa_usuario, hd=hd_toggle)
-                        prompts = prompts_min
+                        prompts = ai_prompt_service_v4.generate_minimalist_environment_prompt_v4(
+                            furniture_name=m_name,
+                            fabric_analysis=f_ana,
+                            furniture_analysis=m_ana,
+                            num_furniture_images=num_imgs,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            lugar_casa_usuario=lugar_casa_usuario,
+                            notas_usuario=notas_usuario
+                        )
 
                     st.session_state["last_studio_result_v4"] = {
                         "vistas_data": vistas_data,
@@ -422,9 +447,7 @@ def render_prompt_studio_v4():
             for f in mueble_up:
                 try:
                     f_name = getattr(f, "name", None) or (f.get("name") if isinstance(f, dict) else "Mueble")
-                    if isinstance(f, dict) and "bytes" in f:
-                        f_bytes = f["bytes"]
-                    elif hasattr(f, "getvalue"):
+                    if hasattr(f, "getvalue"):
                         f_bytes = f.getvalue()
                     elif hasattr(f, "read"):
                         f_bytes = f.read()
@@ -432,131 +455,83 @@ def render_prompt_studio_v4():
                         f_bytes = f
                     st.image(f_bytes, caption=f"Mueble: {f_name}", use_container_width=True)
                 except Exception:
-                    st.caption(f"🖼️ Mueble cargado")
+                    st.caption("🖼️ Mueble cargado")
 
-        if "st_vistas_v4" in st.session_state and st.session_state["st_vistas_v4"]:
-            for f in st.session_state["st_vistas_v4"]:
+        if 'vistas_up' in locals() and vistas_up:
+            for f in vistas_up:
                 try:
-                    f_name = getattr(f, "name", None) or (f.get("name") if isinstance(f, dict) else "Vista")
-                    if isinstance(f, dict) and "bytes" in f:
-                        f_bytes = f["bytes"]
-                    elif hasattr(f, "getvalue"):
-                        f_bytes = f.getvalue()
-                    elif hasattr(f, "read"):
-                        f_bytes = f.read()
-                    else:
-                        f_bytes = f
-                    st.image(f_bytes, caption=f"Vista: {f_name}", use_container_width=True)
+                    st.image(f.getvalue(), caption=f"Vista: {f.name}", use_container_width=True)
                 except Exception:
-                    st.caption(f"🖼️ Vista cargada")
+                    pass
 
         if tela_bytes:
-            try:
-                st.image(tela_bytes, caption=f"Muestra Tela: {tela_name}", use_container_width=True)
-            except Exception:
-                st.caption(f"🧵 Tela: {tela_name}")
+            st.image(tela_bytes, caption=f"Tela: {tela_name or 'Seleccionada'}", use_container_width=True)
 
         if madera_bytes:
-            try:
-                st.image(madera_bytes, caption=f"Muestra Madera: {madera_name}", use_container_width=True)
-            except Exception:
-                st.caption(f"🪵 Madera: {madera_name}")
-        
-        if "last_studio_result_v4" in st.session_state:
-            res = st.session_state["last_studio_result_v4"]
-            st.markdown("---")
-            st.markdown("##### 🔬 Análisis Fotogramétrico")
-            if res.get("furniture_analysis"):
-                ma = res["furniture_analysis"]
-                st.markdown(f"<span class='meta-pill'>🎥 Ángulo: {ma.get('camera_angle', '')}</span>", unsafe_allow_html=True)
-                st.markdown(f"<span class='meta-pill'>💡 Luz: {ma.get('lighting_direction', '')}</span>", unsafe_allow_html=True)
-                st.markdown(f"<span class='meta-pill'>📐 Topología: {ma.get('geometric_structure', '')}</span>", unsafe_allow_html=True)
-            if res.get("fabric_analysis"):
-                fa = res["fabric_analysis"]
-                st.markdown(f"<span class='meta-pill'>🎨 Reflexión Tela: {fa.get('light_interaction', '')}</span>", unsafe_allow_html=True)
-            if res.get("wood_analysis"):
-                wa = res["wood_analysis"]
-                st.markdown(f"<span class='meta-pill'>🪵 Reflexión Madera: {wa.get('light_interaction', '')}</span>", unsafe_allow_html=True)
+            st.image(madera_bytes, caption=f"Madera: {madera_name or 'Seleccionada'}", use_container_width=True)
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col3:
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
-        st.markdown('<div class="studio-card-title">⚡ Prompts Listos</div>', unsafe_allow_html=True)
+        st.markdown('<div class="studio-card-title">✨ 3. Prompts Generados</div>', unsafe_allow_html=True)
+
         if "last_studio_result_v4" in st.session_state:
             res = st.session_state["last_studio_result_v4"]
-            p_tabs = st.tabs(["Google AI Studio", "DALL-E 3", "Flux / Midjourney", "Razonamiento IA"])
+            v_data = res.get("vistas_data", [])
+            prompts = res.get("prompts", {})
 
-            
-            with p_tabs[0]:
-                if res.get("vistas_data"):
-                    st.caption(f"💡 Se generaron {len(res['vistas_data'])} vistas individuales. Copia la vista que necesites:")
-                    for i, vd in enumerate(res["vistas_data"]):
-                        st.markdown(f"##### {vd['name']}")
-                        if vd.get("bytes"):
-                            col_img, col_txt = st.columns([1, 2])
-                            with col_img:
-                                st.image(vd["bytes"], caption=vd["name"], use_container_width=True)
-                            with col_txt:
-                                st.code(vd["prompt"]["google_ai_studio"], language="markdown")
-                        else:
-                            st.code(vd["prompt"]["google_ai_studio"], language="markdown")
-                        st.markdown("---")
-                else:
-                    p_google = res["prompts"]["google_ai_studio"]
-                    st.text_area("Copia en Google AI Studio (Imagen 3) o Gemini Advanced:", value=p_google, height=300, key="txt_res_g")
+            if v_data:
+                st.markdown(f"#### 👁️ Vistas Disponibles ({len(v_data)})")
+                vista_tabs = st.tabs([f"{v['name'].title()}" for v in v_data])
+                for idx, v_item in enumerate(v_data):
+                    with vista_tabs[idx]:
+                        if v_item.get("bytes"):
+                            st.image(v_item["bytes"], caption=v_item["name"], use_container_width=True)
+                        p_obj = v_item["prompt"]
+                        st.markdown("###### 🌐 Google AI Studio / Gemini")
+                        st.text_area(f"AI Studio ({v_item['name']})", p_obj.get("google_ai_studio", ""), height=130, key=f"txt_ais_{idx}_v4")
+                        render_copy_button(p_obj.get("google_ai_studio", ""), label="📋 Copiar Prompt AI Studio", key=f"cp_ais_{idx}_v4")
+                        
+                        st.markdown("###### 🤖 ChatGPT (DALL-E 3)")
+                        st.text_area(f"DALL-E 3 ({v_item['name']})", p_obj.get("chatgpt_dalle3", ""), height=100, key=f"txt_dal_{idx}_v4")
+                        render_copy_button(p_obj.get("chatgpt_dalle3", ""), label="📋 Copiar Prompt DALL-E", key=f"cp_dal_{idx}_v4")
 
-            with p_tabs[1]:
-                if res.get("vistas_data"):
-                    st.caption(f"💡 Se generaron {len(res['vistas_data'])} vistas individuales para DALL-E 3:")
-                    for i, vd in enumerate(res["vistas_data"]):
-                        st.markdown(f"##### {vd['name']}")
-                        if vd.get("bytes"):
-                            col_img, col_txt = st.columns([1, 2])
-                            with col_img:
-                                st.image(vd["bytes"], caption=vd["name"], use_container_width=True)
-                            with col_txt:
-                                st.code(vd["prompt"]["chatgpt_dalle3"], language="markdown")
-                        else:
-                            st.code(vd["prompt"]["chatgpt_dalle3"], language="markdown")
-                        st.markdown("---")
-                else:
-                    p_dalle = res["prompts"]["chatgpt_dalle3"]
-                    st.text_area("Copia en ChatGPT (DALL-E 3):", value=p_dalle, height=300, key="txt_res_d")
+                st.markdown("---")
+                st.markdown("#### 📋 Todos los Prompts Juntos")
+                p_all_ai = prompts.get("google_ai_studio", "")
+                st.text_area("Todos los prompts (AI Studio):", p_all_ai, height=180, key="txt_all_ais_v4")
+                render_copy_button(p_all_ai, label="📋 Copiar Todos los Prompts", key="cp_all_v4")
+            else:
+                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
+                with p_tab1:
+                    p_txt = prompts.get("google_ai_studio", "")
+                    st.text_area("Prompt Google AI Studio / Gemini:", p_txt, height=220, key="txt_res_ais_v4")
+                    render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key="cp_res_ais_v4")
+                with p_tab2:
+                    p_dalle = prompts.get("chatgpt_dalle3", "")
+                    st.text_area("Prompt ChatGPT / DALL-E 3:", p_dalle, height=200, key="txt_res_dal_v4")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key="cp_res_dal_v4")
+                with p_tab3:
+                    p_mj = prompts.get("midjourney_v6", "")
+                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=200, key="txt_res_mj_v4")
+                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key="cp_res_mj_v4")
 
-            with p_tabs[2]:
-                if res.get("vistas_data"):
-                    st.caption(f"💡 Se generaron {len(res['vistas_data'])} vistas individuales para Midjourney:")
-                    for i, vd in enumerate(res["vistas_data"]):
-                        st.markdown(f"##### {vd['name']}")
-                        if vd.get("bytes"):
-                            col_img, col_txt = st.columns([1, 2])
-                            with col_img:
-                                st.image(vd["bytes"], caption=vd["name"], use_container_width=True)
-                            with col_txt:
-                                st.code(vd["prompt"]["midjourney_v6"], language="markdown")
-                        else:
-                            st.code(vd["prompt"]["midjourney_v6"], language="markdown")
-                        st.markdown("---")
-                else:
-                    p_mj = res["prompts"]["midjourney_v6"]
-                    st.text_area("Copia en Discord (Midjourney v6):", value=p_mj, height=300, key="txt_res_m")
-            with p_tabs[3]:
-                st.caption("🧠 Análisis estructurado del mueble generado por Gemini:")
-                if res.get("furniture_analysis"):
-                    st.json(res["furniture_analysis"])
-                else:
-                    st.info("No hay análisis del mueble disponible para este resultado.")
-                if res.get("fabric_analysis"):
-                    st.caption("🧵 Análisis de la tela:")
-                    st.json(res.get("fabric_analysis", {}))
+            # Metadatos del análisis
+            fa = res.get("fabric_analysis")
+            wa = res.get("wood_analysis")
+            ma = res.get("furniture_analysis")
+            if fa or wa or ma:
+                with st.expander("🔍 Ver Análisis de Gemini Vision", expanded=False):
+                    if ma:
+                        st.markdown(f"**🛋️ Mueble:** `{ma.get('furniture_item', 'N/A')}`")
+                        st.markdown(f"**📐 Cámara:** `{ma.get('camera_angle', 'N/A')}`")
+                        st.markdown(f"**🧱 Materiales Detectados:** `{ma.get('existing_materials', 'N/A')}`")
+                    if fa:
+                        st.markdown(f"**🧵 Tela:** `{fa.get('name', 'N/A')}` | `{fa.get('color_description', 'N/A')}`")
+                    if wa:
+                        st.markdown(f"**🪵 Madera:** `{wa.get('name', 'N/A')}` | `{wa.get('color_description', 'N/A')}`")
         else:
-            st.info("Configura y genera para ver los prompts optimizados.")
+            st.info("👈 Configura los parámetros a la izquierda y presiona **⚡ GENERAR PROMPTS**.")
+
         st.markdown('</div>', unsafe_allow_html=True)
-
-
-
-
-
-
-
-

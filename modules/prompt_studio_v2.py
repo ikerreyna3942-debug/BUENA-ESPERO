@@ -1,5 +1,6 @@
 import os
 import io
+import zipfile
 from pathlib import Path
 import streamlit as st
 from PIL import Image
@@ -76,12 +77,13 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
     components.html(html_code, height=44)
 
 def render_prompt_studio_v2():
+    if "clear_key_v2" not in st.session_state:
+        st.session_state.clear_key_v2 = 0
     from services.ai_prompt_service_v2 import ai_prompt_service_v2
     from services.sheets_service import sheets_service
 
     st.markdown("""
 <style>
-/* Usar los mismos estilos base */
 .studio-top-bar { background-color: #283548; border: 1px solid #475569; border-radius: 10px; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
 .studio-badge { background: rgba(16, 185, 129, 0.2); color: #34D399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 11px; padding: 3px 8px; border-radius: 9999px; font-weight: 700; }
 .studio-card { background-color: #283548; border: 1px solid #475569; border-radius: 12px; padding: 18px; height: 100%; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
@@ -105,35 +107,27 @@ def render_prompt_studio_v2():
         btn_col1, btn_col2 = st.columns(2)
         with btn_col1:
             if "last_studio_result_v2" in st.session_state:
-                import io
-                import zipfile
                 res = st.session_state["last_studio_result_v2"]
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                    prompt_txt = res["prompts"].get("google_ai_studio", "") or res["prompts"].get("chatgpt_dalle3", "") or res["prompts"].get("flux_midjourney", "")
+                    prompt_txt = res["prompts"].get("google_ai_studio", "") or res["prompts"].get("chatgpt_dalle3", "")
                     if prompt_txt:
                         zip_file.writestr(f"prompt_{res.get('mueble_name', 'generado')}.txt", prompt_txt)
-                    
-                    m = st.session_state.get("st_mueble")
-                    if m: zip_file.writestr("1_foto_mueble.jpg", m.getvalue())
-                    t = st.session_state.get("st_tela")
-                    if t: zip_file.writestr("2_foto_tela.jpg", t.getvalue())
-                    w = st.session_state.get("st_madera")
-                    if w: zip_file.writestr("3_foto_madera.jpg", w.getvalue())
                 
                 st.download_button(
-                    label="📦 Descargar Kit (Fotos+Prompt)",
+                    label="📦 Descargar Kit",
                     data=zip_buffer.getvalue(),
-                    file_name=f"kit_{res.get('mueble_name', 'generado')}.zip",
+                    file_name=f"kit_v2_{res.get('mueble_name', 'generado')}.zip",
                     mime="application/zip",
                     use_container_width=True,
-                    type="primary"
+                    type="primary",
+                    key="btn_dl_v2"
                 )
         with btn_col2:
-            if st.button("🗑️ Limpiar Todo", key="btn_clear_studio", use_container_width=True):
-                for k in ["last_studio_result_v2", "st_mueble_v2", "st_tela_v2", "st_madera_v2", "sb_tela_oficial_v2", "sb_madera_oficial_v2"]:
-                    if k in st.session_state:
-                        del st.session_state[k]
+            if st.button("🗑️ Limpiar Todo", key="btn_clear_studio_v2", use_container_width=True):
+                c = st.session_state.get("clear_key_v2", 0)
+                st.session_state.clear()
+                st.session_state["clear_key_v2"] = c + 1
                 st.rerun()
 
     lista_telas = cargar_telas_menu_v2()
@@ -160,57 +154,55 @@ def render_prompt_studio_v2():
             ["Solo Tela", "Solo Madera", "Tela + Madera", "Extraer Mueble (Fondo Blanco)", "Aumento HD", "Vistas (360)"],
             horizontal=True,
             label_visibility="collapsed",
-            key="studio_mode_radio_v2"
+            key=f"studio_mode_radio_v2_{st.session_state.clear_key_v2}"
         )
 
-        fondo_blanco = st.toggle("⬜ Extraer Mueble (Fondo Blanco)", value=True, help="Le ordena a la IA extraer el mueble, preservando color, textura y geometría, colocándolo sobre blanco puro sin sombras ni reflejos.")
-
         st.markdown("---")
-        st.markdown("##### 🛋️ Foto del Mueble Original")
+        st.markdown("##### 🛋️ Foto del Mueble Original (Arrastra o sube aquí)")
         mueble_up = st.file_uploader(
             "Sube foto(s) del mueble",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
-            key="st_mueble_v2",
+            key=f"st_mueble_v2_{st.session_state.clear_key_v2}",
             accept_multiple_files=True
         )
 
         if modo_sel in ["Solo Tela", "Tela + Madera"]:
             st.markdown("##### 🧵 2. Muestra de Tela")
-            tipo_origen_tela = st.radio("Fuente:", ["📂 Menú Oficial", "📤 Subir Foto"], horizontal=True, key="rad_tipo_tela_v2")
+            tipo_origen_tela = st.radio("Fuente:", ["📂 Menú Oficial", "📤 Subir Foto"], horizontal=True, key=f"rad_tipo_tela_v2_{st.session_state.clear_key_v2}")
             if tipo_origen_tela == "📂 Menú Oficial":
-                sel_t_nombre = st.selectbox("Elige tela:", opciones_telas, key="sb_tela_oficial_v2")
+                sel_t_nombre = st.selectbox("Elige tela:", opciones_telas, key=f"sb_tela_oficial_v2_{st.session_state.clear_key_v2}")
                 if sel_t_nombre:
                     obj_t = map_telas.get(sel_t_nombre.upper())
                     if obj_t and obj_t.get("id"):
                         tela_name = sel_t_nombre
                         tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
             else:
-                tela_up = st.file_uploader("Sube muestra de tela", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key="st_tela_v2")
+                tela_up = st.file_uploader("Arrastra muestra de tela", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_tela_v2_{st.session_state.clear_key_v2}")
                 if tela_up:
                     tela_name = tela_up.name
                     tela_bytes = tela_up.getvalue()
         elif modo_sel == "Vistas (360)":
             st.markdown("##### 🧵 2. Muestra de Tela (Opcional)")
             st.caption("💡 Opcional: Si no seleccionas tela, se generarán las 5 vistas conservando el material original del mueble.")
-            tipo_origen_tela = st.radio("Fuente:", ["Ninguna (Mantener original)", "📂 Menú Oficial", "📤 Subir Foto"], horizontal=True, key="rad_tipo_tela_v2_opt")
+            tipo_origen_tela = st.radio("Fuente:", ["Ninguna (Mantener original)", "📂 Menú Oficial", "📤 Subir Foto"], horizontal=True, key=f"rad_tipo_tela_v2_opt_{st.session_state.clear_key_v2}")
             if tipo_origen_tela == "📂 Menú Oficial":
-                sel_t_nombre = st.selectbox("Elige tela:", opciones_telas, key="sb_tela_oficial_v2")
+                sel_t_nombre = st.selectbox("Elige tela:", opciones_telas, key=f"sb_tela_oficial_v2_{st.session_state.clear_key_v2}")
                 if sel_t_nombre:
                     obj_t = map_telas.get(sel_t_nombre.upper())
                     if obj_t and obj_t.get("id"):
                         tela_name = sel_t_nombre
                         tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
             elif tipo_origen_tela == "📤 Subir Foto":
-                tela_up = st.file_uploader("Sube muestra de tela (opcional)", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key="st_tela_v2")
+                tela_up = st.file_uploader("Arrastra muestra de tela (opcional)", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_tela_v2_{st.session_state.clear_key_v2}")
                 if tela_up:
                     tela_name = tela_up.name
                     tela_bytes = tela_up.getvalue()
 
         if modo_sel in ["Solo Madera", "Tela + Madera"]:
             st.markdown("##### 🪵 Muestra de Madera")
-            tipo_origen_mad = st.radio("Fuente:", ["📂 Menú Oficial", "📤 Subir Foto"], horizontal=True, key="rad_tipo_mad_v2")
+            tipo_origen_mad = st.radio("Fuente:", ["📂 Menú Oficial", "📤 Subir Foto"], horizontal=True, key=f"rad_tipo_mad_v2_{st.session_state.clear_key_v2}")
             if tipo_origen_mad == "📂 Menú Oficial":
-                sel_m_nombre = st.selectbox("Elige madera:", opciones_maderas, key="sb_madera_oficial_v2")
+                sel_m_nombre = st.selectbox("Elige madera:", opciones_maderas, key=f"sb_madera_oficial_v2_{st.session_state.clear_key_v2}")
                 if sel_m_nombre:
                     obj_m = map_maderas.get(sel_m_nombre.upper())
                     if obj_m:
@@ -220,14 +212,22 @@ def render_prompt_studio_v2():
                         elif obj_m.get("id"):
                             madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
             else:
-                madera_up = st.file_uploader("Sube muestra de madera", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key="st_madera_v2")
+                madera_up = st.file_uploader("Arrastra muestra de madera", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_madera_v2_{st.session_state.clear_key_v2}")
                 if madera_up:
                     madera_name = madera_up.name
                     madera_bytes = madera_up.getvalue()
 
+        st.markdown("---")
+        st.markdown("##### 💬 Comentarios / Notas adicionales (Opcional)")
+        notas_usuario = st.text_area(
+            "Indica notas específicas para el prompt (opcional):",
+            placeholder="Ej: Mantener tono de tela original, resaltar costuras...",
+            key=f"txt_notas_usuario_v2_{st.session_state.clear_key_v2}"
+        )
+
         st.markdown("<br>", unsafe_allow_html=True)
 
-        if st.button("⚡ GENERAR PROMPT V2 (STRUCTURED)", type="primary", use_container_width=True, key="btn_gen_prompts_v2"):
+        if st.button("⚡ GENERAR PROMPT V2", type="primary", use_container_width=True, key="btn_gen_prompts_v2"):
             if not mueble_up:
                 st.error("⚠️ Sube la foto del mueble primero.")
             elif modo_sel == "Solo Tela" and not tela_bytes:
@@ -247,11 +247,19 @@ def render_prompt_studio_v2():
                     w_ana = ai_prompt_service_v2.analyze_material(madera_bytes, material_type="wood") if madera_bytes else None
                     m_ana = ai_prompt_service_v2.analyze_furniture_for_enhancement(m_bytes)
 
-                    if modo_sel == "Aumento HD":
-                        prompts = ai_prompt_service_v2.generate_enhance_prompt(furniture_name=m_name, analysis=m_ana)
+                    if modo_sel == "Extraer Mueble (Fondo Blanco)":
+                        prompts = ai_prompt_service_v2.generate_extraction_prompt(furniture_name=m_name, analysis=m_ana, notas_usuario=notas_usuario)
+                    elif modo_sel == "Aumento HD":
+                        prompts = ai_prompt_service_v2.generate_enhance_prompt(furniture_name=m_name, analysis=m_ana, notas_usuario=notas_usuario)
                     elif modo_sel == "Vistas (360)":
                         prompts_vistas = ai_prompt_service_v2.generate_multi_perspective_prompts(
-                            mode="fabric_only", furniture_name=m_name, fabric_analysis=f_ana, wood_analysis=w_ana, furniture_analysis=m_ana, num_furniture_images=num_imgs, fondo_blanco=fondo_blanco
+                            mode="fabric_only",
+                            furniture_name=m_name,
+                            fabric_analysis=f_ana,
+                            wood_analysis=w_ana,
+                            furniture_analysis=m_ana,
+                            num_furniture_images=num_imgs,
+                            notas_usuario=notas_usuario
                         )
                         vistas_nombres = [
                             ("vista_de_frente", "vista de frente"),
@@ -260,9 +268,7 @@ def render_prompt_studio_v2():
                             ("vista_3_4_izquierda", "vista 3/4 mirando a la izquierda"),
                             ("vista_3_4_derecha", "vista 3/4 mirando a la derecha"),
                             ("vista_desde_arriba", "vista desde arriba"),
-                            ("vista_3_4_posterior", "vista 3/4 posterior"),
-                            ("vista_detalle_macro", "vista detalle macro"),
-                            ("vista_lifestyle_ambientado", "vista lifestyle (ambientado)")
+                            ("vista_3_4_posterior", "vista 3/4 posterior")
                         ]
                         for key_v, label_v in vistas_nombres:
                             vistas_data.append({
@@ -275,7 +281,7 @@ def render_prompt_studio_v2():
                             return (
                                 "=== 1. VISTA DE FRENTE ===\n" + prompts_vistas["vista_de_frente"][ai_key] + "\n\n" +
                                 "=== 2. VISTA LATERAL ===\n" + prompts_vistas["vista_lateral_derecha"][ai_key] + "\n\n" +
-                                "=== 3. VISTA 3/4 MIRANDO ALA IZQUIERDA ===\n" + prompts_vistas["vista_3_4_izquierda"][ai_key] + "\n\n" +
+                                "=== 3. VISTA 3/4 MIRANDO A LA IZQUIERDA ===\n" + prompts_vistas["vista_3_4_izquierda"][ai_key] + "\n\n" +
                                 "=== 4. VISTA DESDE ARRIBA ===\n" + prompts_vistas["vista_desde_arriba"][ai_key] + "\n\n" +
                                 "=== 5. VISTA 3/4 POSTERIOR ===\n" + prompts_vistas["vista_3_4_posterior"][ai_key]
                             )
@@ -293,7 +299,7 @@ def render_prompt_studio_v2():
                             wood_analysis=w_ana,
                             furniture_analysis=m_ana,
                             num_furniture_images=num_imgs,
-                            fondo_blanco=fondo_blanco
+                            notas_usuario=notas_usuario
                         )
                     
                     st.session_state["last_studio_result_v2"] = {
@@ -305,6 +311,7 @@ def render_prompt_studio_v2():
                         "furniture_analysis": m_ana,
                         "prompts": prompts
                     }
+                    st.success("✅ ¡Prompts generados exitosamente!")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -315,9 +322,7 @@ def render_prompt_studio_v2():
             for f in mueble_up:
                 try:
                     f_name = getattr(f, "name", None) or (f.get("name") if isinstance(f, dict) else "Mueble")
-                    if isinstance(f, dict) and "bytes" in f:
-                        f_bytes = f["bytes"]
-                    elif hasattr(f, "getvalue"):
+                    if hasattr(f, "getvalue"):
                         f_bytes = f.getvalue()
                     elif hasattr(f, "read"):
                         f_bytes = f.read()
@@ -325,168 +330,74 @@ def render_prompt_studio_v2():
                         f_bytes = f
                     st.image(f_bytes, caption=f"Mueble: {f_name}", use_container_width=True)
                 except Exception:
-                    st.caption(f"🖼️ Mueble cargado")
+                    st.caption("🖼️ Mueble cargado")
 
         if tela_bytes:
-            try:
-                st.image(tela_bytes, caption=f"Muestra Tela: {tela_name}", use_container_width=True)
-            except Exception:
-                st.caption(f"🧵 Tela: {tela_name}")
+            st.image(tela_bytes, caption=f"Tela: {tela_name or 'Seleccionada'}", use_container_width=True)
 
         if madera_bytes:
-            try:
-                st.image(madera_bytes, caption=f"Muestra Madera: {madera_name}", use_container_width=True)
-            except Exception:
-                st.caption(f"🪵 Madera: {madera_name}")
-        
-        if "last_studio_result_v2" in st.session_state:
-            res = st.session_state["last_studio_result_v2"]
-            st.markdown("---")
-            st.markdown("##### 🔬 Análisis Estructurado (Pydantic)")
-            if res.get("fabric_analysis"):
-                fa = res["fabric_analysis"]
-                st.markdown(f"<span class='meta-pill'>🏷️ {fa.get('name', '')}</span>", unsafe_allow_html=True)
-                st.markdown(f"<span class='meta-pill'>🎨 {fa.get('color_description', '')}</span>", unsafe_allow_html=True)
-            if res.get("wood_analysis"):
-                wa = res["wood_analysis"]
-                st.markdown(f"<span class='meta-pill'>🪵 {wa.get('name', '')}</span>", unsafe_allow_html=True)
-                st.markdown(f"<span class='meta-pill'>✨ {wa.get('finish_type', '')}</span>", unsafe_allow_html=True)
-            if res.get("furniture_analysis"):
-                ma = res["furniture_analysis"]
-                st.markdown(f"<span class='meta-pill'>📐 {ma.get('geometric_structure', '')}</span>", unsafe_allow_html=True)
+            st.image(madera_bytes, caption=f"Madera: {madera_name or 'Seleccionada'}", use_container_width=True)
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col3:
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
-        st.markdown('<div class="studio-card-title">⚡ Prompts V2 <span class="studio-badge">Específicos</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="studio-card-title">✨ 3. Prompts Generados</div>', unsafe_allow_html=True)
+
         if "last_studio_result_v2" in st.session_state:
             res = st.session_state["last_studio_result_v2"]
-            p_tabs = st.tabs(["🌟 Google AI Studio / Gemini Pro", "🤖 ChatGPT (DALL-E 3)", "⚡ Flux / Midjourney", "🎨 Render Gratis (FLUX.1)", "🕵️ Inspector de Calidad"])
+            v_data = res.get("vistas_data", [])
+            prompts = res.get("prompts", {})
 
-            with p_tabs[0]:
-                if res.get("vistas_data"):
-                    st.caption(f"💡 Se generaron {len(res['vistas_data'])} vistas individuales. Copia la que necesites:")
-                    for i, vd in enumerate(res["vistas_data"]):
-                        st.markdown(f"##### {vd['name']}")
-                        st.text_area(f"Prompt Google AI Studio ({vd['name']}):", value=vd["prompt"]["google_ai_studio"], height=130, key=f"g_v2_{i}")
-                        st.code(vd["prompt"]["google_ai_studio"], language="markdown")
-                        st.markdown("---")
-                else:
-                    p_google = res["prompts"]["google_ai_studio"]
-                    st.text_area("Copia en Google AI Studio (Imagen 3) o Gemini Advanced:", value=p_google, height=300, key="txt_res_g_v2")
-                    st.code(p_google, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_google, file_name=f"prompt_ai_studio_{res['mueble_name']}.txt", use_container_width=True)
+            if v_data:
+                st.markdown(f"#### 👁️ Vistas Disponibles ({len(v_data)})")
+                vista_tabs = st.tabs([f"{v['name'].title()}" for v in v_data])
+                for idx, v_item in enumerate(v_data):
+                    with vista_tabs[idx]:
+                        p_obj = v_item["prompt"]
+                        st.markdown("###### 🌐 Google AI Studio / Gemini")
+                        st.text_area(f"AI Studio ({v_item['name']})", p_obj.get("google_ai_studio", ""), height=130, key=f"txt_ais_{idx}_v2")
+                        render_copy_button(p_obj.get("google_ai_studio", ""), label="📋 Copiar Prompt AI Studio", key=f"cp_ais_{idx}_v2")
+                        
+                        st.markdown("###### 🤖 ChatGPT (DALL-E 3)")
+                        st.text_area(f"DALL-E 3 ({v_item['name']})", p_obj.get("chatgpt_dalle3", ""), height=100, key=f"txt_dal_{idx}_v2")
+                        render_copy_button(p_obj.get("chatgpt_dalle3", ""), label="📋 Copiar Prompt DALL-E", key=f"cp_dal_{idx}_v2")
 
-            with p_tabs[1]:
-                if res.get("vistas_data"):
-                    st.caption(f"💡 Se generaron {len(res['vistas_data'])} vistas individuales para DALL-E 3:")
-                    for i, vd in enumerate(res["vistas_data"]):
-                        st.markdown(f"##### {vd['name']}")
-                        st.text_area(f"Prompt DALL-E 3 ({vd['name']}):", value=vd["prompt"]["chatgpt_dalle3"], height=130, key=f"d_v2_{i}")
-                        st.code(vd["prompt"]["chatgpt_dalle3"], language="markdown")
-                        st.markdown("---")
-                else:
-                    p_dalle = res["prompts"]["chatgpt_dalle3"]
-                    st.text_area("Copia en ChatGPT (DALL-E 3):", value=p_dalle, height=300, key="txt_res_d_v2")
-                    st.code(p_dalle, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_dalle, file_name=f"prompt_dalle3_{res['mueble_name']}.txt", use_container_width=True)
+                st.markdown("---")
+                st.markdown("#### 📋 Todos los Prompts Juntos")
+                p_all_ai = prompts.get("google_ai_studio", "")
+                st.text_area("Todos los prompts (AI Studio):", p_all_ai, height=180, key="txt_all_ais_v2")
+                render_copy_button(p_all_ai, label="📋 Copiar Todos los Prompts", key="cp_all_v2")
+            else:
+                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
+                with p_tab1:
+                    p_txt = prompts.get("google_ai_studio", "")
+                    st.text_area("Prompt Google AI Studio / Gemini:", p_txt, height=220, key="txt_res_ais_v2")
+                    render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key="cp_res_ais_v2")
+                with p_tab2:
+                    p_dalle = prompts.get("chatgpt_dalle3", "")
+                    st.text_area("Prompt ChatGPT / DALL-E 3:", p_dalle, height=200, key="txt_res_dal_v2")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key="cp_res_dal_v2")
+                with p_tab3:
+                    p_mj = prompts.get("midjourney_v6", "")
+                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=200, key="txt_res_mj_v2")
+                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key="cp_res_mj_v2")
 
-            with p_tabs[2]:
-                if res.get("vistas_data"):
-                    st.caption(f"💡 Se generaron {len(res['vistas_data'])} vistas individuales para Midjourney:")
-                    for i, vd in enumerate(res["vistas_data"]):
-                        st.markdown(f"##### {vd['name']}")
-                        p_flux_val = vd["prompt"].get("flux_midjourney") or vd["prompt"].get("midjourney_v6", "")
-                        st.text_area(f"Prompt Midjourney ({vd['name']}):", value=p_flux_val, height=130, key=f"m_v2_{i}")
-                        st.code(p_flux_val, language="markdown")
-                        st.markdown("---")
-                else:
-                    p_flux = res["prompts"]["midjourney_v6"]
-                    st.text_area("Copia en Midjourney (Discord):", value=p_flux, height=300, key="txt_res_f_v2")
-                    st.code(p_flux, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_flux, file_name=f"prompt_mj_{res['mueble_name']}.txt", use_container_width=True)
-
-            with p_tabs[3]:
-                from services.free_image_service import free_image_service
-                st.markdown("##### ⚡ Generador In-App V2 (FLUX.1)")
-                
-                if res.get("vistas_data"):
-                    nombres_v2 = [vd["name"] for vd in res["vistas_data"]]
-                    sel_v2_idx = st.selectbox("🎯 Elige la Vista a Renderizar:", range(len(nombres_v2)), format_func=lambda i: nombres_v2[i], key="sb_vista_render_v2")
-                    vd_sel2 = res["vistas_data"][sel_v2_idx]
-                    prompt_para_render = vd_sel2["prompt"].get("google_ai_studio") or vd_sel2["prompt"].get("chatgpt_dalle3", "")
-                else:
-                    prompt_para_render = res["prompts"].get("midjourney_v6") or res["prompts"].get("google_ai_studio") or res["prompts"].get("chatgpt_dalle3", "")
-                
-                col_gen_btn, col_gen_asp = st.columns([2, 1])
-                with col_gen_asp:
-                    formato_sel = st.selectbox("Resolución:", ["Rápido (512x512)", "Estándar (768x768)", "HD (1024x768)"], key="sel_asp_v2")
-                    w_r, h_r = (512, 512) if "512" in formato_sel else ((768, 768) if "768" in formato_sel else (1024, 768))
-                
-                with col_gen_btn:
-                    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-                    btn_gen = st.button("🚀 Generar Render Ahora", type="primary", use_container_width=True, key="btn_flux_v2")
-                
-                if btn_gen:
-                    with st.spinner("🎨 Renderizando mueble con difusión..."):
-                        try:
-                            img_render = free_image_service.generate_flux_image(
-                                prompt=prompt_para_render,
-                                width=w_r,
-                                height=h_r
-                            )
-                            st.session_state["render_generado_v2"] = img_render
-                            st.success("✅ ¡Render generado con éxito!")
-                        except Exception as err:
-                            st.error(f"⚠️ {err}")
-                
-                if "render_generado_v2" in st.session_state:
-                    import re
-                    raw_p2 = res.get('furniture_analysis', {}).get('furniture_item') if isinstance(res.get('furniture_analysis'), dict) else res.get('mueble_name', 'Mueble')
-                    clean_prod2 = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(raw_p2).strip())[:35] or "Mueble"
-                    vista_label2 = nombres_v2[sel_v2_idx] if (res.get("vistas_data") and 'sel_v2_idx' in locals()) else "render"
-                    clean_v2 = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(vista_label2).strip())[:30]
-                    download_name2 = f"{clean_prod2}_{clean_v2}.jpg"
-                    
-                    st.image(st.session_state["render_generado_v2"], caption=f"Render IA: {clean_prod2} ({vista_label2})", use_container_width=True)
-                    st.download_button(
-                        label=f"💾 Descargar {download_name2}",
-                        data=st.session_state["render_generado_v2"],
-                        file_name=download_name2,
-                        mime="image/jpeg",
-                        use_container_width=True
-                    )
-
-            with p_tabs[4]:
-                from services.quality_inspector_service import quality_inspector_service
-                st.markdown("##### 🕵️ Inspector de Calidad Automático (Quality Gate IA)")
-                orig_mueble_ref2 = mueble_up[0].getvalue() if mueble_up and len(mueble_up) > 0 else None
-                render_to_audit2 = st.session_state.get("render_generado_v2")
-                
-                audit_up2 = st.file_uploader("O sube un render/imagen externa:", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key="up_audit_v2")
-                if audit_up2:
-                    render_to_audit2 = audit_up2.getvalue()
-                    
-                if not orig_mueble_ref2:
-                    st.warning("⚠️ Sube la foto original del mueble.")
-                elif not render_to_audit2:
-                    st.info("💡 Genera un render en la pestaña '🎨 Render Gratis' o sube una imagen.")
-                else:
-                    if st.button("🔍 Auditar Calidad con IA", type="primary", use_container_width=True, key="btn_run_inspector_v2"):
-                        with st.spinner("🕵️ Auditando calidad industrial..."):
-                            q_res = quality_inspector_service.inspect_quality(
-                                original_mueble_bytes=orig_mueble_ref2,
-                                generated_render_bytes=render_to_audit2,
-                                material_sample_bytes=tela_bytes
-                            )
-                            st.session_state["last_quality_check_v2"] = q_res
-                    if "last_quality_check_v2" in st.session_state:
-                        qc = st.session_state["last_quality_check_v2"]
-                        st.markdown(f"### Score: {qc.get('score_total', 0)}/100 — {qc.get('verdict', '')}")
-                        st.progress(qc.get("score_total", 0) / 100.0)
-                        if qc.get("prompt_correction_patch"):
-                            st.text_area("Corrección sugerida:", qc["prompt_correction_patch"], height=80, key="txt_qc_v2")
-                            st.code(qc["prompt_correction_patch"], language="markdown")
+            # Metadatos del análisis
+            fa = res.get("fabric_analysis")
+            wa = res.get("wood_analysis")
+            ma = res.get("furniture_analysis")
+            if fa or wa or ma:
+                with st.expander("🔍 Ver Análisis de Gemini Vision", expanded=False):
+                    if ma:
+                        st.markdown(f"**🛋️ Mueble:** `{ma.get('furniture_item', 'N/A')}`")
+                        st.markdown(f"**📐 Cámara:** `{ma.get('camera_angle', 'N/A')}`")
+                        st.markdown(f"**🧱 Materiales Detectados:** `{ma.get('existing_materials', 'N/A')}`")
+                    if fa:
+                        st.markdown(f"**🧵 Tela:** `{fa.get('name', 'N/A')}` | `{fa.get('color_description', 'N/A')}`")
+                    if wa:
+                        st.markdown(f"**🪵 Madera:** `{wa.get('name', 'N/A')}` | `{wa.get('color_description', 'N/A')}`")
         else:
-            st.info("Configura y genera para ver los prompts optimizados.")
+            st.info("👈 Configura los parámetros a la izquierda y presiona **⚡ GENERAR PROMPT V2**.")
+
         st.markdown('</div>', unsafe_allow_html=True)

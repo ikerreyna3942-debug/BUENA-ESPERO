@@ -1,6 +1,7 @@
-﻿import os
+import os
 import io
 import json
+import random
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from PIL import Image
@@ -8,21 +9,21 @@ from pydantic import BaseModel, Field
 
 # Modelos Pydantic para Structured Outputs Avanzados
 class MaterialAnalysisV3(BaseModel):
-    name: str = Field(description="Nombre comercial corto y premium (ej. Heathered Salt-and-Pepper BouclÃ©)")
-    color_description: str = Field(description="DescripciÃ³n cromÃ¡tica exacta (RGB/Hex conceptual) y subtonos")
+    name: str = Field(description="Nombre comercial corto y premium (ej. Heathered Salt-and-Pepper Bouclé)")
+    color_description: str = Field(description="Descripción cromática exacta (RGB/Hex conceptual) y subtonos")
     texture_detail: str = Field(description="Estructura micro-textil (ej. dense nubby loops over cool grey under-weave)")
-    light_interaction: str = Field(description="CÃ³mo interactÃºa con la luz (ej. absorbs light, highly reflective, matte satin sheen)")
+    light_interaction: str = Field(description="Cómo interactúa con la luz (ej. absorbs light, highly reflective, matte satin sheen)")
 
 class FurnitureAnalysisV3(BaseModel):
-    furniture_item: str = Field(description="Nombre y estilo arquitectÃ³nico (ej. mid-century modern curved modular sofa)")
-    camera_angle: str = Field(description="Ãngulo de cÃ¡mara en grados y perspectiva geomÃ©trica (ej. 45-degree elevated isometric, strict 0-degree frontal)")
-    lighting_direction: str = Field(description="DirecciÃ³n exacta de la luz y tipo de sombra (ej. Key light from top-left, soft diffuse fill, gentle drop shadow)")
-    geometric_structure: str = Field(description="DescripciÃ³n topolÃ³gica de la forma (ej. sharp 90-degree corners, sweeping organic curves)")
-    existing_materials: str = Field(description="TapicerÃ­a y partes rÃ­gidas actuales")
+    furniture_item: str = Field(description="Nombre y estilo arquitectónico (ej. mid-century modern curved modular sofa)")
+    camera_angle: str = Field(description="Ángulo de cámara en grados y perspectiva geométrica (ej. 45-degree elevated isometric, strict 0-degree frontal)")
+    lighting_direction: str = Field(description="Dirección exacta de la luz y tipo de sombra (ej. Key light from top-left, soft diffuse fill)")
+    geometric_structure: str = Field(description="Descripción topológica de la forma (ej. sharp 90-degree corners, sweeping organic curves)")
+    existing_materials: str = Field(description="Tapicería y partes rígidas actuales con su color y textura exacta")
 
 class AIPromptServiceV3:
     def __init__(self):
-        self.default_api_key = ""
+        self.default_api_key = os.getenv("GEMINI_API_KEY", "").strip()
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -36,8 +37,15 @@ class AIPromptServiceV3:
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automÃ¡tico."""
-        models_to_try = ["gemini-3.5-flash", "gemini-3.1-pro-preview"]
+        """Llama a Gemini con lista de modelos activos y fallback automático."""
+        models_to_try = [
+            "gemini-flash-latest",
+            "gemini-2.5-flash",
+            "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+        ]
         last_err = None
         for m in models_to_try:
             try:
@@ -48,7 +56,7 @@ class AIPromptServiceV3:
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 800) -> Image.Image:
-        """Optimiza y redimensiona imÃ¡genes para envÃ­o ultra-rÃ¡pido a Gemini."""
+        """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -73,7 +81,7 @@ class AIPromptServiceV3:
             
             prompt = f"""You are an expert materials engineer and luxury product photographer.
 Analyze this material sample ({material_type}) with microscopic precision.
-Pay special attention to how light hits the threads/wood grain."""
+Pay special attention to how light hits the threads/wood grain, color saturation, weave pattern, and exact tones."""
             
             res = self._call_gemini(
                 client=client,
@@ -148,29 +156,48 @@ CRITICAL: You MUST accurately describe the EXACT color (name, shade, and hex est
         return "Images " + ", ".join(map(str, nums[:-1])) + f", and {nums[-1]}"
 
     def _build_photo_hardware_str(self) -> str:
-        return "Shot on Hasselblad H6D-100c medium format, 120mm macro lens, f/11 aperture for maximum sharp depth of field, 8k resolution, raw hyper-realistic commercial photography, focus stacking, crisp architectural clarity."
+        return "Shot on Hasselblad H6D-100c medium format, 120mm macro lens, f/11 aperture for maximum sharp depth of field, 8k resolution, raw hyper-realistic commercial catalog photography, focus stacking, crisp architectural clarity."
 
-    def _build_white_isolation_str(self, fondo_blanco: bool = True, hd: bool = False) -> str:
-        if fondo_blanco:
-            return "ENVIRONMENT: extract ONLY the furniture, do NOT modify its color, texture, or geometry (wood and fabric must be intact), place it perfectly CENTERED on a pure white background, completely eliminate shadows, and remove any studio lighting reflections from the wood and fabric. CRITICAL: DO NOT include any text, numbers, color names, or color palettes in the image."
-        else:
-            return "ENVIRONMENT: maintain original background."
+    def _build_white_isolation_str(self) -> str:
+        return "ENVIRONMENT: Extract ONLY the furniture piece. Preserve its exact color, texture, and geometry (wood, metal, and fabric completely intact). Place it perfectly CENTERED on a pure seamless solid white background (#FFFFFF), with zero floor shadows, no drop shadows, and no harsh reflections. CRITICAL: DO NOT include any text, typography, watermark, letters, numbers, color chips, or palettes."
 
+    def generate_extraction_prompt(self, furniture_name: str, analysis: Optional[Dict[str, Any]] = None, notas_usuario: str = "") -> Dict[str, str]:
+        ma = analysis or {}
+        furn_item = ma.get("furniture_item", furniture_name)
+        geom_struct = ma.get("geometric_structure", "original geometry")
+        camera_angle = ma.get("camera_angle", "original perspective")
+        mats = ma.get("existing_materials", "original fabric and wood")
+        hardware_str = self._build_photo_hardware_str()
+        white_bg = self._build_white_isolation_str()
 
-    def generate_extraction_prompt(self, furniture_name: str, analysis: dict) -> dict:
-        prompt_base = f"""INSTRUCTION: Use the provided image of the '{furniture_name}' as the absolute single truth reference.
-        
-CRITICAL CONSTRAINT: You must ONLY extract the furniture. Keep the exact structural integrity, shape, geometry, legs, cushions, folds, and proportions identical to the original image.
-Keep wood and fabric texture and color exactly the same. Do NOT modify the color or texture.
-Put the furniture perfectly CENTERED on a pure white background. NO shadows. REMOVE all studio lighting/reflections from the materials.
-CRITICAL: DO NOT include any text, numbers, color names, or color palettes in the image.
+        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
 
-Negative Prompt:
-shadows, drop shadows, reflections, studio lighting, dark background, room environment, changed geometry, changed color, changed texture, text, typography, letters, numbers."""
+        prompt_ai_studio = f"""SYSTEM: You are a Master Commercial Product Photographer and AI Image Editor.
+TASK: Cleanly extract ONLY the furniture piece ({furn_item}) from Image 1.
+CRITICAL CHROMATIC & TEXTURAL FIDELITY:
+- Maintain 100% exact original upholstery color (hue, saturation, brightness) and textile weave: [{mats}].
+- Maintain 100% exact wooden/metal leg finish, tone, and grain.
+- Do NOT shift colors, do NOT desaturate, and do NOT alter tones.
+GEOMETRY & CAMERA:
+- Strictly lock camera to {camera_angle}.
+- Preserve exact structural topology, cushions, seams, and proportions: {geom_struct}.
+{white_bg}
+HARDWARE: {hardware_str}{notes_part}
+
+Negative Prompt: shadows, drop shadows, floor shadows, reflections, room background, dark background, altered color, color shift, changed texture, altered geometry, text, letters, numbers, watermark, labels."""
+
+        prompt_dalle = f"""Generate a hyper-realistic commercial catalog photograph of a {furn_item}.
+Camera/Geometry: Strict {camera_angle}, preserving {geom_struct}.
+Materials: The exact original materials ({mats}) must be preserved with microscopic fidelity and ZERO color shift.
+Environment: Digitally isolated on a pure seamless solid white background (#FFFFFF) with zero shadows.{notes_part}
+Hardware: {hardware_str}"""
+
+        prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Exact materials and color preserved: {mats}. Shot at {camera_angle}. {hardware_str}{notes_part} --no shadows, drop shadows, grey background, room, text, labels, watermark, CGI --ar 1:1 --v 6.1 --style raw"""
+
         return {
-            "google_ai_studio": prompt_base,
-            "midjourney_v6": prompt_base,
-            "chatgpt_dalle3": prompt_base
+            "google_ai_studio": prompt_ai_studio,
+            "chatgpt_dalle3": prompt_dalle,
+            "midjourney_v6": prompt_mj
         }
 
     def generate_material_swap_prompt_v3(
@@ -181,9 +208,7 @@ shadows, drop shadows, reflections, studio lighting, dark background, room envir
         wood_analysis: Optional[Dict[str, Any]] = None,
         furniture_analysis: Optional[Dict[str, Any]] = None,
         num_furniture_images: int = 1,
-        fondo_blanco: bool = True,
-        notas_vistas_usuario: str = "",
-        hd: bool = False
+        notas_usuario: str = ""
     ) -> Dict[str, str]:
         
         fa = fabric_analysis or {}
@@ -206,11 +231,9 @@ shadows, drop shadows, reflections, studio lighting, dark background, room envir
         geom_struct = ma.get("geometric_structure", "original structural geometry")
 
         hardware_str = self._build_photo_hardware_str()
-        if hd:
-            hardware_str += " High Definition, 8k, extremely detailed, highly realistic"
-        white_bg = self._build_white_isolation_str(fondo_blanco)
+        white_bg = self._build_white_isolation_str()
+        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
 
-        # DALL-E 3 Anti-PlÃ¡stico
         dalle_defense = "[ENGINE: Disable CGI, Disable Octane Render, Disable 3D Models, Force 35mm RAW Photography, Force real-world textile micro-imperfections]"
         dalle_shadows = "[SHADOWS: 0% ground shadows, 0% drop shadows, strict digital cutout]"
 
@@ -223,11 +246,10 @@ TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}.
 {white_bg}
 HARDWARE: {hardware_str}
-USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
-FABRIC (From Image 1): Apply {f_name}. Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism.
-WOOD (From Image 2): Apply {w_name}. Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.
+FABRIC (From Image 1): Apply {f_name}. Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism. Preserve exact fabric hue with zero color drift.
+WOOD (From Image 2): Apply {w_name}. Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.{notes_part}
 
-Negative Prompt: CGI, 3D render, plastic, generic fabric, loss of weave, suede, velvet, leather, flat wood, altered geometry, perspective distortion, floor shadows, grey background."""
+Negative Prompt: CGI, 3D render, plastic, generic fabric, loss of weave, suede, velvet, leather, flat wood, altered geometry, perspective distortion, floor shadows, grey background, text, letters, numbers."""
 
             prompt_dalle = f"""{dalle_defense}
 {dalle_shadows}
@@ -235,10 +257,10 @@ Generate a hyper-realistic commercial catalog photograph of a {furn_item}.
 Camera/Geometry: Locked at {camera_angle}. Structural topology: {geom_struct}.
 Lighting: {lighting_dir}.
 Materials: The upholstery is meticulously crafted from {f_name} ({f_texture}, {f_color}, {f_light}). The wooden base/legs are carved from {w_name} ({w_texture}, {w_color}, {w_light}).
-Environment: {white_bg}
+Environment: {white_bg}{notes_part}
 Hardware constraints: {hardware_str}"""
 
-            prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Upholstered in {f_name} ({f_color}, {f_texture}), wooden components are {w_name} ({w_color}, {w_texture}). Shot at {camera_angle}, {lighting_dir}. {hardware_str} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic, suede, velvet, leather --ar 1:1 --v 6.1 --style raw --c 5"""
+            prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Upholstered in {f_name} ({f_color}, {f_texture}), wooden components are {w_name} ({w_color}, {w_texture}). Shot at {camera_angle}, {lighting_dir}. {hardware_str}{notes_part} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic, suede, velvet, leather, text --ar 1:1 --v 6.1 --style raw --c 5"""
 
         elif mode == "fabric_only":
             target_imgs = self.get_img_refs(2, num_furniture_images)
@@ -249,10 +271,9 @@ TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}. Preserve original wood/legs.
 {white_bg}
 HARDWARE: {hardware_str}
-USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
-FABRIC (From Image 1): Apply {f_name}. Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism.
+FABRIC (From Image 1): Apply {f_name}. Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism. Strictly lock hue and saturation to reference.{notes_part}
 
-Negative Prompt: CGI, 3D render, plastic, generic fabric, loss of weave, suede, velvet, leather, color shift, altered geometry, perspective distortion, floor shadows, grey background."""
+Negative Prompt: CGI, 3D render, plastic, generic fabric, loss of weave, suede, velvet, leather, color shift, altered geometry, perspective distortion, floor shadows, grey background, text, numbers."""
 
             prompt_dalle = f"""{dalle_defense}
 {dalle_shadows}
@@ -260,10 +281,10 @@ Generate a hyper-realistic commercial catalog photograph of a {furn_item}.
 Camera/Geometry: Locked at {camera_angle}. Structural topology: {geom_struct}.
 Lighting: {lighting_dir}. Preserve original wooden components precisely.
 Materials: The upholstery is meticulously crafted from {f_name} ({f_texture}, {f_color}, {f_light}).
-Environment: {white_bg}
+Environment: {white_bg}{notes_part}
 Hardware constraints: {hardware_str}"""
 
-            prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Upholstered in {f_name} ({f_color}, {f_texture}), original wooden legs preserved. Shot at {camera_angle}, {lighting_dir}. {hardware_str} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic, suede, velvet, leather --ar 1:1 --v 6.1 --style raw --c 5"""
+            prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Upholstered in {f_name} ({f_color}, {f_texture}), original wooden legs preserved. Shot at {camera_angle}, {lighting_dir}. {hardware_str}{notes_part} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic, suede, velvet, leather, text --ar 1:1 --v 6.1 --style raw --c 5"""
 
         else: # wood_only
             target_imgs = self.get_img_refs(2, num_furniture_images)
@@ -274,10 +295,9 @@ TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}. Preserve original fabric perfectly.
 {white_bg}
 HARDWARE: {hardware_str}
-USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
-WOOD (From Image 1): Apply {w_name}. Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.
+WOOD (From Image 1): Apply {w_name}. Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.{notes_part}
 
-Negative Prompt: altered fabric, changed upholstery, CGI, 3D render, plastic, flat wood, altered geometry, perspective distortion, floor shadows, grey background."""
+Negative Prompt: altered fabric, changed upholstery, CGI, 3D render, plastic, flat wood, altered geometry, perspective distortion, floor shadows, grey background, text, numbers."""
 
             prompt_dalle = f"""{dalle_defense}
 {dalle_shadows}
@@ -285,10 +305,10 @@ Generate a hyper-realistic commercial catalog photograph of a {furn_item}.
 Camera/Geometry: Locked at {camera_angle}. Structural topology: {geom_struct}.
 Lighting: {lighting_dir}. Preserve original fabric upholstery perfectly.
 Materials: The wooden base/legs/frame are carved from {w_name} ({w_texture}, {w_color}, {w_light}).
-Environment: {white_bg}
+Environment: {white_bg}{notes_part}
 Hardware constraints: {hardware_str}"""
 
-            prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Original upholstery preserved perfectly, wooden components replaced with {w_name} ({w_color}, {w_texture}). Shot at {camera_angle}, {lighting_dir}. {hardware_str} --no altered fabric, floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic --ar 1:1 --v 6.1 --style raw --c 5"""
+            prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Original upholstery preserved perfectly, wooden components replaced with {w_name} ({w_color}, {w_texture}). Shot at {camera_angle}, {lighting_dir}. {hardware_str}{notes_part} --no altered fabric, floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic, text --ar 1:1 --v 6.1 --style raw --c 5"""
 
         return {
             "google_ai_studio": prompt_ai_studio,
@@ -301,9 +321,7 @@ Hardware constraints: {hardware_str}"""
         furniture_name: str,
         fabric_analysis: Optional[Dict[str, Any]] = None,
         furniture_analysis: Optional[Dict[str, Any]] = None,
-        fondo_blanco: bool = True,
-        notas_vistas_usuario: str = "",
-        hd: bool = False
+        notas_usuario: str = ""
     ) -> Dict[str, Dict[str, str]]:
         
         fa = fabric_analysis or {}
@@ -316,32 +334,41 @@ Hardware constraints: {hardware_str}"""
         
         furn_item = ma.get("furniture_item", furniture_name)
         geom_struct = ma.get("geometric_structure", "original structural geometry")
-
         hardware_str = self._build_photo_hardware_str()
-        if hd:
-            hardware_str += " High Definition, 8k, extremely detailed, highly realistic"
-        white_bg = self._build_white_isolation_str(fondo_blanco)
+        white_bg = self._build_white_isolation_str()
+        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
         
         dalle_defense = "[ENGINE: Disable CGI, Force 35mm RAW Photography]"
         dalle_shadows = "[SHADOWS: 0% ground shadows, pure digital cutout]"
 
         if fa and fa.get("name"):
-            mat_str = f"Upholstery must perfectly replicate {f_name} ({f_color}, {f_texture}, {f_light})."
+            mat_str = f"Upholstery must perfectly replicate {f_name} ({f_color}, {f_texture}, {f_light}). Preserve exact hue."
         else:
-            mat_str = "Upholstery and materials must strictly replicate the authentic fabric weave, texture, and original color of the furniture in the reference image."
+            mat_str = "Upholstery and materials must strictly replicate the authentic fabric weave, texture, and original color of the furniture in the reference image with 0% color change."
 
-        def build_prompts(angle_desc: str, geo_constraint: str, neg_extras: str):
+        def build_prompts(
+            angle_desc: str,
+            geo_constraint: str,
+            neg_extras: str,
+            environment: Optional[str] = None
+        ):
+            prompt_environment = environment or white_bg
+            mj_environment = (
+                "isolated on a pure solid white background #FFFFFF"
+                if not environment
+                else environment.removeprefix("ENVIRONMENT: ")
+            )
+            background_negatives = "" if environment else ", background objects, room"
             p_ai = f"""SYSTEM: You are an Architectural Visualization Expert and Master Commercial Photographer.
 TASK: Generate a mathematically precise {angle_desc} of the target item.
 TARGET ITEM: {furn_item}.
 TOPOLOGY: {geom_struct}.
 CAMERA/GEOMETRY CONSTRAINT: {geo_constraint}
-{white_bg}
-MATERIALS: {mat_str} Preserve all wooden parts.
-HARDWARE: {hardware_str}
-USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
+{prompt_environment}
+MATERIALS: {mat_str} Preserve all wooden/metal parts exactly.
+HARDWARE: {hardware_str}{notes_part}
 
-Negative Prompt: CGI, plastic, {neg_extras}, perspective distortion, floor shadows, background objects."""
+Negative Prompt: CGI, plastic, {neg_extras}, perspective distortion, floor shadows{background_negatives}, text, letters, numbers."""
 
             p_dalle = f"""{dalle_defense}
 {dalle_shadows}
@@ -349,11 +376,10 @@ Generate a mathematically precise {angle_desc} photograph of a {furn_item}.
 TOPOLOGY: {geom_struct}.
 CAMERA/GEOMETRY CONSTRAINT: {geo_constraint}
 MATERIALS: {mat_str}
-ENVIRONMENT: {white_bg}
-HARDWARE: {hardware_str}
-USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
+ENVIRONMENT: {prompt_environment}{notes_part}
+HARDWARE: {hardware_str}"""
 
-            p_mj = f"""Commercial luxury product photography, {angle_desc} of {furn_item}, {geom_struct}. {mat_str} {geo_constraint} {hardware_str} isolated on pure solid white background #FFFFFF --no {neg_extras}, perspective distortion, floor shadows, background objects, CGI, 3D render --ar 1:1 --v 6.1 --style raw"""
+            p_mj = f"""Commercial luxury product photography, {angle_desc} of {furn_item}, {geom_struct}. {mat_str} {geo_constraint} {hardware_str} {mj_environment}{notes_part} --no {neg_extras}, perspective distortion, floor shadows{background_negatives}, CGI, 3D render, text --ar 1:1 --v 6.1 --style raw"""
             
             return {
                 "google_ai_studio": p_ai,
@@ -372,10 +398,25 @@ USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
                 "Camera positioned at a strict 90-degree angle from the side. Full silhouette profile from side edge to side edge. Zero vanishing points.",
                 "front view, 3/4 view, back view, top view, perspective distortion"
             ),
+            "vista_lateral_derecha": build_prompts(
+                "STRICT ORTHOGONAL RIGHT SIDE PROFILE",
+                "Camera positioned perpendicular to the furniture's right side, showing its full right-side silhouette with zero perspective distortion.",
+                "front view, left side view, 3/4 view, back view, top view"
+            ),
+            "vista_lateral_izquierda": build_prompts(
+                "STRICT ORTHOGONAL LEFT SIDE PROFILE",
+                "Camera positioned perpendicular to the furniture's left side, showing its full left-side silhouette with zero perspective distortion.",
+                "front view, right side view, 3/4 view, back view, top view"
+            ),
             "vista_3_4_izquierda": build_prompts(
                 "3/4 ISOMETRIC PERSPECTIVE FACING LEFT",
                 "Classic commercial catalog 3/4 perspective angled 45 degrees, object facing toward the left. Elevated 15 degrees to show depth, seat cushion, and left armrest clearly.",
-                "flat front, flat side, facing right, rear view, bird's-eye"
+                "flat front view, strict side view, back view, top view"
+            ),
+            "vista_3_4_derecha": build_prompts(
+                "3/4 ISOMETRIC PERSPECTIVE FACING RIGHT",
+                "Classic commercial catalog 3/4 perspective angled 45 degrees, object facing toward the right. Elevated 15 degrees to show depth, seat cushion, and right armrest clearly.",
+                "flat front view, strict side view, back view, top view"
             ),
             "vista_desde_arriba": build_prompts(
                 "DIRECT TOP-DOWN CENITAL BIRD'S-EYE VIEW",
@@ -386,86 +427,64 @@ USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}"""
                 "3/4 REAR ISOMETRIC PERSPECTIVE (BACK 3/4 VIEW)",
                 "Commercial catalog 3/4 angle viewed from the rear/back corner at 45 degrees, clearly showing the backrest structure, rear tailoring, and back legs.",
                 "front view, front cushions, direct front, top-down"
+            ),
+            "vista_lifestyle": build_prompts(
+                "LIFESTYLE CATALOG VIEW IN A NATURAL ROOM",
+                "Show the complete furniture in a believable, tastefully styled luxury interior while preserving its exact identity, proportions, and original colors.",
+                "isolated white background, cutout, unrelated furniture, clutter, text",
+                environment="ENVIRONMENT: Place the furniture in a refined, realistic interior appropriate to its use, with subtle decor, natural soft daylight, and architectural room context."
             )
         }
 
-
-    def generate_clone_views_prompt_v3(self, target_name: str, furniture_analysis: Optional[Dict[str, Any]] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
-        ma = furniture_analysis or {}
-        furn_item = ma.get("furniture_item", "furniture")
-        geom_struct = ma.get("geometric_structure", "original structural geometry")
-        materials = ma.get("existing_materials", "original materials")
-        
-        white_bg = self._build_white_isolation_str(fondo_blanco)
-        hardware_str = self._build_photo_hardware_str()
-        if hd:
-            hardware_str += " High Definition, 8k, extremely detailed, highly realistic"
-        
-        prompt_ai_studio = f"""SYSTEM: You are a Master Commercial Product Photographer and AI Image Editor.
-TASK: Re-color and re-upholster the Target View Image ('{target_name}'). The Target View Image contains a sofa with the wrong color. You must change its color to match the PERFECT Reference Image (Image 1).
-TARGET GEOMETRY: You MUST preserve the exact geometry, structural shape, and camera angle of the Target View Image (Image 2). Do NOT modify the furniture's physical structure. It is a {furn_item}.
-{white_bg}
-HARDWARE: {hardware_str}
-USER NOTES: {notas_vistas_usuario if notas_vistas_usuario else "None"}
-CRITICAL COLOR/TEXTURE CONSTRAINT: The furniture in the Target View Image MUST be changed to match this exact material: [{materials}]. Paint over the white/wrong color of the Target View Image with the exact hex color, thread pattern, and material finish from Image 1. They must look like the exact same physical product.
-
-Negative Prompt: altered geometry, changed structure, mismatched texture, shadows, drop shadows, floor shadows, background, CGI, plastic, 3D render, generic fabric, keeping the original color of image 2, white color."""
-
-        return {
-            "google_ai_studio": prompt_ai_studio,
-            "chatgpt_dalle3": f"""Generate a hyper-realistic commercial catalog photograph of a {furn_item}.
-Camera/Geometry: Preserve the exact structural topology of the Target View Image.
-Lighting: Professional studio lighting.
-Materials: The upholstery MUST be meticulously crafted exactly as: {materials}.
-Environment: {white_bg}
-Hardware constraints: {hardware_str}""",
-            "midjourney_v6": f"Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF. Upholstered exactly in {materials}. {hardware_str} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic --ar 1:1 --v 6.1 --style raw --cw 100"
-        }
-
-
-
-    def generate_dynamic_gemini_clone_prompt(self, ref_bytes: bytes, view_bytes: bytes, api_key: Optional[str] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
+    def generate_dynamic_gemini_clone_prompt(self, ref_bytes: bytes, view_bytes: bytes, api_key: Optional[str] = None, notas_usuario: str = "") -> Dict[str, str]:
+        key = self.get_api_key(api_key)
+        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
+        local_prompt = (
+            "Use Image 1 as the exact upholstery color and texture reference, and edit Image 2. "
+            "Preserve the furniture identity, geometry, proportions, camera angle, seams, folds, "
+            "and lighting in Image 2. Reupholster only the upholstered surfaces to match Image 1 with 0% color change; "
+            "make the texture follow the furniture's perspective and contours naturally. "
+            "Place the furniture on a pure seamless white background (#FFFFFF) without shadows. "
+            "Render as a photorealistic commercial catalog photograph." + notes_part
+        )
         if not key:
-            fallback = "Please set GEMINI_API_KEY to generate dynamic prompts."
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
+            }
             
         try:
             from google import genai
             from google.genai import types
-            import io
-            from PIL import Image
             
             client = genai.Client(api_key=key)
             img_ref = self._prepare_image(ref_bytes)
             img_view = self._prepare_image(view_bytes)
             
-            sys_prompt = """You are a Master Prompt Engineer specializing in Generative AI for e-commerce photography.
+            sys_prompt = f"""You are a Master Prompt Engineer specializing in Generative AI for e-commerce furniture photography.
 I am providing you with two images: 
 1. Image 1 (Reference): A piece of furniture with the EXACT CORRECT COLOR and TEXTURE.
 2. Image 2 (Target View): A different angle of the furniture that has the WRONG COLOR, but the CORRECT GEOMETRY.
 
-Your task is to write the absolute BEST, highly-detailed text prompt to feed into a Diffusion Model (like Google AI Studio/Imagen 3 or DALL-E) to recolor Image 2 using the color and texture of Image 1.
+Your task is to write the absolute BEST, highly-detailed text prompt to feed into a Diffusion Model (like Google AI Studio / Gemini Image Generation or DALL-E) to recolor Image 2 using the exact color and texture of Image 1.
 
-Perform a DEEP ANALYSIS of Image 1 right now: Extract the precise hex color tone, the fabric type, the weave, and the lighting interaction.
-Perform a DEEP ANALYSIS of Image 2 right now: Identify the exact camera angle, structural geometry, and folds.
+Perform a DEEP ANALYSIS of Image 1: Extract the precise color tone, fabric weave, and lighting reflection.
+Perform a DEEP ANALYSIS of Image 2: Identify camera angle, structural geometry, and folds.
 
-Now, WRITE A GENERIC BUT HIGHLY SPECIFIC PROMPT.
-The prompt must explicitly command the AI to:
+Write a prompt that explicitly commands the AI to:
 - Keep the exact geometric structure and camera angle of Image 2.
-- Forcefully upholster the furniture in Image 2 using the deep analysis color/texture you extracted from Image 1.
-- CRITICAL FOR TEXTURE: Explicitly command the AI to wrap the texture realistically around the 3D geometry. The texture must follow the perspective, curves, folds, and lighting of the object perfectly.
-- CRITICAL FOR LIGHTING: Preserve all highlights, midtones, and deep shadows of the furniture's original folds so the fabric doesn't look flat or like a 2D overlay.
-- {'Ensure a pure white background with zero shadows, extracting the furniture perfectly centered. DO NOT include any text, numbers, or color palettes.' if fondo_blanco else 'Maintain the original background environment.'}
-- Be extremely descriptive about the color and material finish so the AI has no choice but to use it.
+- Upholster the furniture in Image 2 using the exact color and texture extracted from Image 1 with ZERO color shift.
+- Realistically wrap texture around 3D curves and folds.
+- Place the furniture centered on a pure seamless white background (#FFFFFF) with zero shadows.
+- DO NOT include any text, letters, numbers, watermark, or color palettes.{notes_part}
 
-Output ONLY the text of the prompt. Do not include introductory text or explanations. Do not use quotes around the entire prompt."""
+Output ONLY the prompt text."""
 
             res = self._call_gemini(
                 client=client,
                 contents=[sys_prompt, img_ref, img_view],
-                config=types.GenerateContentConfig(
-                    temperature=0.7
-                )
+                config=types.GenerateContentConfig(temperature=0.4)
             )
             
             generated_prompt = res.text.strip()
@@ -477,55 +496,58 @@ Output ONLY the text of the prompt. Do not include introductory text or explanat
             }
         except Exception as e:
             print(f"[AIPromptServiceV3] Error generating dynamic prompt: {e}")
-            fallback = f"Error generating dynamic prompt with Gemini: {str(e)}"
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
-
-
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
+            }
 
     def generate_dynamic_fabric_view_prompt(
-        self, fabric_bytes: bytes, view_bytes: bytes, api_key: Optional[str] = None, fondo_blanco: bool = True, hd: bool = False) -> Dict[str, str]:
+        self, fabric_bytes: bytes, view_bytes: bytes, api_key: Optional[str] = None, notas_usuario: str = ""
+    ) -> Dict[str, str]:
         key = self.get_api_key(api_key)
+        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
+        local_prompt = (
+            "Use Image 1 as the exact fabric color, weave, and texture reference. Edit only the "
+            "upholstery on the furniture in Image 2. Preserve its identity, geometry, proportions, "
+            "camera angle, seams, folds, and lighting. Apply the fabric realistically, following "
+            "the furniture's curves and perspective with 0% hue change. "
+            "Use a pure seamless white background (#FFFFFF) without shadows. "
+            "Render as a photorealistic commercial catalog photograph." + notes_part
+        )
         if not key:
-            fallback = "Please set GEMINI_API_KEY to generate dynamic prompts."
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
+            }
             
         try:
             from google import genai
             from google.genai import types
-            import io
-            from PIL import Image
             
             client = genai.Client(api_key=key)
             img_fab = self._prepare_image(fabric_bytes)
             img_view = self._prepare_image(view_bytes)
             
-            sys_prompt = """You are a Master Prompt Engineer specializing in Generative AI for e-commerce photography.
+            sys_prompt = f"""You are a Master Prompt Engineer specializing in Generative AI for e-commerce photography.
 I am providing you with two images: 
-1. Image 1 (Fabric Sample): A macro shot or swatch of a fabric that contains the EXACT COLOR and TEXTURE to be used.
+1. Image 1 (Fabric Sample): A swatch of fabric that contains the EXACT COLOR and TEXTURE.
 2. Image 2 (Furniture View): A specific angle of a piece of furniture.
 
-Your task is to write the absolute BEST, highly-detailed text prompt to feed into a Diffusion Model (like Google AI Studio/Imagen 3 or DALL-E) to apply the fabric from Image 1 onto the furniture in Image 2.
-
-Perform a DEEP ANALYSIS of Image 1 right now: Extract the precise hex color tone, the fabric type, the weave, and the lighting interaction.
-Perform a DEEP ANALYSIS of Image 2 right now: Identify the exact camera angle, structural geometry, and folds.
-
-Now, WRITE A GENERIC BUT HIGHLY SPECIFIC PROMPT.
-The prompt must explicitly command the AI to:
+Your task is to write a highly-detailed text prompt to apply the fabric from Image 1 onto the furniture in Image 2.
+Commands:
 - Keep the exact geometric structure and camera angle of Image 2.
-- Forcefully upholster the furniture in Image 2 using the deep analysis color/texture you extracted from Image 1.
-- CRITICAL FOR TEXTURE: Explicitly command the AI to wrap the texture realistically around the 3D geometry. The texture must follow the perspective, curves, folds, and lighting of the object perfectly.
-- CRITICAL FOR LIGHTING: Preserve all highlights, midtones, and deep shadows of the furniture's original folds so the fabric doesn't look flat or like a 2D overlay.
-- {'Ensure a pure white background with zero shadows, extracting the furniture perfectly centered. DO NOT include any text, numbers, or color palettes.' if fondo_blanco else 'Maintain the original background environment.'}
-- Be extremely descriptive about the color and material finish so the AI has no choice but to use it.
+- Apply the fabric from Image 1 with exact color fidelity and texture scale.
+- Pure seamless white background (#FFFFFF) without shadows.
+- No text, letters, numbers, or labels.{notes_part}
 
-Output ONLY the text of the prompt."""
+Output ONLY the prompt text."""
 
             res = self._call_gemini(
                 client=client,
                 contents=[sys_prompt, img_fab, img_view],
-                config=types.GenerateContentConfig(
-                    temperature=0.7
-                )
+                config=types.GenerateContentConfig(temperature=0.4)
             )
             
             generated_prompt = res.text.strip()
@@ -536,9 +558,12 @@ Output ONLY the text of the prompt."""
                 "midjourney_v6": generated_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
             }
         except Exception as e:
-            print(f"[AIPromptServiceV3] Error generating dynamic prompt: {e}")
-            fallback = f"Error generating dynamic prompt with Gemini: {str(e)}"
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            print(f"[AIPromptServiceV3] Error generating dynamic fabric prompt: {e}")
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --iw 2.0 --style raw --stylize 0 --v 6.1"
+            }
 
     def generate_minimalist_environment_prompt_v3(
         self,
@@ -549,22 +574,16 @@ Output ONLY the text of the prompt."""
         tipo_mueble_usuario: str = "",
         medidas_usuario: str = "",
         lugar_casa_usuario: str = "",
-        notas_vistas_usuario: str = "",
-        api_key: Optional[str] = None,
-        hd: bool = False
+        notas_usuario: str = "",
+        api_key: Optional[str] = None
     ) -> Dict[str, str]:
         key = self.get_api_key(api_key)
-        if not key:
-            fallback = "Please set GEMINI_API_KEY to generate minimalist prompts."
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
-            
         fa = fabric_analysis or {}
         ma = furniture_analysis or {}
         f_name = fa.get("name")
         f_color = fa.get("color_description")
         f_texture = fa.get("texture_detail")
         
-        # Merge AI analysis with user's specific furniture type
         furn_item = ma.get("furniture_item", furniture_name)
         if tipo_mueble_usuario and tipo_mueble_usuario.strip():
             furn_item = f"{tipo_mueble_usuario.strip()} ({furn_item})"
@@ -573,43 +592,66 @@ Output ONLY the text of the prompt."""
         camera_angle = ma.get("camera_angle", "original perspective")
         existing_materials = ma.get("existing_materials", "original materials and color")
 
-        # Fallback to extracted existing materials if no specific fabric sample is provided
         if not f_name:
             f_name = "its original upholstery material"
         if not f_color:
-            f_color = "its original color"
+            f_color = "its authentic original color"
         if not f_texture:
             f_texture = existing_materials
 
         hardware_str = self._build_photo_hardware_str()
-        if hd:
-            hardware_str += " High Definition, 8k, extremely detailed, highly realistic"
-        target_imgs = self.get_img_refs(2, num_furniture_images)
+        target_imgs = self.get_img_refs(2 if (fa and fa.get("name")) else 1, num_furniture_images)
         
-        # Combinatorial random seeds for infinite non-repetitive variety
-        import random
         lightings = [
-            "soft morning sunlight casting subtle branch shadows",
-            "golden hour light filtering through sheer linen curtains",
-            "diffused overcast daylight for ultra-soft, even illumination",
-            "warm afternoon sunlight creating elegant geometric shadows"
+            "soft morning daylight streaming in through sheer floor-to-ceiling linen drapes",
+            "golden hour warm sunlight casting delicate linear shadows",
+            "soft diffused overcast architectural light with even, flattering illumination",
+            "gentle indirect afternoon light accentuating textures without harsh specular glare"
         ]
         architectures = [
-            "organic curved plaster walls with a microcement floor",
-            "a minimalist Mediterranean space with a large arched window",
-            "a Japandi interior with light oak wood panels and warm beige tones",
-            "a high-end Scandinavian loft with floor-to-ceiling glass and soft gray tones",
-            "a Wabi-Sabi inspired room with raw, textured clay walls and neutral earthy tones"
+            "an open-concept Japandi living space with warm oak slatted accents and polished light microcement floor",
+            "a high-end minimalist Scandinavian interior with chalky limestone walls and herringbone natural wood flooring",
+            "a luxury contemporary Mediterranean residence with soft textured plaster walls and a subtle arched entryway",
+            "an architectural minimalist salon with organic curved walls and neutral sand tones"
         ]
         props = [
-            "a subtle potted olive tree in the background",
-            "an artisanal wabi-sabi ceramic vase with dry branches",
-            "a sleek, minimalist brass floor lamp",
-            "a curated stack of design books on a low travertine plinth",
-            "a moody, minimalist abstract textured painting on the wall"
+            "a large minimalist sculptural ceramic vase with dry botanical branches in the background",
+            "a curated low travertine coffee table and subtle architectural olive tree in a matte pot",
+            "a sleek minimalist brass arc floor lamp and architectural design monograph",
+            "a textured abstract neutral wall canvas and soft woven wool area rug"
         ]
         
-        random_style = f"{random.choice(architectures)}, illuminated by {random.choice(lightings)}. Subtle background decor: {random.choice(props)}."
+        chosen_arch = random.choice(architectures)
+        chosen_light = random.choice(lightings)
+        chosen_prop = random.choice(props)
+        random_style = f"{chosen_arch}, illuminated by {chosen_light}. Complementary styling: {chosen_prop}."
+
+        room_context = lugar_casa_usuario.strip() if lugar_casa_usuario and lugar_casa_usuario.strip() else "a luxurious, high-end living area appropriate for this piece"
+        proportions = medidas_usuario.strip() if medidas_usuario and medidas_usuario.strip() else "exact true-to-scale real-world proportions"
+        notes_part = f"\nSPECIAL USER INSTRUCTIONS: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
+
+        local_prompt = f"""SYSTEM: You are a World-Class Interior Designer and Architectural Photographer.
+TASK: Place the furniture piece from Image 1 into a breathtaking architectural lifestyle environment.
+TARGET FURNITURE: {furn_item}.
+PRESERVATION MANDATE:
+- Maintain EXACT geometry, shape, proportions ({proportions}), and structure: {geom_struct}.
+- Preserve the EXACT upholstery color ({f_color}) and texture ({f_texture}) with ZERO color alteration.
+- Preserve all wooden/metal frames and legs.
+SETTING & STYLING:
+- Location: {room_context}.
+- Atmosphere: {random_style}.
+- Lighting: {chosen_light}.
+- Composition: Wide-angle interior catalog shot, furniture perfectly grounded on the floor, 40% soft background bokeh (f/2.8 lens).
+HARDWARE: {hardware_str}{notes_part}
+
+Negative Prompt: altered furniture color, changed upholstery tone, deformed furniture, fake CGI look, floating furniture, cluttered room, neon lighting, oversaturated colors, text, watermark."""
+
+        if not key:
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --ar 16:9 --v 6.1 --style raw"
+            }
         
         try:
             from google import genai
@@ -617,51 +659,42 @@ Output ONLY the text of the prompt."""
             
             client = genai.Client(api_key=key)
             
-            sys_prompt = f"""You are a Master Prompt Engineer specializing in Generative AI for luxury furniture photography.
-Your task is to write a highly-detailed text prompt to generate an image of the {furn_item} seen in {target_imgs}.
+            sys_prompt = f"""You are a Master Prompt Engineer specializing in Generative AI for luxury interior design and furniture photography.
+Your task is to write a highly-detailed text prompt to generate an architectural interior image containing the {furn_item} seen in {target_imgs}.
 
 CRITICAL CONSTRAINTS:
 1. GEOMETRY & IDENTITY: Maintain EXACTLY the {geom_struct} and {camera_angle} from the reference images. DO NOT alter the shape, dimensions, or design of the furniture.
-2. MATERIAL: The upholstery/material MUST be {f_name} ({f_color}, {f_texture}). Do NOT modify the color or texture.
-3. PERSPECTIVE: The camera must be at a far distance (wide shot, distant perspective) perfect for a high-end furniture catalog.
-4. ENVIRONMENT (DYNAMIC & CREATIVE): Create a hyper-realistic, high-end minimalist architectural interior setting. 
-   - BASE STYLE FOR THIS GENERATION: {random_style}
-   - Use warm, neutral, earthy tones (beige, taupe, soft gray, warm plaster, microcement).
-   - Place the {furn_item} in its CORRECT NATURAL ROOM (e.g., a dining chair belongs in a dining room, a sofa in a living room, a bed in a bedroom).
-   - EXACT LOCATION: {lugar_casa_usuario if lugar_casa_usuario else "The natural room for this furniture"}
-   - REAL WORLD MEASUREMENTS: {medidas_usuario if medidas_usuario else "Standard realistic proportions"}
-   - The environment colors must elegantly contrast with the furniture's color ({f_color} / {existing_materials}) to make the furniture pop.
-5. LIGHTING & CINEMATOGRAPHY: Strictly incorporate the lighting style specified in the BASE STYLE above. Use cinematic descriptions to make it look incredibly realistic.
-6. DEPTH OF FIELD: The background must be 40% blurred (moderate bokeh, f/2.8 lens effect), keeping the furniture perfectly sharp and in focus.
+2. MATERIAL & COLOR FIDELITY: The upholstery/material MUST be {f_name} ({f_color}, {f_texture}). Do NOT modify the color or texture (0% hue drift).
+3. PERSPECTIVE: Wide architectural shot, grounded realistically on the floor with natural ambient contact shadows.
+4. ENVIRONMENT: Hyper-realistic luxury minimalist interior:
+   - Setting: {room_context}
+   - Style: {random_style}
+   - Proportions: {proportions}
+   - Neutral complementary palette that highlights the furniture without clashing.
+5. LIGHTING: {chosen_light}.
+6. DEPTH OF FIELD: Soft background blur (f/2.8 lens effect), furniture razor sharp in focus.{notes_part}
 
-Write a prompt that can be used in DALL-E, Midjourney, or Google AI Studio. Be extremely descriptive.
-Output ONLY the text of the prompt without quotes or introductions."""
+Output ONLY the clean prompt text for Google AI Studio / Gemini."""
 
             res = self._call_gemini(
                 client=client,
                 contents=[sys_prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.8
-                )
+                config=types.GenerateContentConfig(temperature=0.7)
             )
             
             generated_prompt = res.text.strip()
             
             return {
-                "google_ai_studio": f"SYSTEM: You are a Master Commercial Product Photographer and AI Editor.\nTASK: Place the furniture from {target_imgs} into a new environment according to the prompt.\n\n" + generated_prompt,
+                "google_ai_studio": f"SYSTEM: You are a Master Commercial Product Photographer and Interior Art Director.\nTASK: Place the furniture into a luxury architectural space.\n\n" + generated_prompt,
                 "chatgpt_dalle3": generated_prompt,
                 "midjourney_v6": generated_prompt + " --ar 16:9 --v 6.1 --style raw"
             }
         except Exception as e:
             print(f"[AIPromptServiceV3] Error generating minimalist prompt: {e}")
-            fallback = f"Error generating prompt: {str(e)}"
-            return {"google_ai_studio": fallback, "chatgpt_dalle3": fallback, "midjourney_v6": fallback}
+            return {
+                "google_ai_studio": local_prompt,
+                "chatgpt_dalle3": local_prompt,
+                "midjourney_v6": local_prompt + " --ar 16:9 --v 6.1 --style raw"
+            }
 
 ai_prompt_service_v3 = AIPromptServiceV3()
-
-
-
-
-
-
-
