@@ -238,22 +238,25 @@ Hardware: {hardware_str}"""
         dalle_shadows = "[SHADOWS: 0% ground shadows, 0% drop shadows, strict digital cutout]"
 
         if mode == "dual":
-            target_imgs = self.get_img_refs(3, num_furniture_images)
-            
             prompt_ai_studio = f"""SYSTEM: You are a Master Commercial Product Photographer and AI Editor.
-TASK: Accurately replace BOTH the fabric upholstery AND the wooden components in {target_imgs}.
+IMAGE IDENTIFICATION (Order-Independent):
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+- FABRIC SWATCH: Locate the image containing the fabric swatch ('{f_name}').
+- WOOD SAMPLE: Locate the image containing the wood texture sample ('{w_name}').
+
+TASK: Accurately replace BOTH the fabric upholstery AND the wooden components on the TARGET FURNITURE using the samples provided.
 TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}.
 {white_bg}
 HARDWARE: {hardware_str}
-FABRIC (From Image 1): Apply {f_name}. Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism. Preserve exact fabric hue with zero color drift.
-WOOD (From Image 2): Apply {w_name}. Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.{notes_part}
+FABRIC APPLICATION: Apply the exact material from FABRIC SWATCH ('{f_name}'). Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism. Preserve exact fabric hue with zero color drift.
+WOOD APPLICATION: Apply the exact material from WOOD SAMPLE ('{w_name}'). Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.{notes_part}
 
 Negative Prompt: CGI, 3D render, plastic, generic fabric, loss of weave, suede, velvet, leather, flat wood, altered geometry, perspective distortion, floor shadows, grey background, text, letters, numbers."""
 
             prompt_dalle = f"""{dalle_defense}
 {dalle_shadows}
-Generate a hyper-realistic commercial catalog photograph of a {furn_item}.
+Generate a hyper-realistic commercial catalog photograph of a {furn_item} ('{furniture_name}').
 Camera/Geometry: Locked at {camera_angle}. Structural topology: {geom_struct}.
 Lighting: {lighting_dir}.
 Materials: The upholstery is meticulously crafted from {f_name} ({f_texture}, {f_color}, {f_light}). The wooden base/legs are carved from {w_name} ({w_texture}, {w_color}, {w_light}).
@@ -263,21 +266,23 @@ Hardware constraints: {hardware_str}"""
             prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Upholstered in {f_name} ({f_color}, {f_texture}), wooden components are {w_name} ({w_color}, {w_texture}). Shot at {camera_angle}, {lighting_dir}. {hardware_str}{notes_part} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic, suede, velvet, leather, text --ar 1:1 --v 6.1 --style raw --c 5"""
 
         elif mode == "fabric_only":
-            target_imgs = self.get_img_refs(2, num_furniture_images)
-            
             prompt_ai_studio = f"""SYSTEM: You are a Master Commercial Product Photographer and AI Editor.
-TASK: Accurately replace the fabric upholstery in {target_imgs}.
+IMAGE IDENTIFICATION (Order-Independent):
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+- FABRIC SWATCH: Locate the image containing the fabric swatch ('{f_name}').
+
+TASK: Accurately replace the fabric upholstery on the TARGET FURNITURE using the FABRIC SWATCH.
 TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}. Preserve original wood/legs.
 {white_bg}
 HARDWARE: {hardware_str}
-FABRIC (From Image 1): Apply {f_name}. Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism. Strictly lock hue and saturation to reference.{notes_part}
+FABRIC APPLICATION: Apply the exact material from FABRIC SWATCH ('{f_name}'). Color: {f_color}. Texture: {f_texture}. Interaction: {f_light}. Scale down texture dramatically (98% reduction) for macroscopic realism. Strictly lock hue and saturation to reference.{notes_part}
 
 Negative Prompt: CGI, 3D render, plastic, generic fabric, loss of weave, suede, velvet, leather, color shift, altered geometry, perspective distortion, floor shadows, grey background, text, numbers."""
 
             prompt_dalle = f"""{dalle_defense}
 {dalle_shadows}
-Generate a hyper-realistic commercial catalog photograph of a {furn_item}.
+Generate a hyper-realistic commercial catalog photograph of a {furn_item} ('{furniture_name}').
 Camera/Geometry: Locked at {camera_angle}. Structural topology: {geom_struct}.
 Lighting: {lighting_dir}. Preserve original wooden components precisely.
 Materials: The upholstery is meticulously crafted from {f_name} ({f_texture}, {f_color}, {f_light}).
@@ -287,21 +292,23 @@ Hardware constraints: {hardware_str}"""
             prompt_mj = f"""Commercial luxury product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}. Upholstered in {f_name} ({f_color}, {f_texture}), original wooden legs preserved. Shot at {camera_angle}, {lighting_dir}. {hardware_str}{notes_part} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic, suede, velvet, leather, text --ar 1:1 --v 6.1 --style raw --c 5"""
 
         else: # wood_only
-            target_imgs = self.get_img_refs(2, num_furniture_images)
-            
             prompt_ai_studio = f"""SYSTEM: You are a Master Commercial Product Photographer and AI Editor.
-TASK: Accurately replace ONLY the wooden components (legs, frame, base) in {target_imgs}.
+IMAGE IDENTIFICATION (Order-Independent):
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+- WOOD SAMPLE: Locate the image containing the wood texture sample ('{w_name}').
+
+TASK: Accurately replace ONLY the wooden components (legs, frame, base) on the TARGET FURNITURE using the WOOD SAMPLE.
 TARGET ITEM: {furn_item}.
 GEOMETRY & CAMERA: Strictly lock camera to {camera_angle}. Preserve exact topology: {geom_struct}. Replicate original lighting: {lighting_dir}. Preserve original fabric perfectly.
 {white_bg}
 HARDWARE: {hardware_str}
-WOOD (From Image 1): Apply {w_name}. Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.{notes_part}
+WOOD APPLICATION: Apply the exact material from WOOD SAMPLE ('{w_name}'). Color: {w_color}. Grain: {w_texture}. Interaction: {w_light}. Anatomical grain flow.{notes_part}
 
 Negative Prompt: altered fabric, changed upholstery, CGI, 3D render, plastic, flat wood, altered geometry, perspective distortion, floor shadows, grey background, text, numbers."""
 
             prompt_dalle = f"""{dalle_defense}
 {dalle_shadows}
-Generate a hyper-realistic commercial catalog photograph of a {furn_item}.
+Generate a hyper-realistic commercial catalog photograph of a {furn_item} ('{furniture_name}').
 Camera/Geometry: Locked at {camera_angle}. Structural topology: {geom_struct}.
 Lighting: {lighting_dir}. Preserve original fabric upholstery perfectly.
 Materials: The wooden base/legs/frame are carved from {w_name} ({w_texture}, {w_color}, {w_light}).

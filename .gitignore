@@ -14,6 +14,9 @@ __pycache__/
 
 # Credentials and secrets
 credentials.json
+GOOGLE_OAUTH_CREDENTIALS.json
+oauth_client.json
+token.json
 .streamlit/secrets.toml
 *cache.json
 datos_general_cache.json

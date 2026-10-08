@@ -89,6 +89,9 @@ def render_prompt_studio_v3():
 .studio-card-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 8px; }
 .protection-badge { background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34D399; border-radius: 8px; padding: 10px 14px; font-size: 12px; font-weight: 600; text-align: center; margin-top: 14px; }
 .meta-pill { display: inline-block; background: #1E293B; border: 1px solid #475569; color: #38BDF8; font-size: 11px; padding: 4px 10px; border-radius: 6px; margin: 2px; }
+/* Ocultar botón 'Examinar' para forzar arrastre */
+[data-testid="stFileUploader"] button { display: none !important; }
+[data-testid="stFileUploaderDropzoneInstructions"] > div:last-child { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -199,47 +202,49 @@ def render_prompt_studio_v3():
             madera_bytes = None
 
         elif modo_sel in ["Solo Tela", "Tela + Madera", "Vistas + Tela", "Entorno"]:
-            st.markdown("##### 🧵 Muestra de Tela (Opcional para Entorno)")
-            tab_t1, tab_t2 = st.tabs([f"📂 Menú Catálogo ({len(lista_telas)} telas)", "📤 Arrastrar / Subir Foto"])
-            with tab_t1:
-                sel_t_nombre = st.selectbox("Elige tela del catálogo:", opciones_telas, key=f"sb_tela_oficial_v3_{st.session_state.clear_key_v3}")
-                if sel_t_nombre:
-                    obj_t = map_telas.get(sel_t_nombre.upper())
-                    if obj_t and obj_t.get("id"):
-                        tela_name = sel_t_nombre
-                        tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
-            with tab_t2:
-                tela_up = st.file_uploader(
-                    "Arrastra aquí la foto de la muestra de tela",
-                    type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
-                    key=f"st_tela_v3_{st.session_state.clear_key_v3}"
-                )
-                if tela_up:
-                    tela_name = tela_up.name
-                    tela_bytes = tela_up.getvalue()
+            st.markdown("##### 🧵 Muestra de Tela")
+            sel_t_nombre = st.selectbox(
+                f"Elegir del catálogo oficial ({len(lista_telas)} telas):",
+                opciones_telas,
+                key=f"sb_tela_oficial_v3_{st.session_state.clear_key_v3}"
+            )
+            tela_up = st.file_uploader(
+                "O arrastra tu foto de tela personalizada aquí:",
+                type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
+                key=f"st_tela_v3_{st.session_state.clear_key_v3}"
+            )
+            if tela_up:
+                tela_name = tela_up.name
+                tela_bytes = tela_up.getvalue()
+            elif sel_t_nombre:
+                obj_t = map_telas.get(sel_t_nombre.upper())
+                if obj_t and obj_t.get("id"):
+                    tela_name = sel_t_nombre
+                    tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
 
         if modo_sel in ["Solo Madera", "Tela + Madera"]:
             st.markdown("##### 🪵 Muestra de Madera")
-            tab_m1, tab_m2 = st.tabs([f"📂 Menú Catálogo ({len(lista_maderas)} maderas)", "📤 Arrastrar / Subir Foto"])
-            with tab_m1:
-                sel_m_nombre = st.selectbox("Elige madera del catálogo:", opciones_maderas, key=f"sb_madera_oficial_v3_{st.session_state.clear_key_v3}")
-                if sel_m_nombre:
-                    obj_m = map_maderas.get(sel_m_nombre.upper())
-                    if obj_m:
-                        madera_name = sel_m_nombre
-                        if obj_m.get("local_path") and os.path.exists(obj_m["local_path"]):
-                            madera_bytes = Path(obj_m["local_path"]).read_bytes()
-                        elif obj_m.get("id"):
-                            madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
-            with tab_m2:
-                madera_up = st.file_uploader(
-                    "Arrastra aquí la foto de la muestra de madera",
-                    type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
-                    key=f"st_madera_v3_{st.session_state.clear_key_v3}"
-                )
-                if madera_up:
-                    madera_name = madera_up.name
-                    madera_bytes = madera_up.getvalue()
+            sel_m_nombre = st.selectbox(
+                f"Elegir del catálogo oficial ({len(lista_maderas)} maderas):",
+                opciones_maderas,
+                key=f"sb_madera_oficial_v3_{st.session_state.clear_key_v3}"
+            )
+            madera_up = st.file_uploader(
+                "O arrastra tu foto de madera personalizada aquí:",
+                type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
+                key=f"st_madera_v3_{st.session_state.clear_key_v3}"
+            )
+            if madera_up:
+                madera_name = madera_up.name
+                madera_bytes = madera_up.getvalue()
+            elif sel_m_nombre:
+                obj_m = map_maderas.get(sel_m_nombre.upper())
+                if obj_m:
+                    madera_name = sel_m_nombre
+                    if obj_m.get("local_path") and os.path.exists(obj_m["local_path"]):
+                        madera_bytes = Path(obj_m["local_path"]).read_bytes()
+                    elif obj_m.get("id"):
+                        madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
 
         st.markdown("---")
         st.markdown("##### 💬 Comentarios / Notas adicionales (Opcional)")

@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import sys
 import os
 from pathlib import Path
@@ -33,13 +33,15 @@ def main():
     )
     st.sidebar.markdown("---")
     
-    # Navegación rápida entre aplicaciones de la suite
-    st.sidebar.markdown("### 🌐 Suite de aplicaciones")
+    # Navegación rápida y accesos directos
+    st.sidebar.markdown("### 🌐 Enlaces & Herramientas IA")
     st.sidebar.markdown("""
-    * [PROMPT](https://buena-espero.onrender.com)
-    * [BASE DE DATOS](https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849)
-    * [ALTA DE ODO](https://app-vkz2.onrender.com/)
-    * [FOTOS BASE](https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849)
+    * 📊 [Documento Alta Odoo (Sheets)](https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849)
+    * 🚀 [App Alta Odoo (Render)](https://app-vkz2.onrender.com/)
+    * ⚡ [Google AI Studio (Elegir Cuenta)](https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/)
+    * ♊ [Google Gemini (Elegir Cuenta)](https://accounts.google.com/AccountChooser?continue=https://gemini.google.com/app)
+    * 🤖 [ChatGPT (DALL-E 3)](https://chatgpt.com/)
+    * 📁 [Carpeta Fotos Final (Drive)](https://drive.google.com/drive/folders/1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B)
     """)
     st.sidebar.markdown("---")
     
