@@ -376,6 +376,12 @@ CAMERA CONSTRAINT: Camera directly above the furniture looking straight down at 
 {white_bg}
 Negative Prompt: front view, side view, isometric, visible legs from front, angled view, text."""
 
+        p_picada_frontal = f"""{base_prompt}
+GENERATE: A high-angle elevated semi-top front view (vista desde arriba con frontal).
+CAMERA CONSTRAINT: Camera positioned at approximately 60 to 70 degrees elevation looking down toward the front of the furniture. Shows both the top surface cushions and the front elevation, legs, and silhouette.
+{white_bg}
+Negative Prompt: extreme flat top view, direct side view, back view, perspective distortion, text."""
+
         p_3_4_post = f"""{base_prompt}
 GENERATE: A commercial catalog 3/4 rear isometric view (viewed from the back corner).
 CAMERA CONSTRAINT: 45-degree angle from the rear, clearly showing backrest tailoring and rear structure.
@@ -397,6 +403,7 @@ Negative Prompt: front view, front cushions, direct front, top-down, text."""
             "vista_3_4_izquierda": build_dict(p_3_4_izq, "vista 3/4 mirando a la izquierda"),
             "vista_3_4_derecha": build_dict(p_3_4_der, "vista 3/4 mirando a la derecha"),
             "vista_desde_arriba": build_dict(p_cenital, "vista desde arriba"),
+            "vista_picada_frontal": build_dict(p_picada_frontal, "vista desde arriba con frontal"),
             "vista_3_4_posterior": build_dict(p_3_4_post, "vista 3/4 posterior")
         }
 

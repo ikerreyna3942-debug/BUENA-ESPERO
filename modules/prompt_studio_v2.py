@@ -107,7 +107,7 @@ def render_prompt_studio_v2():
         """, unsafe_allow_html=True)
 
     with c_head_right:
-        btn_col1, btn_col2 = st.columns(2)
+        btn_col1, btn_col2 = st.columns([1, 1])
         with btn_col1:
             if "last_studio_result_v2" in st.session_state:
                 res = st.session_state["last_studio_result_v2"]
@@ -128,9 +128,10 @@ def render_prompt_studio_v2():
                 )
         with btn_col2:
             if st.button("🗑️ Limpiar Todo", key="btn_clear_studio_v2", use_container_width=True):
-                c = st.session_state.get("clear_key_v2", 0)
-                st.session_state.clear()
-                st.session_state["clear_key_v2"] = c + 1
+                keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith("last_studio_result") or k.startswith("st_") or k.startswith("sb_") or k.startswith("txt_")]
+                for k in keys_to_del:
+                    del st.session_state[k]
+                st.session_state.clear_key_v2 = st.session_state.get("clear_key_v2", 0) + 1
                 st.rerun()
 
     # Carga de catálogos conectados
@@ -171,7 +172,14 @@ def render_prompt_studio_v2():
         )
 
         if modo_sel in ["Solo Tela", "Tela + Madera"]:
-            st.markdown("##### 🧵 Muestra de Tela")
+            st.markdown(f"""
+            <div style="background:#1E293B; border:1px solid #475569; border-radius:8px; padding:10px 12px; margin-top:10px; margin-bottom:6px;">
+                <div style="font-weight:700; color:#38BDF8; font-size:13px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>🧵 Muestra de Tela</span>
+                    <span style="font-size:11px; color:#94A3B8;">Catálogo ({len(lista_telas)} telas) o Arrastrar foto</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
             sel_t_nombre = st.selectbox(
                 f"Elegir del catálogo oficial ({len(lista_telas)} telas):",
                 opciones_telas,
@@ -185,14 +193,23 @@ def render_prompt_studio_v2():
             if tela_up:
                 tela_name = tela_up.name
                 tela_bytes = tela_up.getvalue()
+                st.markdown(f"<div style='background:rgba(16,185,129,0.15); border:1px solid #10B981; border-radius:6px; padding:5px 10px; font-size:12px; color:#34D399; margin-top:-4px; margin-bottom:8px;'>✅ <b>Foto personalizada activa:</b> {tela_up.name}</div>", unsafe_allow_html=True)
             elif sel_t_nombre:
                 obj_t = map_telas.get(sel_t_nombre.upper())
                 if obj_t and obj_t.get("id"):
                     tela_name = sel_t_nombre
                     tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
+                    st.markdown(f"<div style='background:rgba(56,189,248,0.15); border:1px solid #38BDF8; border-radius:6px; padding:5px 10px; font-size:12px; color:#38BDF8; margin-top:-4px; margin-bottom:8px;'>✅ <b>Tela de catálogo activa:</b> {sel_t_nombre}</div>", unsafe_allow_html=True)
 
         elif modo_sel == "Vistas (360)":
-            st.markdown("##### 🧵 Muestra de Tela (Opcional)")
+            st.markdown(f"""
+            <div style="background:#1E293B; border:1px solid #475569; border-radius:8px; padding:10px 12px; margin-top:10px; margin-bottom:6px;">
+                <div style="font-weight:700; color:#38BDF8; font-size:13px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>🧵 Muestra de Tela (Opcional)</span>
+                    <span style="font-size:11px; color:#94A3B8;">Catálogo ({len(lista_telas)} telas) o Arrastrar foto</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
             sel_t_nombre = st.selectbox(
                 f"Elegir del catálogo oficial ({len(lista_telas)} telas):",
                 opciones_telas,
@@ -206,14 +223,23 @@ def render_prompt_studio_v2():
             if tela_up:
                 tela_name = tela_up.name
                 tela_bytes = tela_up.getvalue()
+                st.markdown(f"<div style='background:rgba(16,185,129,0.15); border:1px solid #10B981; border-radius:6px; padding:5px 10px; font-size:12px; color:#34D399; margin-top:-4px; margin-bottom:8px;'>✅ <b>Foto personalizada activa:</b> {tela_up.name}</div>", unsafe_allow_html=True)
             elif sel_t_nombre:
                 obj_t = map_telas.get(sel_t_nombre.upper())
                 if obj_t and obj_t.get("id"):
                     tela_name = sel_t_nombre
                     tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
+                    st.markdown(f"<div style='background:rgba(56,189,248,0.15); border:1px solid #38BDF8; border-radius:6px; padding:5px 10px; font-size:12px; color:#38BDF8; margin-top:-4px; margin-bottom:8px;'>✅ <b>Tela de catálogo activa:</b> {sel_t_nombre}</div>", unsafe_allow_html=True)
 
         if modo_sel in ["Solo Madera", "Tela + Madera"]:
-            st.markdown("##### 🪵 Muestra de Madera")
+            st.markdown(f"""
+            <div style="background:#1E293B; border:1px solid #475569; border-radius:8px; padding:10px 12px; margin-top:10px; margin-bottom:6px;">
+                <div style="font-weight:700; color:#F59E0B; font-size:13px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>🪵 Muestra de Madera</span>
+                    <span style="font-size:11px; color:#94A3B8;">Catálogo ({len(lista_maderas)} maderas) o Arrastrar foto</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
             sel_m_nombre = st.selectbox(
                 f"Elegir del catálogo oficial ({len(lista_maderas)} maderas):",
                 opciones_maderas,
@@ -227,6 +253,7 @@ def render_prompt_studio_v2():
             if madera_up:
                 madera_name = madera_up.name
                 madera_bytes = madera_up.getvalue()
+                st.markdown(f"<div style='background:rgba(16,185,129,0.15); border:1px solid #10B981; border-radius:6px; padding:5px 10px; font-size:12px; color:#34D399; margin-top:-4px; margin-bottom:8px;'>✅ <b>Foto personalizada activa:</b> {madera_up.name}</div>", unsafe_allow_html=True)
             elif sel_m_nombre:
                 obj_m = map_maderas.get(sel_m_nombre.upper())
                 if obj_m:
@@ -235,6 +262,7 @@ def render_prompt_studio_v2():
                         madera_bytes = Path(obj_m["local_path"]).read_bytes()
                     elif obj_m.get("id"):
                         madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
+                    st.markdown(f"<div style='background:rgba(245,158,11,0.15); border:1px solid #F59E0B; border-radius:6px; padding:5px 10px; font-size:12px; color:#FCD34D; margin-top:-4px; margin-bottom:8px;'>✅ <b>Madera de catálogo activa:</b> {sel_m_nombre}</div>", unsafe_allow_html=True)
 
         st.markdown("---")
         st.markdown("##### 💬 Comentarios / Notas adicionales (Opcional)")

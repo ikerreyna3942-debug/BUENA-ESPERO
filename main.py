@@ -37,7 +37,7 @@ def main():
     st.sidebar.markdown("### 🌐 Enlaces & Herramientas IA")
     st.sidebar.markdown("""
     * 📊 [Documento Alta Odoo (Sheets)](https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849)
-    * 🚀 [App Alta Odoo (Render)](https://app-vkz2.onrender.com/)
+    * 🚀 [App Alta Odoo (Render)](https://app-1-3y7y.onrender.com/)
     * ⚡ [Google AI Studio (Elegir Cuenta)](https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/)
     * ♊ [Google Gemini (Elegir Cuenta)](https://accounts.google.com/AccountChooser?continue=https://gemini.google.com/app)
     * 🤖 [ChatGPT (DALL-E 3)](https://chatgpt.com/)

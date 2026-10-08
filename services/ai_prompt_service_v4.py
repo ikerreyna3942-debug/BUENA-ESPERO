@@ -430,6 +430,11 @@ HARDWARE: {hardware_str}"""
                 "Camera positioned directly above the furniture looking straight down at 90 degrees. True geometric top footprint, showing cushions and depth from above.",
                 "front view, side view, legs visible from front, angled view"
             ),
+            "vista_picada_frontal": build_prompts(
+                "HIGH-ANGLE ELEVATED SEMI-TOP FRONT VIEW (VISTA DESDE ARRIBA CON FRONTAL)",
+                "Elevated camera angle at approximately 60 to 70 degrees looking down at the front of the furniture. Shows the top surface and seat cushions clearly while also revealing the front elevation, front legs, and front silhouette.",
+                "extreme flat top view, direct side view, back view, perspective distortion"
+            ),
             "vista_3_4_posterior": build_prompts(
                 "3/4 REAR ISOMETRIC PERSPECTIVE (BACK 3/4 VIEW)",
                 "Commercial catalog 3/4 angle viewed from the rear/back corner at 45 degrees, clearly showing the backrest structure, rear tailoring, and back legs.",
