@@ -123,13 +123,22 @@ def render_prompt_studio_v5():
                 res = st.session_state["last_studio_result_v5"]
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                    prompt_txt = res["prompts"].get("google_ai_studio", "") or res["prompts"].get("chatgpt_dalle3", "")
+                    prompts_dict = res.get("prompts", {})
+                    # Master prompt
+                    prompt_txt = prompts_dict.get("google_ai_studio", "") or prompts_dict.get("chatgpt_dalle3", "")
                     if prompt_txt:
-                        zip_file.writestr(f"prompt_v5_5vistas_{res.get('mueble_name', 'generado')}.txt", prompt_txt)
+                        zip_file.writestr(f"00_prompt_maestro_5_vistas.txt", prompt_txt)
+                    
+                    # Individual views
+                    ind_vistas = prompts_dict.get("individual_vistas", [])
+                    for idx, iv in enumerate(ind_vistas, start=1):
+                        v_content = f"--- PROMPT GOOGLE AI STUDIO (FOTO INDIVIDUAL) ---\n{iv.get('google_ai_studio', '')}\n\n--- PROMPT CHATGPT / DALL-E 3 (FOTO INDIVIDUAL) ---\n{iv.get('chatgpt_dalle3', '')}"
+                        zip_file.writestr(f"0{idx}_{iv.get('id', f'vista_{idx}')}.txt", v_content)
+
                 st.download_button(
-                    label="📦 Descargar Kit",
+                    label="📦 Descargar Kit (5 Vistas)",
                     data=zip_buffer.getvalue(),
-                    file_name=f"kit_v5_{res.get('mueble_name', 'prompt')}.zip",
+                    file_name=f"kit_5_vistas_{res.get('mueble_name', 'mueble')}.zip",
                     mime="application/zip",
                     use_container_width=True,
                     key="btn_dl_kit_v5"
@@ -160,17 +169,14 @@ def render_prompt_studio_v5():
 
     with col1:
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
-        st.markdown('<div class="studio-card-title">🎯 1. Configuración de Materiales y Vistas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="studio-card-title">🎯 1. Vistas (5 fotos)</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#E9D5FF;">
+            ✨ <b>1 Solo Prompt Maestro:</b> Genera 3/4 Derecha, Lateral, De Frente, 3/4 Picada Alta y Cenital desde arriba simultáneamente.
+        </div>
+        """, unsafe_allow_html=True)
 
-        modo_sel = st.radio(
-            "Selecciona el tipo de trabajo:",
-            ["Tela + Madera (5 Vistas)", "Solo Tela (5 Vistas)", "Solo Madera (5 Vistas)", "Solo Mueble Original (5 Vistas)"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key=f"studio_mode_radio_v5_{st.session_state.clear_key_v5}"
-        )
-
-        st.markdown("---")
         st.markdown("##### 🛋️ Foto del Mueble Original (Arrastrar)")
         mueble_up = st.file_uploader(
             "Arrastra la foto del mueble original aquí:",
@@ -179,74 +185,11 @@ def render_prompt_studio_v5():
             accept_multiple_files=True
         )
 
-        if modo_sel in ["Tela + Madera (5 Vistas)", "Solo Tela (5 Vistas)"]:
-            st.markdown(f"""
-            <div style="background:#1E293B; border:1px solid #475569; border-radius:8px; padding:10px 12px; margin-top:10px; margin-bottom:6px;">
-                <div style="font-weight:700; color:#38BDF8; font-size:13px; display:flex; justify-content:space-between; align-items:center;">
-                    <span>🧵 Muestra de Tela</span>
-                    <span style="font-size:11px; color:#94A3B8;">Catálogo ({len(lista_telas)} telas) o Arrastrar foto</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            sel_t_nombre = st.selectbox(
-                f"Elegir del catálogo oficial ({len(lista_telas)} telas):",
-                opciones_telas,
-                key=f"sb_tela_oficial_v5_{st.session_state.clear_key_v5}"
-            )
-            tela_up = st.file_uploader(
-                "O arrastra tu foto de tela personalizada aquí:",
-                type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
-                key=f"st_tela_v5_{st.session_state.clear_key_v5}"
-            )
-            if tela_up:
-                tela_name = tela_up.name
-                tela_bytes = tela_up.getvalue()
-                st.markdown(f"<div style='background:rgba(16,185,129,0.15); border:1px solid #10B981; border-radius:6px; padding:5px 10px; font-size:12px; color:#34D399; margin-top:-4px; margin-bottom:8px;'>✅ <b>Foto personalizada activa:</b> {tela_up.name}</div>", unsafe_allow_html=True)
-            elif sel_t_nombre:
-                obj_t = map_telas.get(sel_t_nombre.upper())
-                if obj_t and obj_t.get("id"):
-                    tela_name = sel_t_nombre
-                    tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
-                    st.markdown(f"<div style='background:rgba(56,189,248,0.15); border:1px solid #38BDF8; border-radius:6px; padding:5px 10px; font-size:12px; color:#38BDF8; margin-top:-4px; margin-bottom:8px;'>✅ <b>Tela de catálogo activa:</b> {sel_t_nombre}</div>", unsafe_allow_html=True)
-
-        if modo_sel in ["Tela + Madera (5 Vistas)", "Solo Madera (5 Vistas)"]:
-            st.markdown(f"""
-            <div style="background:#1E293B; border:1px solid #475569; border-radius:8px; padding:10px 12px; margin-top:10px; margin-bottom:6px;">
-                <div style="font-weight:700; color:#F59E0B; font-size:13px; display:flex; justify-content:space-between; align-items:center;">
-                    <span>🪵 Muestra de Madera</span>
-                    <span style="font-size:11px; color:#94A3B8;">Catálogo ({len(lista_maderas)} maderas) o Arrastrar foto</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            sel_m_nombre = st.selectbox(
-                f"Elegir del catálogo oficial ({len(lista_maderas)} maderas):",
-                opciones_maderas,
-                key=f"sb_madera_oficial_v5_{st.session_state.clear_key_v5}"
-            )
-            madera_up = st.file_uploader(
-                "O arrastra tu foto de madera personalizada aquí:",
-                type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
-                key=f"st_madera_v5_{st.session_state.clear_key_v5}"
-            )
-            if madera_up:
-                madera_name = madera_up.name
-                madera_bytes = madera_up.getvalue()
-                st.markdown(f"<div style='background:rgba(16,185,129,0.15); border:1px solid #10B981; border-radius:6px; padding:5px 10px; font-size:12px; color:#34D399; margin-top:-4px; margin-bottom:8px;'>✅ <b>Foto personalizada activa:</b> {madera_up.name}</div>", unsafe_allow_html=True)
-            elif sel_m_nombre:
-                obj_m = map_maderas.get(sel_m_nombre.upper())
-                if obj_m:
-                    madera_name = sel_m_nombre
-                    if obj_m.get("local_path") and os.path.exists(obj_m["local_path"]):
-                        madera_bytes = Path(obj_m["local_path"]).read_bytes()
-                    elif obj_m.get("id"):
-                        madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
-                    st.markdown(f"<div style='background:rgba(245,158,11,0.15); border:1px solid #F59E0B; border-radius:6px; padding:5px 10px; font-size:12px; color:#FCD34D; margin-top:-4px; margin-bottom:8px;'>✅ <b>Madera de catálogo activa:</b> {sel_m_nombre}</div>", unsafe_allow_html=True)
-
         st.markdown("---")
         st.markdown("##### 💬 Comentarios y Directivas Especiales para la IA")
         st.caption("✨ Las notas que escribas aquí se integrarán como instrucciones de alta prioridad en el prompt.")
         notas_usuario = st.text_area(
-            "Indica especificaciones clave (ej. Mantener las costuras en tono beige, patas cónicas de roble claro, cojines esponjosos):",
+            "Indica especificaciones clave (ej. Mantener las costuras beige, patas de roble claro, cojines esponjosos):",
             placeholder="Escribe aquí tus observaciones para que la IA las tome en cuenta con máxima prioridad...",
             key=f"txt_notas_usuario_v5_{st.session_state.clear_key_v5}",
             height=90
@@ -254,56 +197,33 @@ def render_prompt_studio_v5():
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        if st.button("⚡ GENERAR PROMPT UNIFICADO (5 VISTAS)", type="primary", use_container_width=True, key="btn_gen_prompts_v5"):
+        if st.button("⚡ GENERAR PROMPT (5 VISTAS)", type="primary", use_container_width=True, key="btn_gen_prompts_v5"):
             if not mueble_up:
                 st.error("⚠️ Por favor arrastra al menos una fotografía del mueble original.")
             else:
                 progress_holder = st.empty()
-                progress_holder.info("⏳ Analizando imágenes con Gemini Vision y generando Prompt Maestro...")
+                progress_holder.info("⏳ Analizando mueble con Gemini Vision y generando Prompt Maestro...")
                 try:
                     m_file = mueble_up[0] if isinstance(mueble_up, list) else mueble_up
                     m_name = getattr(m_file, "name", "Mueble").split(".")[0]
                     m_bytes = m_file.getvalue() if hasattr(m_file, "getvalue") else m_file.read()
 
-                    f_ana = None
-                    if tela_bytes:
-                        f_ana = ai_prompt_service_v5.analyze_material(tela_bytes, material_type="fabric")
-                    
-                    w_ana = None
-                    if madera_bytes:
-                        w_ana = ai_prompt_service_v5.analyze_material(madera_bytes, material_type="wood")
-
                     m_ana = ai_prompt_service_v5.analyze_furniture_for_enhancement(m_bytes)
 
-                    # Determinar modo interno para el generador
-                    if modo_sel == "Tela + Madera (5 Vistas)":
-                        internal_mode = "dual"
-                    elif modo_sel == "Solo Tela (5 Vistas)":
-                        internal_mode = "fabric_only"
-                    elif modo_sel == "Solo Madera (5 Vistas)":
-                        internal_mode = "wood_only"
-                    else:
-                        internal_mode = "solo_mueble"
-
                     prompts = ai_prompt_service_v5.generate_all_in_one_multi_view_prompt(
-                        mode=internal_mode,
+                        mode="solo_mueble",
                         furniture_name=m_name,
-                        fabric_analysis=f_ana,
-                        wood_analysis=w_ana,
                         furniture_analysis=m_ana,
                         notas_usuario=notas_usuario
                     )
 
                     st.session_state["last_studio_result_v5"] = {
-                        "modo": modo_sel,
+                        "modo": "Vistas (5 fotos)",
                         "mueble_name": m_name,
-                        "fabric_analysis": f_ana,
-                        "wood_analysis": w_ana,
                         "furniture_analysis": m_ana,
                         "prompts": prompts,
                         "notas_usuario": notas_usuario
                     }
-                    progress_holder.success("✅ ¡Prompt Maestro de 5 Vistas generado exitosamente!")
                 except Exception as e:
                     progress_holder.error(f"❌ Error al procesar: {str(e)}")
 
@@ -336,32 +256,64 @@ def render_prompt_studio_v5():
 
     with col3:
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
-        st.markdown('<div class="studio-card-title">✨ 3. Prompt Maestro de 5 Vistas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="studio-card-title">✨ 3. Prompts de las 5 Vistas</div>', unsafe_allow_html=True)
 
         if "last_studio_result_v5" in st.session_state:
             res = st.session_state["last_studio_result_v5"]
             prompts = res.get("prompts", {})
+            ind_vistas = prompts.get("individual_vistas", [])
 
-            st.markdown("""
-            <div style="background:rgba(168,85,247,0.15); border:1px solid #A855F7; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#E9D5FF;">
-                🔥 <b>1 Solo Prompt para las 5 Vistas:</b><br>
-                1. 3/4 mirando a la derecha | 2. Lateral 90° | 3. De frente 0° | 4. 3/4 Picada alta desde arriba | 5. Cenital desde arriba 90°
-            </div>
-            """, unsafe_allow_html=True)
+            # Modo de visualización: Fotos Separadas vs Hoja Combinada
+            tipo_salida = st.radio(
+                "Elige cómo deseas generar tus fotos:",
+                ["📷 5 Fotos Separadas (1 foto individual por ángulo)", "🖼️ 1 Hoja Combinada (Todas las vistas en 1 imagen)"],
+                horizontal=True,
+                key=f"rb_tipo_salida_v5_{st.session_state.clear_key_v5}"
+            )
 
-            p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
-            with p_tab1:
-                p_txt = prompts.get("google_ai_studio", "")
-                st.text_area("Prompt Google AI Studio (Nano Banana 2.1 & Pro):", p_txt, height=260, key="txt_res_ais_v5")
-                render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key="cp_res_ais_v5")
-            with p_tab2:
-                p_dalle = prompts.get("chatgpt_dalle3", "")
-                st.text_area("Prompt ChatGPT / DALL-E 3 (Multi-View Contact Sheet):", p_dalle, height=240, key="txt_res_dal_v5")
-                render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key="cp_res_dal_v5")
-            with p_tab3:
-                p_mj = prompts.get("midjourney_v6", "")
-                st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key="txt_res_mj_v5")
-                render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key="cp_res_mj_v5")
+            if "5 Fotos Separadas" in tipo_salida:
+                st.markdown("""
+                <div style="background:rgba(16,185,129,0.15); border:1px solid #10B981; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#A7F3D0;">
+                    ✅ <b>Fotos 100% Individuales:</b> Cada prompt genera <b>1 sola foto individual</b> del mueble en su ángulo exacto a máxima resolución sobre fondo blanco puro.
+                </div>
+                """, unsafe_allow_html=True)
+
+                if ind_vistas:
+                    vista_tabs = st.tabs([f"{v['icon']} {v['label'].split(':')[0]}" for v in ind_vistas])
+                    for i, (tab, v_data) in enumerate(zip(vista_tabs, ind_vistas)):
+                        with tab:
+                            st.markdown(f"##### {v_data['icon']} {v_data['label']}")
+                            engine_tabs = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)"])
+                            with engine_tabs[0]:
+                                p_ais = v_data.get("google_ai_studio", "")
+                                st.text_area(f"Prompt AI Studio ({v_data['label']}):", p_ais, height=220, key=f"txt_ind_ais_{i}_{st.session_state.clear_key_v5}")
+                                render_copy_button(p_ais, label=f"📋 Copiar Prompt para Google AI Studio", key=f"cp_ind_ais_{i}_{st.session_state.clear_key_v5}")
+                            with engine_tabs[1]:
+                                p_dal = v_data.get("chatgpt_dalle3", "")
+                                st.text_area(f"Prompt ChatGPT / DALL-E 3 ({v_data['label']}):", p_dal, height=200, key=f"txt_ind_dal_{i}_{st.session_state.clear_key_v5}")
+                                render_copy_button(p_dal, label=f"📋 Copiar Prompt para ChatGPT", key=f"cp_ind_dal_{i}_{st.session_state.clear_key_v5}")
+
+            else:
+                st.markdown("""
+                <div style="background:rgba(168,85,247,0.15); border:1px solid #A855F7; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#E9D5FF;">
+                    🔥 <b>1 Solo Prompt Maestro (5 Vistas en 1 imagen):</b><br>
+                    1. 3/4 mirando a la derecha | 2. Lateral 90° | 3. De frente 0° | 4. 3/4 Picada alta | 5. Cenital 90°
+                </div>
+                """, unsafe_allow_html=True)
+
+                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
+                with p_tab1:
+                    p_txt = prompts.get("google_ai_studio", "")
+                    st.text_area("Prompt Google AI Studio (Nano Banana 2.1 & Pro):", p_txt, height=240, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}")
+                with p_tab2:
+                    p_dalle = prompts.get("chatgpt_dalle3", "")
+                    st.text_area("Prompt ChatGPT / DALL-E 3 (Multi-View Contact Sheet):", p_dalle, height=220, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}")
+                with p_tab3:
+                    p_mj = prompts.get("midjourney_v6", "")
+                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=200, key=f"txt_res_mj_v5_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}")
 
             # Metadatos del análisis de visión
             fa = res.get("fabric_analysis")
@@ -378,6 +330,6 @@ def render_prompt_studio_v5():
                     if wa:
                         st.markdown(f"**🪵 Madera:** `{wa.get('name', 'N/A')}` | `{wa.get('color_description', 'N/A')}`")
         else:
-            st.info("👈 Arrastra la foto de tu mueble a la izquierda y presiona **⚡ GENERAR PROMPT UNIFICADO** para obtener el prompt de las 5 vistas de un solo golpe.")
+            st.info("👈 Arrastra la foto de tu mueble a la izquierda y presiona **⚡ GENERAR PROMPT (5 VISTAS)** para obtener tus prompts.")
 
         st.markdown('</div>', unsafe_allow_html=True)

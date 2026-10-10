@@ -154,6 +154,121 @@ CRITICAL: You MUST accurately describe the EXACT color (name, shade, and hex est
     def _build_white_isolation_str(self) -> str:
         return "ENVIRONMENT: Isolate the furniture piece on a pure seamless solid white background (#FFFFFF), with zero floor shadows, no drop shadows, and no harsh reflections. CRITICAL: DO NOT include any text, typography, watermark, letters, numbers, color chips, or palettes."
 
+    def generate_individual_perspectives_v5(
+        self,
+        furniture_name: str,
+        furniture_analysis: Optional[Dict[str, Any]] = None,
+        notas_usuario: str = ""
+    ) -> List[Dict[str, Any]]:
+        """
+        Genera los 5 PROMPTS INDIVIDUALES para generar 5 FOTOS SEPARADAS (1 foto por ángulo):
+        1. 3/4 Isométrica mirando a la derecha
+        2. Lateral estricta (90°)
+        3. Frontal directa (0°)
+        4. 3/4 Picada alta / semi-arriba (60°-70°)
+        5. Cenital superior (90° desde arriba)
+        """
+        ma = furniture_analysis or {}
+        furn_item = ma.get("furniture_item", furniture_name)
+        geom_struct = ma.get("geometric_structure", "original structural geometry")
+        existing_mats = ma.get("existing_materials", "original materials")
+        hardware_str = self._build_photo_hardware_str()
+        white_bg = self._build_white_isolation_str()
+
+        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        if user_notes_clean:
+            user_directives_block = f"""
+===================================================================
+⚡ MANDATORY USER CUSTOM DIRECTIVES (HIGHEST PRIORITY):
+{user_notes_clean}
+* Strictly incorporate every detail requested above without exceptions.
+==================================================================="""
+        else:
+            user_directives_block = ""
+
+        vistas_specs = [
+            {
+                "id": "vista_1_3_4_derecha",
+                "label": "Vista 1: 3/4 Isométrica (Mirando a la Derecha)",
+                "icon": "📐",
+                "angle_desc": "3/4 isometric perspective at a 45-degree angle, with the furniture facing toward the right. Elevated 15 degrees to display depth, front-right profile, seat cushions, and leg construction clearly.",
+                "dalle_angle": "3/4 isometric angle looking towards the right side at 45 degrees, slightly elevated."
+            },
+            {
+                "id": "vista_2_lateral",
+                "label": "Vista 2: Perfil Lateral Estricto (90°)",
+                "icon": "➡️",
+                "angle_desc": "Strict 90-degree orthogonal lateral side profile view. Full silhouette from front edge to back edge with zero perspective vanishing points.",
+                "dalle_angle": "Pure 90-degree side profile orthogonal view, perfectly flat side elevation."
+            },
+            {
+                "id": "vista_3_frente",
+                "label": "Vista 3: Elevación Frontal Directa (0°)",
+                "icon": "🖼️",
+                "angle_desc": "Direct flat 0-degree front elevation view. Camera placed directly in front of the furniture at exact center-line eye level, zero perspective vanishing distortion.",
+                "dalle_angle": "Direct flat front view at 0 degrees, pure eye-level frontal elevation."
+            },
+            {
+                "id": "vista_4_3_4_arriba",
+                "label": "Vista 4: 3/4 Picada Alta Semi-Cenital (60°-70°)",
+                "icon": "🔍",
+                "angle_desc": "High-angle elevated 3/4 semi-top perspective shot at 60 to 70 degrees looking down at the front. Clearly displays top surface/cushion depth while preserving front silhouette and legs.",
+                "dalle_angle": "Elevated 3/4 high-angle shot from above at 65 degrees looking down at the front."
+            },
+            {
+                "id": "vista_5_cenital",
+                "label": "Vista 5: Cenital Superior Directo (90° desde arriba)",
+                "icon": "🔝",
+                "angle_desc": "Direct 90-degree top-down cenital bird's-eye view. Camera positioned directly overhead pointing straight down. Shows pure geometric top footprint and proportions.",
+                "dalle_angle": "Direct 90-degree bird's-eye top-down view pointing straight down from above."
+            }
+        ]
+
+        results = []
+        for v in vistas_specs:
+            # Prompt para Google AI Studio / Gemini (1 sola foto individual)
+            prompt_ai_studio = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director.
+IMAGE IDENTIFICATION:
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+{user_directives_block}
+
+TASK: Generate ONE SINGLE INDIVIDUAL COMMERCIAL CATALOG PHOTOGRAPH of the target furniture item ({furn_item}), isolated as a single object centered in the frame. DO NOT generate multiple items, do not generate a collage, do not generate a contact sheet. Only ONE single standalone furniture piece.
+
+MANDATORY CAMERA PERSPECTIVE:
+- {v['angle_desc']}
+
+MATERIAL & GEOMETRIC FIDELITY:
+- 100% exact original upholstery color, textile weave, and wooden/metal finishes from TARGET FURNITURE: [{existing_mats}].
+- Topology & Geometry: {geom_struct}.
+
+{white_bg}
+HARDWARE & RENDERING:
+{hardware_str}
+{"USER SPECIFIC OVERRIDES: " + user_notes_clean if user_notes_clean else ""}
+
+Negative Prompt: collage, contact sheet, multiple views, multiple furniture pieces, grid, split screen, side-by-side, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark."""
+
+            # Prompt para ChatGPT / DALL-E 3 (1 sola foto individual)
+            prompt_dalle = f"""[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography, Real-world textile micro-imperfections]
+[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
+Generate ONE single standalone commercial catalog photo of a {furn_item} ('{furniture_name}'), exact original materials preserved ({existing_mats}).
+Camera Angle: {v['dalle_angle']}
+CRITICAL: Only 1 single furniture object centered in the image. No multiple angles, no contact sheet, no collage.
+Topological Geometry: {geom_struct}.
+{user_directives_block if user_notes_clean else ""}
+Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Camera: {hardware_str}"""
+
+            results.append({
+                "id": v["id"],
+                "label": v["label"],
+                "icon": v["icon"],
+                "google_ai_studio": prompt_ai_studio,
+                "chatgpt_dalle3": prompt_dalle
+            })
+
+        return results
+
     def generate_all_in_one_multi_view_prompt(
         self,
         mode: str,
@@ -162,14 +277,9 @@ CRITICAL: You MUST accurately describe the EXACT color (name, shade, and hex est
         wood_analysis: Optional[Dict[str, Any]] = None,
         furniture_analysis: Optional[Dict[str, Any]] = None,
         notas_usuario: str = ""
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
-        Genera 1 SOLO PROMPT UNIFICADO que instruye al modelo a generar TODAS las 5 vistas canónicas:
-        1. 3/4 mirando a la derecha
-        2. Lateral estricta
-        3. De frente (elevación frontal 0°)
-        4. 3/4 desde arriba en perspectiva / picada alta
-        5. Desde arriba (Cenital 90°)
+        Genera tanto los 5 PROMPTS INDIVIDUALES (fotos separadas) como el PROMPT MAESTRO COMBINADO.
         """
         fa = fabric_analysis or {}
         wa = wood_analysis or {}
@@ -236,7 +346,7 @@ CRITICAL: You MUST accurately describe the EXACT color (name, shade, and hex est
 - TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}')."""
             mat_summary = f"exact original materials preserved ({existing_mats})"
 
-        # PROMPT 1: GOOGLE AI STUDIO / GEMINI (Nano Banana 2.1 & Nano Banana Pro)
+        # PROMPT COMBINADO 1: GOOGLE AI STUDIO / GEMINI (Hoja de contacto multi-ángulo)
         prompt_ai_studio = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director.
 {order_independent_block}
 {user_directives_block}
@@ -265,7 +375,7 @@ HARDWARE & RENDERING:
 
 Negative Prompt: CGI, 3D render, cartoon, plastic, generic fabric, loss of weave texture, suede, velvet, leather, color drift, shifted hue, distorted geometry, warped proportions, missing legs, floor shadows, grey backdrop, room reflections, clutter, text, letters, numbers, watermark, labels."""
 
-        # PROMPT 2: CHATGPT (DALL-E 3 / GPT-4o Image Generation)
+        # PROMPT COMBINADO 2: CHATGPT (DALL-E 3)
         dalle_defense = "[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography, Real-world textile micro-imperfections]"
         dalle_shadows = "[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]"
 
@@ -287,13 +397,20 @@ Materials & Finish:
 Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
 Camera: {hardware_str}"""
 
-        # PROMPT 3: MIDJOURNEY V6.1
+        # PROMPT COMBINADO 3: MIDJOURNEY V6.1
         prompt_mj = f"""Commercial luxury furniture catalog multi-angle sheet, 5 comprehensive views (3/4 right view, orthogonal side profile, direct front elevation, high-angle semi-top 3/4 view, top-down bird's-eye view) of a {furn_item}, {geom_struct}. {mat_summary}. Pure seamless solid white background #FFFFFF, {hardware_str} {("DIRECTIVES: " + user_notes_clean) if user_notes_clean else ""} --no floor shadows, drop shadows, grey background, room, CGI, 3D render, plastic, text, watermark --ar 16:9 --v 6.1 --style raw --c 5"""
+
+        individual_vistas = self.generate_individual_perspectives_v5(
+            furniture_name=furniture_name,
+            furniture_analysis=furniture_analysis,
+            notas_usuario=notas_usuario
+        )
 
         return {
             "google_ai_studio": prompt_ai_studio,
             "chatgpt_dalle3": prompt_dalle,
-            "midjourney_v6": prompt_mj
+            "midjourney_v6": prompt_mj,
+            "individual_vistas": individual_vistas
         }
 
 ai_prompt_service_v5 = AIPromptServiceV5()
