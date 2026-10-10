@@ -21,6 +21,7 @@ from modules.prompt_studio_v1 import render_prompt_studio as render_v1
 from modules.prompt_studio_v2 import render_prompt_studio_v2 as render_v2
 from modules.prompt_studio_v3 import render_prompt_studio_v3 as render_v3
 from modules.prompt_studio_v4 import render_prompt_studio_v4 as render_v4
+from modules.prompt_studio_v5 import render_prompt_studio_v5 as render_v5
 
 def main():
     st.sidebar.markdown("### 🤖 ESTUDIO DE IA")
@@ -29,7 +30,13 @@ def main():
     st.sidebar.markdown("---")
     version = st.sidebar.radio(
         "📌 Versión del estudio:",
-        ["V4 Ultimate (Nuevas Casillas)", "V3 Nivel Dios (Recomendado)", "V2 Optimizado", "V1 Clásica original"]
+        [
+            "V5 Multi-Vistas Pro (1 Solo Prompt)",
+            "V4 Ultimate (Nuevas Casillas)",
+            "V3 Nivel Dios (Recomendado)",
+            "V2 Optimizado",
+            "V1 Clásica original"
+        ]
     )
     st.sidebar.markdown("---")
     
@@ -45,7 +52,9 @@ def main():
     """)
     st.sidebar.markdown("---")
     
-    if version == "V4 Ultimate (Nuevas Casillas)":
+    if version == "V5 Multi-Vistas Pro (1 Solo Prompt)":
+        render_v5()
+    elif version == "V4 Ultimate (Nuevas Casillas)":
         render_v4()
     elif version == "V3 Nivel Dios (Recomendado)":
         render_v3()
