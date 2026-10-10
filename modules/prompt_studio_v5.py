@@ -197,33 +197,53 @@ def render_prompt_studio_v5():
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        if st.button("⚡ GENERAR PROMPT (5 VISTAS)", type="primary", use_container_width=True, key="btn_gen_prompts_v5"):
+        col_b1, col_b2 = st.columns([1, 1])
+        with col_b1:
+            btn_5vistas = st.button("🎯 Vistas (5 fotos)", type="primary", use_container_width=True, key=f"btn_gen_5v_{st.session_state.clear_key_v5}")
+        with col_b2:
+            btn_2_1 = st.button("⚡ Vistas (2.1)", type="secondary", use_container_width=True, key=f"btn_gen_21_{st.session_state.clear_key_v5}")
+
+        if btn_5vistas or btn_2_1:
             if not mueble_up:
                 st.error("⚠️ Por favor arrastra al menos una fotografía del mueble original.")
             else:
                 progress_holder = st.empty()
-                progress_holder.info("⏳ Analizando mueble con Gemini Vision y generando Prompt Maestro...")
+                modo_nombre = "Vistas (2.1)" if btn_2_1 else "Vistas (5 fotos)"
+                progress_holder.info(f"⏳ Analizando mueble con Gemini Vision y generando {modo_nombre}...")
                 try:
-                    m_file = mueble_up[0] if isinstance(mueble_up, list) else mueble_up
-                    m_name = getattr(m_file, "name", "Mueble").split(".")[0]
-                    m_bytes = m_file.getvalue() if hasattr(m_file, "getvalue") else m_file.read()
+                    m_bytes_list = []
+                    if isinstance(mueble_up, list):
+                        for f in mueble_up:
+                            m_bytes_list.append(f.getvalue() if hasattr(f, "getvalue") else f.read())
+                        m_name = getattr(mueble_up[0], "name", "Mueble").split(".")[0]
+                    else:
+                        m_bytes_list.append(mueble_up.getvalue() if hasattr(mueble_up, "getvalue") else mueble_up.read())
+                        m_name = getattr(mueble_up, "name", "Mueble").split(".")[0]
 
-                    m_ana = ai_prompt_service_v5.analyze_furniture_for_enhancement(m_bytes)
+                    m_ana = ai_prompt_service_v5.analyze_furniture_for_enhancement(m_bytes_list)
 
-                    prompts = ai_prompt_service_v5.generate_all_in_one_multi_view_prompt(
-                        mode="solo_mueble",
-                        furniture_name=m_name,
-                        furniture_analysis=m_ana,
-                        notas_usuario=notas_usuario
-                    )
+                    if btn_2_1:
+                        prompts = ai_prompt_service_v5.generate_vistas_2_1_prompts(
+                            furniture_name=m_name,
+                            furniture_analysis=m_ana,
+                            notas_usuario=notas_usuario
+                        )
+                    else:
+                        prompts = ai_prompt_service_v5.generate_all_in_one_multi_view_prompt(
+                            mode="solo_mueble",
+                            furniture_name=m_name,
+                            furniture_analysis=m_ana,
+                            notas_usuario=notas_usuario
+                        )
 
                     st.session_state["last_studio_result_v5"] = {
-                        "modo": "Vistas (5 fotos)",
+                        "modo": modo_nombre,
                         "mueble_name": m_name,
                         "furniture_analysis": m_ana,
                         "prompts": prompts,
                         "notas_usuario": notas_usuario
                     }
+                    progress_holder.success(f"✅ ¡Prompts para {modo_nombre} generados exitosamente!")
                 except Exception as e:
                     progress_holder.error(f"❌ Error al procesar: {str(e)}")
 
@@ -256,17 +276,19 @@ def render_prompt_studio_v5():
 
     with col3:
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
-        st.markdown('<div class="studio-card-title">✨ 3. Prompts de las 5 Vistas</div>', unsafe_allow_html=True)
+        modo_actual = st.session_state.get("last_studio_result_v5", {}).get("modo", "Vistas")
+        st.markdown(f'<div class="studio-card-title">✨ 3. Prompts de {modo_actual}</div>', unsafe_allow_html=True)
 
         if "last_studio_result_v5" in st.session_state:
             res = st.session_state["last_studio_result_v5"]
             prompts = res.get("prompts", {})
             ind_vistas = prompts.get("individual_vistas", [])
+            num_vistas = len(ind_vistas)
 
             # Modo de visualización: Fotos Separadas vs Hoja Combinada
             tipo_salida = st.radio(
                 "Elige cómo deseas generar tus fotos:",
-                ["📷 5 Fotos Separadas (1 foto individual por ángulo)", "🖼️ 1 Hoja Combinada (Todas las vistas en 1 imagen)"],
+                [f"📷 {num_vistas} Fotos Separadas (1 foto individual por ángulo)", "🖼️ 1 Hoja Combinada (Todas las vistas en 1 imagen)"],
                 horizontal=True,
                 key=f"rb_tipo_salida_v5_{st.session_state.clear_key_v5}"
             )

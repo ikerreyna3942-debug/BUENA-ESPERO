@@ -269,6 +269,151 @@ Camera: {hardware_str}"""
 
         return results
 
+    def generate_vistas_2_1_prompts(
+        self,
+        furniture_name: str,
+        furniture_analysis: Optional[Dict[str, Any]] = None,
+        notas_usuario: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Genera los prompts para el set 'Vistas (2.1)' con las 4 vistas canónicas exactas de catálogo:
+        1. Frontal Directa (0°)
+        2. 3/4 en Perspectiva (45°)
+        3. Lateral Estricta (90°)
+        4. Vista Superior / Cenital (Top-Down)
+        """
+        ma = furniture_analysis or {}
+        furn_item = ma.get("furniture_item", furniture_name)
+        geom_struct = ma.get("geometric_structure", "original structural geometry")
+        existing_mats = ma.get("existing_materials", "original materials")
+        hardware_str = self._build_photo_hardware_str()
+        white_bg = self._build_white_isolation_str()
+
+        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        if user_notes_clean:
+            user_directives_block = f"""
+===================================================================
+⚡ MANDATORY USER CUSTOM DIRECTIVES (HIGHEST PRIORITY):
+{user_notes_clean}
+* Strictly incorporate every detail requested above without exceptions.
+==================================================================="""
+        else:
+            user_directives_block = ""
+
+        vistas_2_1_specs = [
+            {
+                "id": "vista_2_1_frontal",
+                "label": "Vista 1: Frontal Directa (0°)",
+                "icon": "🖼️",
+                "angle_desc": "Direct flat 0-degree frontal elevation view. Camera placed directly in front of the furniture piece at eye-level center. Zero perspective tilt, pure architectural straight-on view displaying the full front facade, drawer faces, integrated accent lighting if present, and base support.",
+                "dalle_angle": "Pure direct 0-degree straight-on front elevation view, eye-level, perfectly centered."
+            },
+            {
+                "id": "vista_2_1_tres_cuartos",
+                "label": "Vista 2: 3/4 en Perspectiva (45°)",
+                "icon": "📐",
+                "angle_desc": "Classic commercial 3/4 perspective view shot at a 45-degree angle. Camera positioned at slight eye-level elevation to simultaneously capture front drawers, side profile depth, cantilevered architecture, and top surface edge.",
+                "dalle_angle": "Commercial 3/4 perspective shot at 45 degrees, revealing front facade and side depth with natural shadow drop."
+            },
+            {
+                "id": "vista_2_1_lateral",
+                "label": "Vista 3: Lateral Estricta (90°)",
+                "icon": "➡️",
+                "angle_desc": "Strict 90-degree orthogonal side profile elevation. Perfectly flat side view capturing the exact vertical silhouette, thickness of panels, open shelf cavity, and bottom base footprint with zero perspective convergence.",
+                "dalle_angle": "Strict 90-degree side profile orthogonal view, perfectly flat lateral elevation."
+            },
+            {
+                "id": "vista_2_1_superior_cenital",
+                "label": "Vista 4: Superior Cenital (Top-Down)",
+                "icon": "🔝",
+                "angle_desc": "High-angle top-down cenital perspective view looking directly down from above. Captures the rich wood grain on the entire top flat surface, rounded corner radii, and lower protruding shelf structure with its ambient warm glow.",
+                "dalle_angle": "Direct high-angle top-down shot from above, showcasing top wood surface grain and lower shelf footprint."
+            }
+        ]
+
+        individual_results = []
+        for v in vistas_2_1_specs:
+            # Prompt individual para Google AI Studio (Nano Banana 2.1 & Pro)
+            prompt_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director.
+IMAGE IDENTIFICATION:
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+{user_directives_block}
+
+TASK: Generate ONE SINGLE INDIVIDUAL COMMERCIAL CATALOG PHOTOGRAPH of the target furniture item ({furn_item}), isolated as a single object centered in the frame. DO NOT generate multiple items, do not generate a collage, do not generate a contact sheet. Only ONE single standalone furniture piece.
+
+MANDATORY CAMERA PERSPECTIVE:
+- {v['angle_desc']}
+
+MATERIAL & GEOMETRIC FIDELITY:
+- 100% exact original wood grain flow, joinery details, warm integrated LED channels (if visible), and finish from TARGET FURNITURE: [{existing_mats}].
+- Topology & Geometry: {geom_struct}.
+
+{white_bg}
+HARDWARE & RENDERING:
+{hardware_str}
+{"USER SPECIFIC OVERRIDES: " + user_notes_clean if user_notes_clean else ""}
+
+Negative Prompt: collage, contact sheet, multiple views, multiple furniture pieces, grid, split screen, side-by-side, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark."""
+
+            # Prompt individual para ChatGPT / DALL-E 3
+            prompt_dal = f"""[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography, Real-world timber micro-imperfections]
+[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
+Generate ONE single standalone commercial catalog photo of a {furn_item} ('{furniture_name}'), exact original materials preserved ({existing_mats}).
+Camera Angle: {v['dalle_angle']}
+CRITICAL: Only 1 single furniture object centered in the image. No multiple angles, no contact sheet, no collage.
+Topological Geometry: {geom_struct}.
+{user_directives_block if user_notes_clean else ""}
+Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Camera: {hardware_str}"""
+
+            individual_results.append({
+                "id": v["id"],
+                "label": v["label"],
+                "icon": v["icon"],
+                "google_ai_studio": prompt_ais,
+                "chatgpt_dalle3": prompt_dal
+            })
+
+        # Prompt maestro unificado para Vistas (2.1)
+        prompt_maestro_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director.
+IMAGE IDENTIFICATION:
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+{user_directives_block}
+
+TASK: Generate ALL 4 CANONICAL COMMERCIAL CATALOG VIEWS of the target furniture item ({furn_item}) in a single ultra-high-definition multi-angle master render / contact grid:
+1. VIEW 1 - DIRECT FLAT FRONT ELEVATION (0° front view).
+2. VIEW 2 - 3/4 PERSPECTIVE VIEW (45° angle showing front and side depth).
+3. VIEW 3 - STRICT ORTHOGONAL LATERAL PROFILE (90° side elevation).
+4. VIEW 4 - HIGH-ANGLE TOP-DOWN CENITAL VIEW (overhead view showing top surface and bottom base).
+
+MATERIAL APPLICATION:
+- Maintain 100% exact original materials, wood tone, grain structure, and warm ambient LED glow from TARGET FURNITURE: [{existing_mats}].
+- Topology & Geometry: {geom_struct}.
+
+{white_bg}
+HARDWARE & RENDERING:
+{hardware_str}
+{"USER SPECIFIC OVERRIDES: " + user_notes_clean if user_notes_clean else ""}
+
+Negative Prompt: CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room reflections, clutter, text, letters, numbers, watermark."""
+
+        prompt_maestro_dal = f"""[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography]
+[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
+Generate a hyper-realistic commercial furniture catalog multi-view contact sheet displaying the 4 CANONICAL ANGLES of a {furn_item} ('{furniture_name}'):
+1. Front View (0° flat elevation).
+2. 3/4 Perspective View (45° depth angle).
+3. Side View (90° orthogonal profile).
+4. Top-Down Cenital View (overhead angle).
+Topological Geometry: {geom_struct}. Exact materials: {existing_mats}.
+Environment: Pure seamless solid white background (#FFFFFF) with zero shadows."""
+
+        return {
+            "google_ai_studio": prompt_maestro_ais,
+            "chatgpt_dalle3": prompt_maestro_dal,
+            "midjourney_v6": f"Commercial catalog 4-view sheet of {furn_item}, {geom_struct}, white background #FFFFFF --ar 16:9 --v 6.1 --style raw",
+            "individual_vistas": individual_results
+        }
+
     def generate_all_in_one_multi_view_prompt(
         self,
         mode: str,
