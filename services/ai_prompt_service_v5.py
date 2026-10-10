@@ -128,42 +128,74 @@ Pay special attention to how light hits the threads/wood grain, color saturation
             from google.genai import types
             
             client = genai.Client(api_key=key)
-            prompt = """You are an expert architectural visualizer, 3D furniture engineer, and commercial photographer.
-Analyze all provided images to deconstruct the furniture piece completely:
-1. Identify the furniture type, style, exact proportions, joinery, and 3D silhouette.
-2. Cross-reference the CURRENT TAKEN PHOTO with the REFERENCE PHOTOS (which show the design angles, views, and details).
-3. Identify the EXACT materials: wood tone/finish/species, fabric weave and color (estimate hex code and natural color name).
-4. MANDATORY USER NOTES: You MUST prioritize any explicit notes provided by the user below."""
             
-            if notas_usuario and notas_usuario.strip():
-                prompt += f"\n\nUSER MANDATORY DIRECTIVES (STRICT OVERRIDE):\n{notas_usuario.strip()}"
-            
-            contents = [prompt]
-            
-            # Agregar fotos actuales
+            # 1. Preparar imágenes actuales (Casilla 1)
+            actual_imgs = []
             if isinstance(furniture_bytes, list):
                 for fb in furniture_bytes:
                     if fb:
-                        contents.append(self._prepare_image(fb))
+                        actual_imgs.append(self._prepare_image(fb))
             elif furniture_bytes:
-                contents.append(self._prepare_image(furniture_bytes))
-                
-            # Agregar fotos de referencia
+                actual_imgs.append(self._prepare_image(furniture_bytes))
+
+            # 2. Preparar imágenes de referencia (Casilla 2)
+            ref_imgs = []
             if reference_bytes and isinstance(reference_bytes, list):
                 for rb in reference_bytes:
                     if rb:
-                        contents.append(self._prepare_image(rb))
-                
-            res = self._call_gemini(
+                        ref_imgs.append(self._prepare_image(rb))
+
+            # PASO 1 (CRÍTICO): Extraer el COLOR y MATERIAL REAL EXCLUSIVAMENTE de la Foto Actual (Casilla 1).
+            # Esto blinda el sistema para que NUNCA adopte los colores de las fotos de referencia.
+            mat_prompt = """You are a master furniture materials colorist and spectrophotometry expert.
+Look ONLY at the provided CURRENT TAKEN PHOTO(S) of the furniture piece.
+Identify with absolute scientific precision the EXACT MATERIAL, WOOD FINISH, AND COLOR:
+1. WOOD FINISH & SPECIES: Describe the EXACT shade and tone seen in this specific photo (e.g. light washed oak, bleached ash, pale greyish natural timber, blonde wood, etc.) with Hex code estimate.
+2. UPHOLSTERY & FABRIC: Describe the exact weave and color of any padded or upholstered surface (e.g. pitch black matte panel, charcoal, etc.).
+CRITICAL: Do NOT guess darker woods or warm amber walnut if this photo shows a lighter, blonde, bleached, or greyish finish. Report EXACTLY what is visible in THIS photo."""
+            
+            if notas_usuario and notas_usuario.strip():
+                mat_prompt += f"\n\nUSER OVERRIDE NOTES:\n{notas_usuario.strip()}"
+
+            mat_res = self._call_gemini(
                 client=client,
-                contents=contents,
+                contents=[mat_prompt] + actual_imgs,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=MaterialAnalysisV5,
+                    temperature=0.0
+                )
+            )
+            mat_data = json.loads(mat_res.text)
+            color_desc = mat_data.get("color_description", "")
+            name_desc = mat_data.get("name", "")
+            tex_desc = mat_data.get("texture_detail", "")
+            exact_material_description = f"{name_desc} ({color_desc}, {tex_desc})"
+
+            # PASO 2: Extraer la GEOMETRÍA, ESTILO y PROPORCIONES 3D usando la foto actual + fotos de referencia
+            geom_prompt = """You are an expert architectural visualizer, 3D furniture engineer, and commercial photographer.
+Analyze the 3D topology, proportions, angles, joinery, and structure of this furniture piece using the current photo and reference view photos:
+1. Identify the furniture type, style, exact proportions, joinery, and 3D silhouette.
+2. Cross-reference the CURRENT TAKEN PHOTO with the REFERENCE PHOTOS (which show the design angles, views, and details) to understand the complete 360-degree geometry."""
+
+            if notas_usuario and notas_usuario.strip():
+                geom_prompt += f"\n\nUSER MANDATORY DIRECTIVES (STRICT OVERRIDE):\n{notas_usuario.strip()}"
+
+            geom_contents = [geom_prompt] + actual_imgs + ref_imgs
+            geom_res = self._call_gemini(
+                client=client,
+                contents=geom_contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=FurnitureAnalysisV5,
                     temperature=0.1
                 )
             )
-            return json.loads(res.text)
+            furniture_data = json.loads(geom_res.text)
+
+            # FORZAR QUE EL MATERIAL Y COLOR SEA 100% EL DE LA FOTO ACTUAL (CASILLA 1)
+            furniture_data["existing_materials"] = exact_material_description
+            return furniture_data
         except Exception as e:
             print(f"[AIPromptServiceV5] Error analyzing furniture: {e}")
             notes_desc = f" with directives: {notas_usuario.strip()}" if notas_usuario else ""
