@@ -309,8 +309,8 @@ Camera: {hardware_str}"""
         # Configurado con protocolo conversacional que avanza foto por foto con la palabra clave 'foto'
         prompt_maestro_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
 IMAGE IDENTIFICATION & VISUAL MEMORY:
-- TARGET FURNITURE: Lock onto the uploaded photograph(s) of '{furniture_name}' and all reference photos.
-- 360-DEGREE TOPOLOGY: Study the reference photos to understand the full 3D geometry from every angle.
+- ABSOLUTE TRUTH FOR COLOR & FINISH (IMAGE 1): The first photograph (Image 1 / Current Photo) is the 100% ABSOLUTE SOURCE OF TRUTH for the furniture upholstery color, fabric texture weave, and wood finish/stain.
+- 360-DEGREE TOPOLOGY FROM REFERENCES (SUBSEQUENT IMAGES): The reference photos are provided SOLELY to understand 3D geometry, rear tailoring, and perspective angles. DO NOT copy colors from reference images if they differ from Image 1. Always enforce the exact color, wood tone, and fabric from IMAGE 1 across all views!
 {user_directives_block}
 
 CRITICAL EXECUTION PROTOCOL (INTERACTIVE TURN-BY-TURN GENERATION WITH TRIGGER WORD 'foto'):
@@ -489,8 +489,8 @@ Camera: {hardware_str}"""
         # Configurado con protocolo interactivo secuencial con la palabra clave 'foto'
         prompt_maestro_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
 IMAGE IDENTIFICATION & VISUAL MEMORY:
-- TARGET FURNITURE: Lock onto the uploaded photograph(s) of '{furniture_name}' and all reference photos.
-- 360-DEGREE TOPOLOGY: Study the reference photos to understand the full 3D geometry from every angle.
+- ABSOLUTE TRUTH FOR COLOR & FINISH (IMAGE 1): The first photograph (Image 1 / Current Photo) is the 100% ABSOLUTE SOURCE OF TRUTH for the furniture upholstery color, fabric texture weave, and wood finish/stain.
+- 360-DEGREE TOPOLOGY FROM REFERENCES (SUBSEQUENT IMAGES): The reference photos are provided SOLELY to understand 3D geometry, rear tailoring, and perspective angles. DO NOT copy colors from reference images if they differ from Image 1. Always enforce the exact color, wood tone, and fabric from IMAGE 1 across all views!
 {user_directives_block}
 
 CRITICAL EXECUTION PROTOCOL (INTERACTIVE TURN-BY-TURN GENERATION WITH TRIGGER WORD 'foto'):
