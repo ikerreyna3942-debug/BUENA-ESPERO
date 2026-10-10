@@ -169,28 +169,30 @@ def render_prompt_studio_v5():
 
     with col1:
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
-        st.markdown('<div class="studio-card-title">🎯 1. Vistas (5 fotos)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="studio-card-title">🎯 1. Configuración de Vistas de Catálogo</div>', unsafe_allow_html=True)
         
         st.markdown("""
-        <div style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#E9D5FF;">
-            ✨ <b>1 Solo Prompt Maestro:</b> Genera 3/4 Derecha, Lateral, De Frente, 3/4 Picada Alta y Cenital desde arriba simultáneamente.
+        <div style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#E9D5FF; line-height:1.5;">
+            <b>🎯 Vistas (1.1):</b> 5 vistas (3/4 Derecha, Lateral 90°, Frente 0°, 3/4 Picada Alta, Cenital 90°).<br>
+            <b>⚡ Vistas (2.1):</b> 4 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Superior Cenital).
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("##### 🛋️ Foto del Mueble Original (Arrastrar)")
+        st.markdown("##### 🛋️ Foto(s) del Mueble Original (Arrastrar)")
+        st.caption("📷 Puedes arrastrar **más de 1 foto** (frente, costado, detalles); Gemini las analiza todas juntas.")
         mueble_up = st.file_uploader(
-            "Arrastra la foto del mueble original aquí:",
+            "Arrastra una o varias fotos del mueble original aquí:",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
             key=f"st_mueble_v5_{st.session_state.clear_key_v5}",
             accept_multiple_files=True
         )
 
         st.markdown("---")
-        st.markdown("##### 💬 Comentarios y Directivas Especiales para la IA")
-        st.caption("✨ Las notas que escribas aquí se integrarán como instrucciones de alta prioridad en el prompt.")
+        st.markdown("##### 💬 Notas / Directivas Especiales para la IA")
+        st.caption("✨ Las notas que escribas aquí se integran **directamente dentro del prompt** como especificaciones obligatorias de materiales, iluminación y acabados.")
         notas_usuario = st.text_area(
-            "Indica especificaciones clave (ej. Mantener las costuras beige, patas de roble claro, cojines esponjosos):",
-            placeholder="Escribe aquí tus observaciones para que la IA las tome en cuenta con máxima prioridad...",
+            "Indica especificaciones clave (ej. Mantener las costuras beige, patas de roble claro, luz LED cálida integrada):",
+            placeholder="Escribe aquí tus observaciones y ajustes para que la IA los integre en el prompt...",
             key=f"txt_notas_usuario_v5_{st.session_state.clear_key_v5}",
             height=90
         )
@@ -199,17 +201,17 @@ def render_prompt_studio_v5():
 
         col_b1, col_b2 = st.columns([1, 1])
         with col_b1:
-            btn_5vistas = st.button("🎯 Vistas (5 fotos)", type="primary", use_container_width=True, key=f"btn_gen_5v_{st.session_state.clear_key_v5}")
+            btn_1_1 = st.button("🎯 Vistas (1.1)", type="primary", use_container_width=True, key=f"btn_gen_11_{st.session_state.clear_key_v5}")
         with col_b2:
-            btn_2_1 = st.button("⚡ Vistas (2.1)", type="secondary", use_container_width=True, key=f"btn_gen_21_{st.session_state.clear_key_v5}")
+            btn_2_1 = st.button("⚡ Vistas (2.1)", type="primary", use_container_width=True, key=f"btn_gen_21_{st.session_state.clear_key_v5}")
 
-        if btn_5vistas or btn_2_1:
+        if btn_1_1 or btn_2_1:
             if not mueble_up:
                 st.error("⚠️ Por favor arrastra al menos una fotografía del mueble original.")
             else:
                 progress_holder = st.empty()
-                modo_nombre = "Vistas (2.1)" if btn_2_1 else "Vistas (5 fotos)"
-                progress_holder.info(f"⏳ Analizando mueble con Gemini Vision y generando {modo_nombre}...")
+                modo_nombre = "Vistas (2.1)" if btn_2_1 else "Vistas (1.1)"
+                progress_holder.info(f"⏳ Analizando foto(s) con Gemini Vision y generando {modo_nombre}...")
                 try:
                     m_bytes_list = []
                     if isinstance(mueble_up, list):
@@ -229,8 +231,7 @@ def render_prompt_studio_v5():
                             notas_usuario=notas_usuario
                         )
                     else:
-                        prompts = ai_prompt_service_v5.generate_all_in_one_multi_view_prompt(
-                            mode="solo_mueble",
+                        prompts = ai_prompt_service_v5.generate_vistas_1_1_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
                             notas_usuario=notas_usuario
@@ -285,18 +286,40 @@ def render_prompt_studio_v5():
             ind_vistas = prompts.get("individual_vistas", [])
             num_vistas = len(ind_vistas)
 
-            # Modo de visualización: Fotos Separadas vs Hoja Combinada
+            # Modo de visualización: 1 Solo Prompt Maestro vs Vistas Individuales
             tipo_salida = st.radio(
-                "Elige cómo deseas generar tus fotos:",
-                [f"📷 {num_vistas} Fotos Separadas (1 foto individual por ángulo)", "🖼️ 1 Hoja Combinada (Todas las vistas en 1 imagen)"],
+                "Elige el formato de prompt que prefieres:",
+                [f"⚡ 1 Solo Prompt Maestro (Ordena a la IA generar las {num_vistas} fotos por separado)", f"📸 Prompts Individuales ({num_vistas} pestañas separadas)"],
                 horizontal=True,
                 key=f"rb_tipo_salida_v5_{st.session_state.clear_key_v5}"
             )
 
-            if "5 Fotos Separadas" in tipo_salida:
+            if "1 Solo Prompt Maestro" in tipo_salida:
+                st.markdown(f"""
+                <div style="background:rgba(168,85,247,0.15); border:1px solid #A855F7; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#E9D5FF;">
+                    🔥 <b>1 Solo Prompt Maestro para {modo_actual}:</b><br>
+                    Instruye a Google AI Studio o ChatGPT a generar <b>todas las {num_vistas} fotos por separado</b> de forma secuencial en una sola orden.
+                </div>
+                """, unsafe_allow_html=True)
+
+                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
+                with p_tab1:
+                    p_txt = prompts.get("google_ai_studio", "")
+                    st.text_area("Prompt Google AI Studio (Nano Banana 2.1 & Pro):", p_txt, height=260, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_txt, label="📋 Copiar Prompt Maestro para Google AI Studio", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}")
+                with p_tab2:
+                    p_dalle = prompts.get("chatgpt_dalle3", "")
+                    st.text_area("Prompt ChatGPT / DALL-E 3 (Fotos Separadas):", p_dalle, height=240, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt Maestro para ChatGPT", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}")
+                with p_tab3:
+                    p_mj = prompts.get("midjourney_v6", "")
+                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_v5_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}")
+
+            else:
                 st.markdown("""
                 <div style="background:rgba(16,185,129,0.15); border:1px solid #10B981; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#A7F3D0;">
-                    ✅ <b>Fotos 100% Individuales:</b> Cada prompt genera <b>1 sola foto individual</b> del mueble en su ángulo exacto a máxima resolución sobre fondo blanco puro.
+                    ✅ <b>Prompts 100% Individuales:</b> Genera 1 sola foto individual por cada vista a máxima resolución.
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -315,28 +338,6 @@ def render_prompt_studio_v5():
                                 st.text_area(f"Prompt ChatGPT / DALL-E 3 ({v_data['label']}):", p_dal, height=200, key=f"txt_ind_dal_{i}_{st.session_state.clear_key_v5}")
                                 render_copy_button(p_dal, label=f"📋 Copiar Prompt para ChatGPT", key=f"cp_ind_dal_{i}_{st.session_state.clear_key_v5}")
 
-            else:
-                st.markdown("""
-                <div style="background:rgba(168,85,247,0.15); border:1px solid #A855F7; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#E9D5FF;">
-                    🔥 <b>1 Solo Prompt Maestro (5 Vistas en 1 imagen):</b><br>
-                    1. 3/4 mirando a la derecha | 2. Lateral 90° | 3. De frente 0° | 4. 3/4 Picada alta | 5. Cenital 90°
-                </div>
-                """, unsafe_allow_html=True)
-
-                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
-                with p_tab1:
-                    p_txt = prompts.get("google_ai_studio", "")
-                    st.text_area("Prompt Google AI Studio (Nano Banana 2.1 & Pro):", p_txt, height=240, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}")
-                with p_tab2:
-                    p_dalle = prompts.get("chatgpt_dalle3", "")
-                    st.text_area("Prompt ChatGPT / DALL-E 3 (Multi-View Contact Sheet):", p_dalle, height=220, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}")
-                with p_tab3:
-                    p_mj = prompts.get("midjourney_v6", "")
-                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=200, key=f"txt_res_mj_v5_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}")
-
             # Metadatos del análisis de visión
             fa = res.get("fabric_analysis")
             wa = res.get("wood_analysis")
@@ -352,6 +353,6 @@ def render_prompt_studio_v5():
                     if wa:
                         st.markdown(f"**🪵 Madera:** `{wa.get('name', 'N/A')}` | `{wa.get('color_description', 'N/A')}`")
         else:
-            st.info("👈 Arrastra la foto de tu mueble a la izquierda y presiona **⚡ GENERAR PROMPT (5 VISTAS)** para obtener tus prompts.")
+            st.info("👈 Arrastra la(s) foto(s) de tu mueble a la izquierda y presiona **🎯 Vistas (1.1)** o **⚡ Vistas (2.1)**.")
 
         st.markdown('</div>', unsafe_allow_html=True)
