@@ -200,21 +200,29 @@ def render_prompt_studio_v5():
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     prompts_dict = res.get("prompts", {})
-                    # Master prompt
-                    prompt_txt = prompts_dict.get("google_ai_studio", "") or prompts_dict.get("chatgpt_dalle3", "")
-                    if prompt_txt:
-                        zip_file.writestr(f"00_prompt_maestro_vistas.txt", prompt_txt)
-                    
+                    modo_res = res.get("modo", "Vistas")
+                    safe_modo = modo_res.lower().replace(" ", "_").replace("(", "").replace(")", "")
+
+                    # Master / Single prompt
+                    ais_txt = prompts_dict.get("google_ai_studio", "")
+                    dalle_txt = prompts_dict.get("chatgpt_dalle3", "")
+                    mj_txt = prompts_dict.get("midjourney_v6", "")
+
+                    if ais_txt or dalle_txt:
+                        full_content = f"=== PROMPT GOOGLE AI STUDIO / GEMINI ===\n{ais_txt}\n\n=== PROMPT CHATGPT / DALL-E 3 ===\n{dalle_txt}\n\n=== PROMPT MIDJOURNEY ===\n{mj_txt}"
+                        zip_file.writestr(f"00_prompt_{safe_modo}.txt", full_content)
+
                     # Individual views
                     ind_vistas = prompts_dict.get("individual_vistas", [])
                     for idx, iv in enumerate(ind_vistas, start=1):
                         v_content = f"--- PROMPT GOOGLE AI STUDIO (FOTO INDIVIDUAL) ---\n{iv.get('google_ai_studio', '')}\n\n--- PROMPT CHATGPT / DALL-E 3 (FOTO INDIVIDUAL) ---\n{iv.get('chatgpt_dalle3', '')}"
                         zip_file.writestr(f"0{idx}_{iv.get('id', f'vista_{idx}')}.txt", v_content)
 
+                label_dl = "📦 Descargar Kit de Vistas" if ind_vistas else f"📦 Descargar Prompts"
                 st.download_button(
-                    label="📦 Descargar Kit de Vistas",
+                    label=label_dl,
                     data=zip_buffer.getvalue(),
-                    file_name=f"kit_vistas_{res.get('mueble_name', 'mueble')}.zip",
+                    file_name=f"prompts_{safe_modo}_{res.get('mueble_name', 'mueble')}.zip",
                     mime="application/zip",
                     use_container_width=True,
                     key="btn_dl_kit_v5"
@@ -236,7 +244,9 @@ def render_prompt_studio_v5():
         st.markdown("""
         <div class="instruction-box-nano">
             <b>🎯 Vistas (1.1):</b> 5 vistas canónicas (3/4 Derecha, Lateral 90°, Frente 0°, 3/4 Picada Alta, Cenital 90°).<br>
-            <b>⚡ Vistas (2.1):</b> 4 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Superior Cenital).
+            <b>⚡ Vistas (2.1):</b> 4 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Superior Cenital).<br>
+            <b>⬜ Extraer Mueble:</b> Mueble centrado en fondo blanco puro (#FFFFFF) sin sombras (0%).<br>
+            <b>✨ Mejora HD:</b> 8K macro nítido anti-pixelado con bloqueo estricto de color, textura y geometría.
         </div>
         """, unsafe_allow_html=True)
 
@@ -278,19 +288,32 @@ def render_prompt_studio_v5():
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # BOTONERA: Vistas (1.1) y Vistas (2.1)
+        # BOTONERA: Vistas (1.1), Vistas (2.1), Extraer Mueble, Mejora HD
         col_b1, col_b2 = st.columns([1, 1])
         with col_b1:
             btn_1_1 = st.button("🎯 Vistas (1.1)", type="primary", use_container_width=True, key=f"btn_gen_11_{st.session_state.clear_key_v5}")
         with col_b2:
             btn_2_1 = st.button("⚡ Vistas (2.1)", type="primary", use_container_width=True, key=f"btn_gen_21_{st.session_state.clear_key_v5}")
 
-        if btn_1_1 or btn_2_1:
+        col_b3, col_b4 = st.columns([1, 1])
+        with col_b3:
+            btn_extraer = st.button("⬜ Extraer Mueble", use_container_width=True, key=f"btn_gen_ext_{st.session_state.clear_key_v5}")
+        with col_b4:
+            btn_hd = st.button("✨ Mejora HD", use_container_width=True, key=f"btn_gen_hd_{st.session_state.clear_key_v5}")
+
+        if btn_1_1 or btn_2_1 or btn_extraer or btn_hd:
             if not mueble_actual_up and not mueble_ref_up:
                 st.error("⚠️ Por favor sube al menos una fotografía (en la Casilla 1 de foto actual o en la Casilla 2 de referencias).")
             else:
                 progress_holder = st.empty()
-                modo_nombre = "Vistas (2.1)" if btn_2_1 else "Vistas (1.1)"
+                if btn_extraer:
+                    modo_nombre = "Extraer Mueble (Fondo Blanco)"
+                elif btn_hd:
+                    modo_nombre = "Mejora HD"
+                elif btn_2_1:
+                    modo_nombre = "Vistas (2.1)"
+                else:
+                    modo_nombre = "Vistas (1.1)"
                 progress_holder.info(f"⏳ Analizando foto actual y referencias con Gemini Vision para generar {modo_nombre}...")
                 try:
                     # Bytes de fotos actuales
@@ -325,7 +348,19 @@ def render_prompt_studio_v5():
                         notas_usuario=notas_usuario
                     )
 
-                    if btn_2_1:
+                    if btn_extraer:
+                        prompts = ai_prompt_service_v5.generate_extraction_prompts(
+                            furniture_name=m_name,
+                            furniture_analysis=m_ana,
+                            notas_usuario=notas_usuario
+                        )
+                    elif btn_hd:
+                        prompts = ai_prompt_service_v5.generate_hd_enhancement_prompts(
+                            furniture_name=m_name,
+                            furniture_analysis=m_ana,
+                            notas_usuario=notas_usuario
+                        )
+                    elif btn_2_1:
                         prompts = ai_prompt_service_v5.generate_vistas_2_1_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
@@ -392,63 +427,102 @@ def render_prompt_studio_v5():
             ind_vistas = prompts.get("individual_vistas", [])
             num_vistas = len(ind_vistas)
 
-            # Guía interactiva destacada para Nano Banana
-            st.markdown(f"""
-            <div style="background:rgba(16,185,129,0.12); border:1px solid #10B981; border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:12px; color:#A7F3D0; line-height:1.5;">
-                🔥 <b>CÓMO USAR EN GOOGLE AI STUDIO (NANO BANANA 2.1 & PRO):</b><br>
-                1. Pega el <b>Prompt Maestro</b> en Google AI Studio.<br>
-                2. Nano Banana generará la <b>Foto 1</b> y quedará en espera.<br>
-                3. Escribe únicamente la palabra <b><code>foto</code></b> en el chat para recibir la <b>Foto 2</b>, luego escribe <b><code>foto</code></b> otra vez para la <b>Foto 3</b>, y así sucesivamente.<br>
-                <i>✨ La madera, la veta, la tela y la geometría del mueble se mantendrán 100% idénticas en todas las vistas.</i>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Selector de formato
-            tipo_salida = st.radio(
-                "Formato de salida:",
-                [f"⚡ 1 Solo Prompt Maestro (Secuencial con 'foto')", f"📸 Vistas Individuales ({num_vistas} tarjetas con copia 1x1)"],
-                horizontal=True,
-                key=f"rb_tipo_salida_v5_{st.session_state.clear_key_v5}"
-            )
-
-            if "1 Solo Prompt Maestro" in tipo_salida:
-                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio (Nano Banana - Palabra 'foto')", "🤖 ChatGPT (DALL-E 3 - Todas las fotos)", "🎨 Midjourney v6.1"])
-                with p_tab1:
-                    st.caption("Pega este prompt en Google AI Studio. Te dará la Foto 1; luego escribe 'foto' para la Foto 2, etc.")
-                    p_txt = prompts.get("google_ai_studio", "")
-                    st.text_area("Prompt Maestro Interactivo (Google AI Studio):", p_txt, height=270, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_txt, label="📋 Copiar Prompt Maestro para Google AI Studio (Secuencial)", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}")
-                with p_tab2:
-                    st.caption("Pega este prompt en ChatGPT. Generará el set completo de todas las fotos.")
-                    p_dalle = prompts.get("chatgpt_dalle3", "")
-                    st.text_area("Prompt Maestro ChatGPT (Genera todas las fotos):", p_dalle, height=250, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_dalle, label="📋 Copiar Prompt Maestro para ChatGPT (Todas las fotos)", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}")
-                with p_tab3:
-                    p_mj = prompts.get("midjourney_v6", "")
-                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_v5_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}")
-
-            else:
-                st.markdown("""
-                <div style="background:rgba(59,130,246,0.15); border:1px solid #3B82F6; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#BFDBFE;">
-                    ✅ <b>Prompts Individuales:</b> Copia y genera exactamente la vista que desees por separado.
+            if ind_vistas:
+                # Guía interactiva destacada para Nano Banana
+                st.markdown(f"""
+                <div style="background:rgba(16,185,129,0.12); border:1px solid #10B981; border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:12px; color:#A7F3D0; line-height:1.5;">
+                    🔥 <b>CÓMO USAR EN GOOGLE AI STUDIO (NANO BANANA 2.1 & PRO):</b><br>
+                    1. Pega el <b>Prompt Maestro</b> en Google AI Studio.<br>
+                    2. Nano Banana generará la <b>Foto 1</b> y quedará en espera.<br>
+                    3. Escribe únicamente la palabra <b><code>foto</code></b> en el chat para recibir la <b>Foto 2</b>, luego escribe <b><code>foto</code></b> otra vez para la <b>Foto 3</b>, y así sucesivamente.<br>
+                    <i>✨ La madera, la veta, la tela y la geometría del mueble se mantendrán 100% idénticas en todas las vistas.</i>
                 </div>
                 """, unsafe_allow_html=True)
 
-                if ind_vistas:
-                    vista_tabs = st.tabs([f"{v['icon']} {v.get('short_name', v['label'].split(':')[0])}" for v in ind_vistas])
-                    for i, (tab, v_data) in enumerate(zip(vista_tabs, ind_vistas)):
-                        with tab:
-                            st.markdown(f"##### {v_data['icon']} {v_data['label']}")
-                            engine_tabs = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)"])
-                            with engine_tabs[0]:
-                                p_ais = v_data.get("google_ai_studio", "")
-                                st.text_area(f"Prompt AI Studio ({v_data['label']}):", p_ais, height=220, key=f"txt_ind_ais_{i}_{st.session_state.clear_key_v5}")
-                                render_copy_button(p_ais, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para Google AI Studio", key=f"cp_ind_ais_{i}_{st.session_state.clear_key_v5}")
-                            with engine_tabs[1]:
-                                p_dal = v_data.get("chatgpt_dalle3", "")
-                                st.text_area(f"Prompt ChatGPT / DALL-E 3 ({v_data['label']}):", p_dal, height=200, key=f"txt_ind_dal_{i}_{st.session_state.clear_key_v5}")
-                                render_copy_button(p_dal, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para ChatGPT", key=f"cp_ind_dal_{i}_{st.session_state.clear_key_v5}")
+                # Selector de formato
+                tipo_salida = st.radio(
+                    "Formato de salida:",
+                    [f"⚡ 1 Solo Prompt Maestro (Secuencial con 'foto')", f"📸 Vistas Individuales ({num_vistas} tarjetas con copia 1x1)"],
+                    horizontal=True,
+                    key=f"rb_tipo_salida_v5_{st.session_state.clear_key_v5}"
+                )
+
+                if "1 Solo Prompt Maestro" in tipo_salida:
+                    p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio (Nano Banana - Palabra 'foto')", "🤖 ChatGPT (DALL-E 3 - Todas las fotos)", "🎨 Midjourney v6.1"])
+                    with p_tab1:
+                        st.caption("Pega este prompt en Google AI Studio. Te dará la Foto 1; luego escribe 'foto' para la Foto 2, etc.")
+                        p_txt = prompts.get("google_ai_studio", "")
+                        st.text_area("Prompt Maestro Interactivo (Google AI Studio):", p_txt, height=270, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}")
+                        render_copy_button(p_txt, label="📋 Copiar Prompt Maestro para Google AI Studio (Secuencial)", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}")
+                    with p_tab2:
+                        st.caption("Pega este prompt en ChatGPT. Generará el set completo de todas las fotos.")
+                        p_dalle = prompts.get("chatgpt_dalle3", "")
+                        st.text_area("Prompt Maestro ChatGPT (Genera todas las fotos):", p_dalle, height=250, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}")
+                        render_copy_button(p_dalle, label="📋 Copiar Prompt Maestro para ChatGPT (Todas las fotos)", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}")
+                    with p_tab3:
+                        p_mj = prompts.get("midjourney_v6", "")
+                        st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_v5_{st.session_state.clear_key_v5}")
+                        render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}")
+
+                else:
+                    st.markdown("""
+                    <div style="background:rgba(59,130,246,0.15); border:1px solid #3B82F6; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#BFDBFE;">
+                        ✅ <b>Prompts Individuales:</b> Copia y genera exactamente la vista que desees por separado.
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    if ind_vistas:
+                        vista_tabs = st.tabs([f"{v['icon']} {v.get('short_name', v['label'].split(':')[0])}" for v in ind_vistas])
+                        for i, (tab, v_data) in enumerate(zip(vista_tabs, ind_vistas)):
+                            with tab:
+                                st.markdown(f"##### {v_data['icon']} {v_data['label']}")
+                                engine_tabs = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)"])
+                                with engine_tabs[0]:
+                                    p_ais = v_data.get("google_ai_studio", "")
+                                    st.text_area(f"Prompt AI Studio ({v_data['label']}):", p_ais, height=220, key=f"txt_ind_ais_{i}_{st.session_state.clear_key_v5}")
+                                    render_copy_button(p_ais, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para Google AI Studio", key=f"cp_ind_ais_{i}_{st.session_state.clear_key_v5}")
+                                with engine_tabs[1]:
+                                    p_dal = v_data.get("chatgpt_dalle3", "")
+                                    st.text_area(f"Prompt ChatGPT / DALL-E 3 ({v_data['label']}):", p_dal, height=200, key=f"txt_ind_dal_{i}_{st.session_state.clear_key_v5}")
+                                    render_copy_button(p_dal, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para ChatGPT", key=f"cp_ind_dal_{i}_{st.session_state.clear_key_v5}")
+            else:
+                # Modos directos: Extraer Mueble o Mejora HD
+                if "Extraer Mueble" in modo_actual:
+                    st.markdown("""
+                    <div style="background:rgba(255,255,255,0.08); border:1px solid #E2E8F0; border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:12px; color:#F8FAFC; line-height:1.6;">
+                        ⬜ <b>EXTRAER MUEBLE (FONDO BLANCO PURO):</b><br>
+                        • Mueble centrado simétricamente en el encuadre comercial.<br>
+                        • Fondo 100% blanco puro digital (#FFFFFF).<br>
+                        • <b>CERO SOMBRAS (0%):</b> Sin sombras de suelo, sin drop shadows, sin reflejos.<br>
+                        • Fidelidad estricta a los materiales, textura de tela y veta de madera de la Casilla 1.
+                    </div>
+                    """, unsafe_allow_html=True)
+                elif "Mejora HD" in modo_actual:
+                    st.markdown("""
+                    <div style="background:rgba(245,158,11,0.12); border:1px solid #F59E0B; border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:12px; color:#FDE68A; line-height:1.6;">
+                        ✨ <b>MEJORA HD (REMÁSTER MACRO 8K SIN CAMBIOS):</b><br>
+                        • Enfoque apilado (focus stacking) para máxima nitidez óptica.<br>
+                        • Elimina por completo pixelado, compresión y borrosidad.<br>
+                        • <b>CANDADO ABSOLUTO:</b> Cero alteración de color, tono de tinte, veta ni geometría.<br>
+                        • Enfatiza la textura táctil auténtica sobre fondo blanco de estudio.
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
+                with p_tab1:
+                    st.caption("Pega este prompt en Google AI Studio (con Gemini o Nano Banana).")
+                    p_txt = prompts.get("google_ai_studio", "")
+                    st.text_area("Prompt Google AI Studio:", p_txt, height=270, key=f"txt_res_ais_single_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_ais_single_{st.session_state.clear_key_v5}")
+                with p_tab2:
+                    st.caption("Pega este prompt en ChatGPT.")
+                    p_dalle = prompts.get("chatgpt_dalle3", "")
+                    st.text_area("Prompt ChatGPT / DALL-E 3:", p_dalle, height=250, key=f"txt_res_dal_single_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key=f"cp_res_dal_single_{st.session_state.clear_key_v5}")
+                with p_tab3:
+                    p_mj = prompts.get("midjourney_v6", "")
+                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_single_{st.session_state.clear_key_v5}")
+                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_single_{st.session_state.clear_key_v5}")
 
             # Metadatos del análisis de visión
             ma = res.get("furniture_analysis")
@@ -459,6 +533,6 @@ def render_prompt_studio_v5():
                     st.markdown(f"**🧱 Materiales y Color:** `{ma.get('existing_materials', 'N/A')}`")
                     st.markdown(f"**🏗️ Topología 3D:** `{ma.get('geometric_structure', 'N/A')}`")
         else:
-            st.info("👈 Sube la foto actual en la **Casilla 1**, referencias en la **Casilla 2**, escribe tus notas en la **Casilla 3** y presiona **🎯 Vistas (1.1)** o **⚡ Vistas (2.1)**.")
+            st.info("👈 Sube la foto actual en la **Casilla 1**, referencias en la **Casilla 2**, escribe tus notas en la **Casilla 3** y presiona **🎯 Vistas (1.1)**, **⚡ Vistas (2.1)**, **⬜ Extraer Mueble** o **✨ Mejora HD**.")
 
         st.markdown('</div>', unsafe_allow_html=True)

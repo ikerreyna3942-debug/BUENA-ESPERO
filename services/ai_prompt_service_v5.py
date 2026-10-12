@@ -604,6 +604,149 @@ Camera: {hardware_str}"""
             "individual_vistas": individual_results
         }
 
+    def generate_extraction_prompts(
+        self,
+        furniture_name: str,
+        furniture_analysis: Optional[Dict[str, Any]] = None,
+        notas_usuario: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Genera prompts para EXTRAER MUEBLE (FONDO BLANCO):
+        - Mueble centrado en la foto.
+        - Fondo blanco puro seamless (#FFFFFF).
+        - CERO sombras (0% ground shadows, 0% drop shadows, sin reflejos).
+        - Máxima fidelidad de materiales, colores y geometría.
+        """
+        ma = furniture_analysis or {}
+        furn_item = ma.get("furniture_item", furniture_name)
+        geom_struct = ma.get("geometric_structure", "original structural geometry")
+        existing_mats = ma.get("existing_materials", "original materials and colors")
+        hardware_str = self._build_photo_hardware_str()
+        
+        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        if user_notes_clean:
+            user_directives_block = f"""
+MANDATORY DIRECTIVES APPLIED:
+{user_notes_clean}
+* Strictly incorporate all user specifications without altering core geometry."""
+            materials_with_notes = f"{existing_mats} (User note: {user_notes_clean})"
+        else:
+            user_directives_block = ""
+            materials_with_notes = existing_mats
+
+        # Prompt para Google AI Studio / Imagen 3
+        prompt_ais = f"""[TASK: ISOLATED PRODUCT PHOTOGRAPHY - PURE WHITE BACKGROUND CUTOUT]
+Photograph the {furn_item} ('{furniture_name}') shown in the reference image, isolated as a clean digital commercial catalog cutout.
+
+CRITICAL POSITIONING & ISOLATION:
+- SUBJECT POSITION: The furniture piece must be placed dead-center in the composition with balanced margins.
+- BACKGROUND: Pure solid seamless white background (#FFFFFF) across the entire frame.
+- ZERO SHADOWS MANDATE: 0% ground shadows, 0% drop shadows, 0% contact floor shadows, 0% cast shadows. Zero floor reflections. Clean crisp edges with absolute isolation from any background elements.
+- NO PROPS: No walls, no floors, no interior decor, no studio equipment, no backdrop stands.
+
+PRESERVATION LOCK (CASILLA 1 FIDELITY):
+- MATERIALS & TEXTURES: Lock exact wood finish, species, authentic grain flow, stain tone, and fabric weave texture ({materials_with_notes}).
+- GEOMETRY & TOPOLOGY: Retain 100% exact structural geometry, leg joinery, cushion contours, armrests, and proportions ({geom_struct}).
+- ZERO REDESIGN: Do not modify, reinterpret, or stylize the furniture piece.
+
+{user_directives_block if user_notes_clean else ""}
+CAMERA & HARDWARE:
+{hardware_str}
+
+Negative Prompt: ground shadows, floor shadows, drop shadows, cast shadow, ambient occlusion shadow, grey backdrop, gradient background, floor texture, room interior, wall, floorboards, text, labels, watermark, brand logo, border, frame, altered geometry, altered wood color, CGI, 3D render, cartoon, oversmoothed."""
+
+        # Prompt para ChatGPT / DALL-E 3
+        prompt_dalle = f"""[COMMAND: COMMERCIAL ISOLATED FURNITURE CUTOUT ON PURE WHITE BACKGROUND]
+[SHADOWS: 0% GROUND SHADOWS, 0% DROP SHADOWS, 0% CONTACT SHADOWS, ZERO REFLECTIONS]
+[BACKGROUND: Pure solid clean #FFFFFF seamless white background, no floor, no wall]
+Photograph the exact {furn_item} ('{furniture_name}') perfectly centered in the frame.
+Materials: {materials_with_notes}.
+Topological Geometry: {geom_struct}.
+Camera: Level commercial eye-line perspective, perfectly balanced centering.
+Execution: Clean commercial product cutout. Keep every cushion, leg, wood grain line, and fabric fiber 100% identical to the reference image. Zero floor shadows underneath.
+{user_directives_block if user_notes_clean else ""}
+Negative Prompt: shadows, drop shadows, floor shadows, grey gradient, studio floor, room scene, 3D render, text, watermark."""
+
+        # Prompt para Midjourney
+        prompt_mj = f"Commercial luxury catalog shot of {furn_item}, perfectly centered on pure seamless white background #FFFFFF, 0% floor shadows, zero drop shadows, materials: {materials_with_notes}, {geom_struct}, {hardware_str} --ar 1:1 --v 6.1 --style raw --no shadows, drop shadow, floor, floorboards, grey backdrop"
+
+        return {
+            "google_ai_studio": prompt_ais,
+            "chatgpt_dalle3": prompt_dalle,
+            "midjourney_v6": prompt_mj,
+            "individual_vistas": []
+        }
+
+    def generate_hd_enhancement_prompts(
+        self,
+        furniture_name: str,
+        furniture_analysis: Optional[Dict[str, Any]] = None,
+        notas_usuario: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Genera prompts para MEJORA HD (SIN CAMBIO DE COLOR, TEXTURA O GEOMETRÍA):
+        - Remasterización comercial 8K macro.
+        - Elimina pixelado, compresión y borrosidad.
+        - CANDADO ESTRICTO: 100% fidelidad de color, grano de madera, tela y topología.
+        - Enfoque apilado (focus stacking) con nitidez cristalina en cada poro y fibra.
+        """
+        ma = furniture_analysis or {}
+        furn_item = ma.get("furniture_item", furniture_name)
+        geom_struct = ma.get("geometric_structure", "original structural geometry")
+        existing_mats = ma.get("existing_materials", "original materials and exact colors")
+        hardware_str = self._build_photo_hardware_str()
+
+        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        if user_notes_clean:
+            user_directives_block = f"""
+MANDATORY QUALITY DIRECTIVES:
+{user_notes_clean}
+* Strictly maintain all specifications above while maximizing photographic sharpness."""
+            materials_with_notes = f"{existing_mats} (Note: {user_notes_clean})"
+        else:
+            user_directives_block = ""
+            materials_with_notes = existing_mats
+
+        prompt_ais = f"""[TASK: 8K COMMERCIAL RESTORATION & ULTRA-HD MACRO CLARITY REMASTER]
+Generate a hyper-sharp, razor-focused, master-quality catalog commercial photograph of the {furn_item} ('{furniture_name}') from the reference image.
+
+CRITICAL CLARITY DIRECTIVE (ZERO PIXELATION, ZERO BLUR):
+- ULTRA-RESOLUTION DETAIL: Completely eliminate all blur, noise, compression artifacts, and pixelation.
+- SHARPNESS & TEXTURE ENHANCEMENT: Render every individual wood fiber, finger-joint seam, butcher-block union, pore, satin sheen, and fabric weave thread in ultra-high tactile optical clarity.
+- FOCUS STACKING: Deep field-of-depth focus stacking (f/11). From front edge to back contours, every single plane is tack-sharp and crystalline.
+
+STRICT PRESERVATION LOCK (ABSOLUTELY NO GEOMETRY OR COLOR DRIFT):
+- COLOR LOCK: Preserve the 100% exact original color hue, warmth, and saturation without cooling, warming, or tint shifts.
+- TEXTURE LOCK: Strictly retain the authentic wood species grain pattern ({materials_with_notes}). Do not replace with generic synthetic wood or fake flat veneer.
+- GEOMETRY LOCK: Lock the exact physical dimensions, joinery, bevels, cushions, and silhouette ({geom_struct}). Do not redesign, reshape, or reconfigure any element.
+
+{user_directives_block if user_notes_clean else ""}
+ENVIRONMENT: Pristine solid pure white catalog studio background (#FFFFFF) with balanced soft studio fill.
+CAMERA & OPTICS:
+{hardware_str}
+
+Negative Prompt: blurry, out of focus, motion blur, soft focus, pixelated, low resolution, jpeg compression artifacts, noise, grain noise, flat wash, oversmoothed, plastic texture, fake wood, cartoon, CGI, 3D render, redesign, changed shape, altered colors, shifted tones, desaturated, discolored, warped lines, watermark, text, labels."""
+
+        prompt_dalle = f"""[COMMAND: ULTRA-HD 8K COMMERCIAL PRODUCT REMASTER]
+[ENGINE: Disable CGI, Disable Octane Render, Medium Format Commercial RAW Photography]
+[FIDELITY MANDATE: ZERO color drift, ZERO geometry changes, ZERO texture loss]
+Create an ultra-sharp, high-definition catalog photograph remaster of the {furn_item} ('{furniture_name}').
+Optical details: Focus stacking, crystal-clear micro-texture showing authentic wood grain seams, pores, and fabric weave threads in razor-sharp focus.
+Materials: {materials_with_notes}.
+Geometry: {geom_struct}.
+Environment: Pure seamless white studio background (#FFFFFF).
+{user_directives_block if user_notes_clean else ""}
+Negative Prompt: pixelated, blurry, low-res, compression noise, smoothed texture, plastic, altered color, redesigned geometry, 3d render, cartoon, watermark, text."""
+
+        prompt_mj = f"8k commercial catalog hyper-detailed photograph of {furn_item}, {geom_struct}, authentic wood grain micro-texture, tack-sharp macro focus, zero blur, materials: {materials_with_notes}, solid white background #FFFFFF, {hardware_str} --ar 1:1 --v 6.1 --style raw --no blur, pixelated, noise, smooth plastic, altered geometry, text"
+
+        return {
+            "google_ai_studio": prompt_ais,
+            "chatgpt_dalle3": prompt_dalle,
+            "midjourney_v6": prompt_mj,
+            "individual_vistas": []
+        }
+
     def generate_all_in_one_multi_view_prompt(
         self,
         mode: str,
