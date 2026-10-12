@@ -116,6 +116,8 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
     components.html(html_code, height=44)
 
 def render_prompt_studio():
+    if "clear_key_v1" not in st.session_state:
+        st.session_state.clear_key_v1 = 0
 
     from services.ai_prompt_service_v1 import ai_prompt_service
 
@@ -320,13 +322,16 @@ def render_prompt_studio():
                     if prompt_txt:
                         zip_file.writestr(f"prompt_{res.get('mueble_name', 'generado')}.txt", prompt_txt)
                     
-                    m_files = st.session_state.get("st_mueble")
-                    if m_files: 
+                    m_files = st.session_state.get(f"st_mueble_v1_{st.session_state.clear_key_v1}")
+                    if not m_files and "mueble_bytes" in res:
+                        for i, mb in enumerate(res["mueble_bytes"]):
+                            zip_file.writestr(f"1_foto_mueble_{i+1}.jpg", mb)
+                    elif m_files: 
                         for i, m in enumerate(m_files):
                             zip_file.writestr(f"1_foto_mueble_{i+1}.jpg", m.getvalue())
-                    t = st.session_state.get("st_tela")
+                    t = st.session_state.get(f"st_tela_v1_{st.session_state.clear_key_v1}")
                     if t: zip_file.writestr("2_foto_tela.jpg", t.getvalue())
-                    w = st.session_state.get("st_madera")
+                    w = st.session_state.get(f"st_madera_v1_{st.session_state.clear_key_v1}")
                     if w: zip_file.writestr("3_foto_madera.jpg", w.getvalue())
                 
                 st.download_button(
@@ -339,13 +344,10 @@ def render_prompt_studio():
                 )
         with btn_col2:
             if st.button("🗑️ Limpiar Todo", key="btn_clear_studio", use_container_width=True):
-
-                for k in ["last_studio_result", "st_mueble", "st_tela", "st_madera", "sb_tela_oficial", "sb_madera_oficial"]:
-
-                    if k in st.session_state:
-
-                        del st.session_state[k]
-
+                keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith("last_studio_result") or k.startswith("st_") or k.startswith("sb_") or k.startswith("txt_") or k.startswith("rad_") or k.startswith("render_generado") or k.startswith("studio_mode_radio")]
+                for k in keys_to_del:
+                    del st.session_state[k]
+                st.session_state.clear_key_v1 = st.session_state.get("clear_key_v1", 0) + 1
                 st.rerun()
 
 
@@ -409,7 +411,7 @@ def render_prompt_studio():
             ["Solo Tela", "Solo Madera", "Tela + Madera", "Extraer Mueble (Fondo Blanco)", "Aumento HD", "Vistas (360)"],
             horizontal=True,
             label_visibility="collapsed",
-            key="studio_mode_radio"
+            key=f"studio_mode_radio_v1_{st.session_state.clear_key_v1}"
         )
 
 
@@ -430,7 +432,7 @@ def render_prompt_studio():
 
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
 
-            key="st_mueble",
+            key=f"st_mueble_v1_{st.session_state.clear_key_v1}",
 
             accept_multiple_files=True,
 
@@ -458,7 +460,7 @@ def render_prompt_studio():
 
                 horizontal=True,
 
-                key="rad_tipo_tela"
+                key=f"rad_tipo_tela_v1_{st.session_state.clear_key_v1}"
 
             )
 
@@ -472,7 +474,7 @@ def render_prompt_studio():
 
                     opciones_telas,
 
-                    key="sb_tela_oficial"
+                    key=f"sb_tela_oficial_v1_{st.session_state.clear_key_v1}"
 
                 )
 
@@ -488,7 +490,7 @@ def render_prompt_studio():
 
             else:
 
-                tela_up = st.file_uploader("Haz clic o arrastra muestra de tela", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key="st_tela")
+                tela_up = st.file_uploader("Haz clic o arrastra muestra de tela", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_tela_v1_{st.session_state.clear_key_v1}")
 
                 if tela_up:
 
@@ -516,7 +518,7 @@ def render_prompt_studio():
 
                 horizontal=True,
 
-                key="rad_tipo_mad"
+                key=f"rad_tipo_mad_v1_{st.session_state.clear_key_v1}"
 
             )
 
@@ -530,7 +532,7 @@ def render_prompt_studio():
 
                     opciones_maderas,
 
-                    key="sb_madera_oficial"
+                    key=f"sb_madera_oficial_v1_{st.session_state.clear_key_v1}"
 
                 )
 
@@ -552,7 +554,7 @@ def render_prompt_studio():
 
             else:
 
-                madera_up = st.file_uploader("Haz clic o arrastra muestra de madera", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key="st_madera")
+                madera_up = st.file_uploader("Haz clic o arrastra muestra de madera", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_madera_v1_{st.session_state.clear_key_v1}")
 
                 if madera_up:
 
@@ -972,34 +974,37 @@ def render_prompt_studio():
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.code(v_dict["google_ai_studio"], language="markdown")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["google_ai_studio"], height=160, key=f"txt_v_{v_key}_g_{st.session_state.clear_key_v1}")
+                        render_copy_button(v_dict["google_ai_studio"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_g_{st.session_state.clear_key_v1}")
                 else:
                     p_google = res["prompts"]["google_ai_studio"]
-                    st.text_area("Prompt Google AI Studio / Imagen 3:", value=p_google, height=300, key="txt_res_g")
-                    st.code(p_google, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_google, file_name=f"prompt_google_{res['mueble_name']}.txt", use_container_width=True)
+                    st.text_area("Prompt Google AI Studio / Imagen 3:", value=p_google, height=300, key=f"txt_res_g_{st.session_state.clear_key_v1}")
+                    render_copy_button(p_google, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_g_{st.session_state.clear_key_v1}")
+                    st.download_button("💾 Descargar .txt", data=p_google, file_name=f"prompt_google_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_g_{st.session_state.clear_key_v1}")
 
             with p_tabs[1]:
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.code(v_dict["flux_midjourney"], language="markdown")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["flux_midjourney"], height=160, key=f"txt_v_{v_key}_f_{st.session_state.clear_key_v1}")
+                        render_copy_button(v_dict["flux_midjourney"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_f_{st.session_state.clear_key_v1}")
                 else:
                     p_flux = res["prompts"]["flux_midjourney"]
-                    st.text_area("Prompt Flux / Midjourney v6.1:", value=p_flux, height=180, key="txt_res_f")
-                    st.code(p_flux, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_flux, file_name=f"prompt_flux_{res['mueble_name']}.txt", use_container_width=True)
+                    st.text_area("Prompt Flux / Midjourney v6.1:", value=p_flux, height=180, key=f"txt_res_f_{st.session_state.clear_key_v1}")
+                    render_copy_button(p_flux, label="📋 Copiar Prompt para Flux / Midjourney", key=f"cp_res_f_{st.session_state.clear_key_v1}")
+                    st.download_button("💾 Descargar .txt", data=p_flux, file_name=f"prompt_flux_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_f_{st.session_state.clear_key_v1}")
 
             with p_tabs[2]:
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.code(v_dict["dalle_chatgpt"], language="markdown")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["dalle_chatgpt"], height=160, key=f"txt_v_{v_key}_d_{st.session_state.clear_key_v1}")
+                        render_copy_button(v_dict["dalle_chatgpt"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_d_{st.session_state.clear_key_v1}")
                 else:
                     p_dalle = res["prompts"]["dalle_chatgpt"]
-                    st.text_area("Prompt DALL-E 3 / ChatGPT:", value=p_dalle, height=180, key="txt_res_d")
-                    st.code(p_dalle, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_dalle, file_name=f"prompt_dalle_{res['mueble_name']}.txt", use_container_width=True)
+                    st.text_area("Prompt DALL-E 3 / ChatGPT:", value=p_dalle, height=180, key=f"txt_res_d_{st.session_state.clear_key_v1}")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT / DALL-E", key=f"cp_res_d_{st.session_state.clear_key_v1}")
+                    st.download_button("💾 Descargar .txt", data=p_dalle, file_name=f"prompt_dalle_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_d_{st.session_state.clear_key_v1}")
 
 
 
