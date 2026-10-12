@@ -125,12 +125,13 @@ Pay special attention to how light hits the threads/wood grain, color saturation
         self, 
         furniture_bytes, 
         reference_bytes: Optional[List[bytes]] = None, 
+        wood_bytes: Optional[List[bytes]] = None,
         notas_usuario: str = "",
         api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Analiza conjuntamente la foto actual del mueble, las fotos de referencia (vistas y geometría 360°)
-        y las notas obligatorias del usuario.
+        Analiza conjuntamente la foto actual del mueble, las fotos de muestra de madera/color,
+        las fotos de referencia (vistas y geometría 360°) y las notas obligatorias del usuario.
         """
         key = self.get_api_key(api_key)
         if not key:
@@ -151,7 +152,7 @@ Pay special attention to how light hits the threads/wood grain, color saturation
             if not client:
                 raise RuntimeError("No se pudo inicializar el cliente de Gemini API")
             
-            # 1. Preparar imágenes actuales (Casilla 1)
+            # 1. Preparar imágenes actuales del mueble (Casilla 1)
             actual_imgs = []
             if isinstance(furniture_bytes, list):
                 for fb in furniture_bytes:
@@ -160,25 +161,46 @@ Pay special attention to how light hits the threads/wood grain, color saturation
             elif furniture_bytes:
                 actual_imgs.append(self._prepare_image(furniture_bytes))
 
-            # 2. Preparar imágenes de referencia (Casilla 2)
+            # 2. Preparar imágenes de muestra de madera / color (Casilla 2)
+            wood_imgs = []
+            if wood_bytes and isinstance(wood_bytes, list):
+                for wb in wood_bytes:
+                    if wb:
+                        wood_imgs.append(self._prepare_image(wb))
+            elif wood_bytes:
+                wood_imgs.append(self._prepare_image(wood_bytes))
+
+            # 3. Preparar imágenes de referencia (Casilla 3)
             ref_imgs = []
             if reference_bytes and isinstance(reference_bytes, list):
                 for rb in reference_bytes:
                     if rb:
                         ref_imgs.append(self._prepare_image(rb))
+            elif reference_bytes:
+                ref_imgs.append(self._prepare_image(reference_bytes))
 
-            # PASO 1 (CRÍTICO): Extraer el COLOR y MATERIAL REAL EXCLUSIVAMENTE de la Foto Actual (Casilla 1).
-            mat_prompt = """You are a master furniture materials colorist and spectrophotometry expert.
-Look ONLY at the provided CURRENT TAKEN PHOTO(S) of the furniture piece.
+            # PASO 1 (CRÍTICO): Extraer el COLOR, ESPECIE DE MADERA Y TEXTURA
+            # Si el usuario subió fotos de muestra de madera/color, tienen máxima prioridad
+            if wood_imgs:
+                mat_prompt = """You are a master furniture materials colorist, timber technologist, and spectrophotometry expert.
+Look at the provided WOOD / COLOR SAMPLE PHOTO(S) and the FURNITURE PHOTO(S).
+Identify with absolute scientific precision the EXACT WOOD FINISH, GRAIN, AND MATERIAL:
+1. WOOD FINISH & SPECIES: Analyze the wood sample photo(s) to determine the exact species (e.g. natural light oak / roble claro, white oak / encino, American walnut / nogal, ash / fresno, teak / teca, pine / pino, etc.), grain flow, pores, warmth, stain tone, and Hex code estimate.
+2. UPHOLSTERY & FABRIC: If upholstered cushions/panels are present in the furniture photos, identify the exact fabric weave, texture, and color.
+CRITICAL: The wood sample photo is the definitive reference for the furniture's wooden surfaces."""
+                mat_contents = [mat_prompt] + wood_imgs + actual_imgs
+            else:
+                mat_prompt = """You are a master furniture materials colorist and spectrophotometry expert.
+Look at the provided FURNITURE PHOTO(S).
 Identify with absolute scientific precision the EXACT MATERIAL, WOOD FINISH, AND COLOR:
-1. WOOD FINISH & SPECIES: Describe the EXACT shade and tone seen in this specific photo (e.g. light washed oak, bleached ash, pale greyish natural timber, blonde wood, etc.) with Hex code estimate.
+1. WOOD FINISH & SPECIES: Describe the EXACT shade, grain, and tone seen in this specific photo (e.g. light washed oak, bleached ash, pale greyish natural timber, blonde wood, walnut, etc.) with Hex code estimate.
 2. UPHOLSTERY & FABRIC: Describe the exact weave and color of any padded or upholstered surface (e.g. pitch black matte panel, charcoal, etc.).
-CRITICAL: Do NOT guess darker woods or warm amber walnut if this photo shows a lighter, blonde, bleached, or greyish finish. Report EXACTLY what is visible in THIS photo."""
+CRITICAL: Report EXACTLY what is visible in the photos."""
+                mat_contents = [mat_prompt] + (actual_imgs or ref_imgs)
             
             if notas_usuario and notas_usuario.strip():
                 mat_prompt += f"\n\nUSER OVERRIDE NOTES:\n{notas_usuario.strip()}"
 
-            mat_contents = [mat_prompt] + actual_imgs
             mat_config = types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=MaterialAnalysisV5,
@@ -194,7 +216,7 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
             if notas_usuario and notas_usuario.strip():
                 geom_prompt += f"\n\nUSER MANDATORY DIRECTIVES (STRICT OVERRIDE):\n{notas_usuario.strip()}"
 
-            geom_contents = [geom_prompt] + actual_imgs + ref_imgs
+            geom_contents = [geom_prompt] + (actual_imgs or ref_imgs) + ref_imgs
             geom_config = types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=FurnitureAnalysisV5,
@@ -216,8 +238,9 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
 
             furniture_data = json.loads(geom_res.text)
 
-            # FORZAR QUE EL MATERIAL Y COLOR SEA 100% EL DE LA FOTO ACTUAL (CASILLA 1)
+            # REGISTRAR MATERIALES Y DETECCIÓN DE MUESTRA DE MADERA
             furniture_data["existing_materials"] = exact_material_description
+            furniture_data["has_wood_sample"] = bool(wood_imgs)
             return furniture_data
         except Exception as e:
             print(f"[AIPromptServiceV5] Error analyzing furniture: {e}")
@@ -360,12 +383,19 @@ Camera: {hardware_str}"""
                 "chatgpt_dalle3": prompt_dalle
             })
 
-        # 1 SOLO PROMPT MAESTRO PARA GOOGLE AI STUDIO (Nano Banana 2.1 & Pro)
-        # Configurado con protocolo conversacional que avanza foto por foto con la palabra clave 'foto'
+        has_wood_sample = ma.get("has_wood_sample", False)
+        if has_wood_sample:
+            visual_memory_block = f"""IMAGE IDENTIFICATION & VISUAL MEMORY:
+- TARGET FURNITURE DESIGN: The uploaded furniture photo(s) establish the 3D model, proportions, silhouette, and geometry.
+- WOOD / COLOR SAMPLE (ABSOLUTE TRUTH): The wood / material sample photo(s) (la foto de la madera o muestra de color) provide the 100% ABSOLUTE SOURCE OF TRUTH for wood species, grain flow, stain tone, warmth, and surface sheen. You MUST apply this exact wood finish ({materials_with_notes}) to all wooden surfaces of the furniture across all generated views!
+- 360-DEGREE TOPOLOGY: Maintain 100% exact consistent geometry and the identical wood finish from the sample across every perspective. Do NOT revert to generic wood tones."""
+        else:
+            visual_memory_block = f"""IMAGE IDENTIFICATION & VISUAL MEMORY:
+- ABSOLUTE TRUTH FOR COLOR & FINISH: The provided furniture photo(s) and material samples are the 100% ABSOLUTE SOURCE OF TRUTH for the furniture upholstery color, fabric texture weave, and wood finish/stain ({materials_with_notes}).
+- 360-DEGREE TOPOLOGY FROM REFERENCES: Cross-reference the photos to maintain 100% geometric consistency and identical finish across all perspectives without color drifting."""
+
         prompt_maestro_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
-IMAGE IDENTIFICATION & VISUAL MEMORY:
-- ABSOLUTE TRUTH FOR COLOR & FINISH (IMAGE 1): The first photograph (Image 1 / Current Photo) is the 100% ABSOLUTE SOURCE OF TRUTH for the furniture upholstery color, fabric texture weave, and wood finish/stain.
-- 360-DEGREE TOPOLOGY FROM REFERENCES (SUBSEQUENT IMAGES): The reference photos are provided SOLELY to understand 3D geometry, rear tailoring, and perspective angles. DO NOT copy colors from reference images if they differ from Image 1. Always enforce the exact color, wood tone, and fabric from IMAGE 1 across all views!
+{visual_memory_block}
 {user_directives_block}
 
 CRITICAL EXECUTION PROTOCOL (INTERACTIVE TURN-BY-TURN GENERATION WITH TRIGGER WORD 'foto'):
@@ -405,10 +435,11 @@ HARDWARE & RENDERING:
 Negative Prompt: collage, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3 (Generación secuencial completa de las 5 fotos)
+        wood_dal_maestro = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
         prompt_maestro_dal = f"""[COMMAND: MULTI-IMAGE SEQUENTIAL GENERATION FOR COMMERCIAL CATALOG]
 [ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
-Generate ALL 5 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'), materials: ({materials_with_notes}).
+Generate ALL 5 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){wood_dal_maestro}.
 CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage or split canvas.
 
 1. FIRST IMAGE (View 1): 3/4 Isometric Perspective Facing Right (45° angle, elevated 15° to reveal front-right silhouette and depth).
@@ -540,12 +571,19 @@ Camera: {hardware_str}"""
                 "chatgpt_dalle3": prompt_dal
             })
 
-        # 1 SOLO PROMPT MAESTRO PARA GOOGLE AI STUDIO (Nano Banana 2.1 & Pro)
-        # Configurado con protocolo interactivo secuencial con la palabra clave 'foto'
+        has_wood_sample = ma.get("has_wood_sample", False)
+        if has_wood_sample:
+            visual_memory_block = f"""IMAGE IDENTIFICATION & VISUAL MEMORY:
+- TARGET FURNITURE DESIGN: The uploaded furniture photo(s) establish the 3D model, proportions, facade joinery, and architecture.
+- WOOD / COLOR SAMPLE (ABSOLUTE TRUTH): The wood / material sample photo(s) (la foto de la madera o muestra de color) provide the 100% ABSOLUTE SOURCE OF TRUTH for wood species, grain flow, stain tone, warmth, and surface sheen. You MUST apply this exact wood finish ({materials_with_notes}) to all wooden surfaces of the furniture across all 4 generated views!
+- 360-DEGREE TOPOLOGY: Maintain 100% exact consistent geometry and the identical wood finish from the sample across every perspective. Do NOT revert to generic wood tones."""
+        else:
+            visual_memory_block = f"""IMAGE IDENTIFICATION & VISUAL MEMORY:
+- ABSOLUTE TRUTH FOR COLOR & FINISH: The provided furniture photo(s) and material samples are the 100% ABSOLUTE SOURCE OF TRUTH for the furniture upholstery color, fabric texture weave, and wood finish/stain ({materials_with_notes}).
+- 360-DEGREE TOPOLOGY FROM REFERENCES: Cross-reference the photos to maintain 100% geometric consistency and identical finish across all perspectives without color drifting."""
+
         prompt_maestro_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
-IMAGE IDENTIFICATION & VISUAL MEMORY:
-- ABSOLUTE TRUTH FOR COLOR & FINISH (IMAGE 1): The first photograph (Image 1 / Current Photo) is the 100% ABSOLUTE SOURCE OF TRUTH for the furniture upholstery color, fabric texture weave, and wood finish/stain.
-- 360-DEGREE TOPOLOGY FROM REFERENCES (SUBSEQUENT IMAGES): The reference photos are provided SOLELY to understand 3D geometry, rear tailoring, and perspective angles. DO NOT copy colors from reference images if they differ from Image 1. Always enforce the exact color, wood tone, and fabric from IMAGE 1 across all views!
+{visual_memory_block}
 {user_directives_block}
 
 CRITICAL EXECUTION PROTOCOL (INTERACTIVE TURN-BY-TURN GENERATION WITH TRIGGER WORD 'foto'):
@@ -581,10 +619,11 @@ HARDWARE & RENDERING:
 Negative Prompt: collage, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3 (Generación completa de las 4 fotos)
+        wood_dal_maestro_21 = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
         prompt_maestro_dal = f"""[COMMAND: MULTI-IMAGE SEQUENTIAL GENERATION FOR COMMERCIAL CATALOG]
 [ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
-Generate ALL 4 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'), materials: ({materials_with_notes}).
+Generate ALL 4 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){wood_dal_maestro_21}.
 CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 4 distinct, separate image files. DO NOT combine them into a collage or split canvas.
 
 1. FIRST IMAGE (View 1): Front View (0° flat eye-level elevation showing facade and joinery).
@@ -634,6 +673,18 @@ MANDATORY DIRECTIVES APPLIED:
             user_directives_block = ""
             materials_with_notes = existing_mats
 
+        has_wood_sample = ma.get("has_wood_sample", False)
+        if has_wood_sample:
+            preservation_block = f"""PRESERVATION LOCK (WOOD SAMPLE & GEOMETRY FIDELITY):
+- WOOD FINISH TRANSFER: Faithfully apply the exact wood species, authentic grain flow, stain tone, warmth, and texture from the wood reference photo ({materials_with_notes}) to all wooden surfaces.
+- GEOMETRY & TOPOLOGY: Retain 100% exact structural geometry, leg joinery, cushion contours, armrests, and proportions ({geom_struct}).
+- ZERO REDESIGN: Do not modify, reinterpret, or stylize the furniture piece."""
+        else:
+            preservation_block = f"""PRESERVATION LOCK (CASILLA 1 FIDELITY):
+- MATERIALS & TEXTURES: Lock exact wood finish, species, authentic grain flow, stain tone, and fabric weave texture ({materials_with_notes}).
+- GEOMETRY & TOPOLOGY: Retain 100% exact structural geometry, leg joinery, cushion contours, armrests, and proportions ({geom_struct}).
+- ZERO REDESIGN: Do not modify, reinterpret, or stylize the furniture piece."""
+
         # Prompt para Google AI Studio / Imagen 3
         prompt_ais = f"""[TASK: ISOLATED PRODUCT PHOTOGRAPHY - PURE WHITE BACKGROUND CUTOUT]
 Photograph the {furn_item} ('{furniture_name}') shown in the reference image, isolated as a clean digital commercial catalog cutout.
@@ -644,10 +695,7 @@ CRITICAL POSITIONING & ISOLATION:
 - ZERO SHADOWS MANDATE: 0% ground shadows, 0% drop shadows, 0% contact floor shadows, 0% cast shadows. Zero floor reflections. Clean crisp edges with absolute isolation from any background elements.
 - NO PROPS: No walls, no floors, no interior decor, no studio equipment, no backdrop stands.
 
-PRESERVATION LOCK (CASILLA 1 FIDELITY):
-- MATERIALS & TEXTURES: Lock exact wood finish, species, authentic grain flow, stain tone, and fabric weave texture ({materials_with_notes}).
-- GEOMETRY & TOPOLOGY: Retain 100% exact structural geometry, leg joinery, cushion contours, armrests, and proportions ({geom_struct}).
-- ZERO REDESIGN: Do not modify, reinterpret, or stylize the furniture piece.
+{preservation_block}
 
 {user_directives_block if user_notes_clean else ""}
 CAMERA & HARDWARE:
@@ -707,6 +755,9 @@ MANDATORY QUALITY DIRECTIVES:
             user_directives_block = ""
             materials_with_notes = existing_mats
 
+        has_wood_sample = ma.get("has_wood_sample", False)
+        wood_hd_directive = f"- TEXTURE & WOOD LOCK: Faithfully remaster and transfer the authentic wood species grain pattern from the wood reference photo ({materials_with_notes})." if has_wood_sample else f"- TEXTURE LOCK: Strictly retain the authentic wood species grain pattern ({materials_with_notes}). Do not replace with generic synthetic wood or fake flat veneer."
+
         prompt_ais = f"""[TASK: 8K COMMERCIAL RESTORATION & ULTRA-HD MACRO CLARITY REMASTER]
 Generate a hyper-sharp, razor-focused, master-quality catalog commercial photograph of the {furn_item} ('{furniture_name}') from the reference image.
 
@@ -717,7 +768,7 @@ CRITICAL CLARITY DIRECTIVE (ZERO PIXELATION, ZERO BLUR):
 
 STRICT PRESERVATION LOCK (ABSOLUTELY NO GEOMETRY OR COLOR DRIFT):
 - COLOR LOCK: Preserve the 100% exact original color hue, warmth, and saturation without cooling, warming, or tint shifts.
-- TEXTURE LOCK: Strictly retain the authentic wood species grain pattern ({materials_with_notes}). Do not replace with generic synthetic wood or fake flat veneer.
+{wood_hd_directive}
 - GEOMETRY LOCK: Lock the exact physical dimensions, joinery, bevels, cushions, and silhouette ({geom_struct}). Do not redesign, reshape, or reconfigure any element.
 
 {user_directives_block if user_notes_clean else ""}

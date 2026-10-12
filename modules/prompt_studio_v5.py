@@ -174,7 +174,7 @@ def render_prompt_studio_v5():
     with c_head_left:
         st.markdown("""
 <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-    <span style="font-size:22px; font-weight:800; color:#A855F7;">⚡ Estudio V5 (Vistas 1.1 y 2.1 con 3 Casillas)</span>
+    <span style="font-size:22px; font-weight:800; color:#A855F7;">⚡ Estudio V5 (Vistas 1.1 y 2.1 con Muestras de Madera)</span>
     <span class="studio-badge-v5">Nano Banana & ChatGPT Pro</span>
 </div>
         """, unsafe_allow_html=True)
@@ -239,35 +239,49 @@ def render_prompt_studio_v5():
 
     with col1:
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
-        st.markdown('<div class="studio-card-title">🎯 1. Configuración de Vistas (3 Casillas)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="studio-card-title">🎯 1. Configuración de Vistas y Materiales</div>', unsafe_allow_html=True)
         
         st.markdown("""
         <div class="instruction-box-nano">
             <b>🎯 Vistas (1.1):</b> 5 vistas canónicas (3/4 Derecha, Lateral 90°, Frente 0°, 3/4 Picada Alta, Cenital 90°).<br>
             <b>⚡ Vistas (2.1):</b> 4 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Superior Cenital).<br>
             <b>⬜ Extraer Mueble:</b> Mueble centrado en fondo blanco puro (#FFFFFF) sin sombras (0%).<br>
-            <b>✨ Mejora HD:</b> 8K macro nítido anti-pixelado con bloqueo estricto de color, textura y geometría.
+            <b>✨ Mejora HD:</b> 8K macro nítido anti-pixelado con bloqueo estricto de color, textura y geometría.<br>
+            <b>🪵 Muestras de Madera / Color:</b> Permite subir fotos de la madera real o muestras de color para transferirlas a todas las vistas.
         </div>
         """, unsafe_allow_html=True)
 
-        # CASILLA 1: Foto actual tomada del mueble
-        st.markdown("##### 📸 Casilla 1: Foto Actual del Mueble (Tomada actualmente)")
-        st.caption("📷 Sube la fotografía tomada actualmente en taller o catálogo.")
+        # CASILLA 1: Foto(s) Actual(es) del Mueble
+        st.markdown("##### 📸 Casilla 1: Foto(s) del Mueble (Modelo y Proporciones)")
+        st.caption("📷 Sube la foto o fotos del mueble para definir su modelo, silueta y proporciones.")
         mueble_actual_up = st.file_uploader(
-            "Arrastra aquí la foto actual del mueble:",
+            "Arrastra aquí la foto o fotos del mueble:",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
             key=f"st_mueble_actual_v5_{st.session_state.clear_key_v5}",
             accept_multiple_files=True,
-            help="Foto tomada actualmente del mueble real."
+            help="Foto tomada del mueble real (puedes subir 1 o más fotos)."
         )
 
         st.markdown("---")
 
-        # CASILLA 2: Fotos de referencia del mueble y sus vistas
-        st.markdown("##### 📐 Casilla 2: Fotos de Referencia del Mueble y sus Vistas")
-        st.caption("🖼️ Sube fotos de referencia del mueble (otros ángulos, vistas y detalles para que la IA entienda la geometría en 360°).")
+        # CASILLA 2: Foto(s) de Muestra de Madera / Color / Acabado
+        st.markdown("##### 🪵 Casilla 2: Foto(s) de Madera, Color o Acabado (Muestra Real)")
+        st.caption("🪵 Sube fotos de la madera real (veta, tinte, acabado), color o tela para aplicarlos a todas las vistas.")
+        mueble_madera_up = st.file_uploader(
+            "Arrastra aquí la foto de la madera o muestras de color:",
+            type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
+            key=f"st_mueble_madera_v5_{st.session_state.clear_key_v5}",
+            accept_multiple_files=True,
+            help="Foto de la madera real o muestras de textura y color (puedes subir 1 o más fotos)."
+        )
+
+        st.markdown("---")
+
+        # CASILLA 3: Fotos de Referencia del Mueble (Otros ángulos y Vistas 360°)
+        st.markdown("##### 📐 Casilla 3: Fotos de Referencia (Otros Ángulos y Vistas 360°)")
+        st.caption("🖼️ Sube fotos de referencia del mueble (otros ángulos, laterales, trasera o detalles para entender la geometría 360°).")
         mueble_ref_up = st.file_uploader(
-            "Arrastra aquí las fotos de referencia del mueble y sus vistas:",
+            "Arrastra aquí las fotos de referencia de ángulos y vistas:",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
             key=f"st_mueble_ref_v5_{st.session_state.clear_key_v5}",
             accept_multiple_files=True,
@@ -276,8 +290,8 @@ def render_prompt_studio_v5():
 
         st.markdown("---")
 
-        # CASILLA 3: Notas e instrucciones obligatorias
-        st.markdown("##### 📝 Casilla 3: Notas / Directivas Obligatorias para la IA")
+        # CASILLA 4: Notas e instrucciones obligatorias
+        st.markdown("##### 📝 Casilla 4: Notas / Directivas Obligatorias para la IA")
         st.caption("✨ La IA **siempre acatará e integrará obligatoriamente** estas notas en todos los prompts generados.")
         notas_usuario = st.text_area(
             "Escribe tus notas obligatorias para la IA:",
@@ -302,8 +316,8 @@ def render_prompt_studio_v5():
             btn_hd = st.button("✨ Mejora HD", use_container_width=True, key=f"btn_gen_hd_{st.session_state.clear_key_v5}")
 
         if btn_1_1 or btn_2_1 or btn_extraer or btn_hd:
-            if not mueble_actual_up and not mueble_ref_up:
-                st.error("⚠️ Por favor sube al menos una fotografía (en la Casilla 1 de foto actual o en la Casilla 2 de referencias).")
+            if not mueble_actual_up and not mueble_madera_up and not mueble_ref_up:
+                st.error("⚠️ Por favor sube al menos una fotografía (mueble, muestra de madera o referencias).")
             else:
                 progress_holder = st.empty()
                 if btn_extraer:
@@ -314,9 +328,9 @@ def render_prompt_studio_v5():
                     modo_nombre = "Vistas (2.1)"
                 else:
                     modo_nombre = "Vistas (1.1)"
-                progress_holder.info(f"⏳ Analizando foto actual y referencias con Gemini Vision para generar {modo_nombre}...")
+                progress_holder.info(f"⏳ Analizando fotos del mueble, muestras de madera y referencias con Gemini Vision para generar {modo_nombre}...")
                 try:
-                    # Bytes de fotos actuales
+                    # Bytes de fotos del mueble (Casilla 1)
                     m_actual_bytes = []
                     m_name = "Mueble"
                     if mueble_actual_up:
@@ -328,7 +342,16 @@ def render_prompt_studio_v5():
                             m_actual_bytes.append(mueble_actual_up.getvalue() if hasattr(mueble_actual_up, "getvalue") else mueble_actual_up.read())
                             m_name = getattr(mueble_actual_up, "name", "Mueble").split(".")[0]
 
-                    # Bytes de fotos de referencia
+                    # Bytes de fotos de muestra de madera / color (Casilla 2)
+                    m_madera_bytes = []
+                    if mueble_madera_up:
+                        if isinstance(mueble_madera_up, list):
+                            for f in mueble_madera_up:
+                                m_madera_bytes.append(f.getvalue() if hasattr(f, "getvalue") else f.read())
+                        else:
+                            m_madera_bytes.append(mueble_madera_up.getvalue() if hasattr(mueble_madera_up, "getvalue") else mueble_madera_up.read())
+
+                    # Bytes de fotos de referencia (Casilla 3)
                     m_ref_bytes = []
                     if mueble_ref_up:
                         if isinstance(mueble_ref_up, list):
@@ -341,10 +364,11 @@ def render_prompt_studio_v5():
                             if not m_actual_bytes:
                                 m_name = getattr(mueble_ref_up, "name", "Mueble").split(".")[0]
 
-                    # Análisis integral con Gemini
+                    # Análisis integral con Gemini (mueble + muestra de madera + referencias)
                     m_ana = ai_prompt_service_v5.analyze_furniture_for_enhancement(
-                        furniture_bytes=m_actual_bytes or m_ref_bytes,
+                        furniture_bytes=m_actual_bytes or m_ref_bytes or m_madera_bytes,
                         reference_bytes=m_ref_bytes,
+                        wood_bytes=m_madera_bytes,
                         notas_usuario=notas_usuario
                     )
 
@@ -380,6 +404,7 @@ def render_prompt_studio_v5():
                         "prompts": prompts,
                         "notas_usuario": notas_usuario,
                         "has_actual": bool(mueble_actual_up),
+                        "has_madera": bool(mueble_madera_up),
                         "has_ref": bool(mueble_ref_up)
                     }
                     progress_holder.success(f"✅ ¡Prompts para {modo_nombre} generados exitosamente!")
@@ -392,26 +417,33 @@ def render_prompt_studio_v5():
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
         st.markdown('<div class="studio-card-title">📦 Elementos Cargados</div>', unsafe_allow_html=True)
         
-        # Miniaturas de Casilla 1
+        # Miniaturas de Casilla 1: Fotos del Mueble
         if mueble_actual_up:
-            st.markdown("<b>📸 Foto Actual (Casilla 1):</b>", unsafe_allow_html=True)
+            st.markdown("<b>📸 Foto(s) del Mueble (Casilla 1):</b>", unsafe_allow_html=True)
             for f in (mueble_actual_up if isinstance(mueble_actual_up, list) else [mueble_actual_up]):
-                f_name = getattr(f, "name", "Foto Actual")
-                render_preview_image(f, caption=f"Actual: {f_name}")
+                f_name = getattr(f, "name", "Foto Mueble")
+                render_preview_image(f, caption=f"Mueble: {f_name}")
 
-        # Miniaturas de Casilla 2
+        # Miniaturas de Casilla 2: Muestra de Madera / Color
+        if mueble_madera_up:
+            st.markdown("<b>🪵 Muestra de Madera / Color (Casilla 2):</b>", unsafe_allow_html=True)
+            for f in (mueble_madera_up if isinstance(mueble_madera_up, list) else [mueble_madera_up]):
+                f_name = getattr(f, "name", "Muestra Madera")
+                render_preview_image(f, caption=f"Madera/Color: {f_name}")
+
+        # Miniaturas de Casilla 3: Fotos de Referencia
         if mueble_ref_up:
-            st.markdown("<b>📐 Fotos de Referencia (Casilla 2):</b>", unsafe_allow_html=True)
+            st.markdown("<b>📐 Fotos de Referencia (Casilla 3):</b>", unsafe_allow_html=True)
             for f in (mueble_ref_up if isinstance(mueble_ref_up, list) else [mueble_ref_up]):
                 f_name = getattr(f, "name", "Referencia")
                 render_preview_image(f, caption=f"Ref: {f_name}")
 
-        # Notas registradas
+        # Notas registradas (Casilla 4)
         if notas_usuario and notas_usuario.strip():
-            st.markdown("<b>📝 Notas Registradas (Casilla 3):</b>", unsafe_allow_html=True)
+            st.markdown("<b>📝 Notas Registradas (Casilla 4):</b>", unsafe_allow_html=True)
             st.info(notas_usuario.strip())
 
-        if not mueble_actual_up and not mueble_ref_up and not (notas_usuario and notas_usuario.strip()):
+        if not mueble_actual_up and not mueble_madera_up and not mueble_ref_up and not (notas_usuario and notas_usuario.strip()):
             st.caption("Esperando carga de fotos o notas en la columna izquierda...")
 
         st.markdown('</div>', unsafe_allow_html=True)
@@ -432,8 +464,8 @@ def render_prompt_studio_v5():
                 st.markdown(f"""
                 <div style="background:rgba(16,185,129,0.12); border:1px solid #10B981; border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:12px; color:#A7F3D0; line-height:1.5;">
                     🔥 <b>CÓMO USAR EN GOOGLE AI STUDIO (NANO BANANA 2.1 & PRO):</b><br>
-                    1. Pega el <b>Prompt Maestro</b> en Google AI Studio.<br>
-                    2. Nano Banana generará la <b>Foto 1</b> y quedará en espera.<br>
+                    1. Adjunta tus fotos (el mueble y la muestra de madera si la tienes) y pega el <b>Prompt Maestro</b> en Google AI Studio.<br>
+                    2. Nano Banana generará la <b>Foto 1</b> con la madera y proporciones exactas y quedará en espera.<br>
                     3. Escribe únicamente la palabra <b><code>foto</code></b> en el chat para recibir la <b>Foto 2</b>, luego escribe <b><code>foto</code></b> otra vez para la <b>Foto 3</b>, y así sucesivamente.<br>
                     <i>✨ La madera, la veta, la tela y la geometría del mueble se mantendrán 100% idénticas en todas las vistas.</i>
                 </div>
@@ -533,6 +565,6 @@ def render_prompt_studio_v5():
                     st.markdown(f"**🧱 Materiales y Color:** `{ma.get('existing_materials', 'N/A')}`")
                     st.markdown(f"**🏗️ Topología 3D:** `{ma.get('geometric_structure', 'N/A')}`")
         else:
-            st.info("👈 Sube la foto actual en la **Casilla 1**, referencias en la **Casilla 2**, escribe tus notas en la **Casilla 3** y presiona **🎯 Vistas (1.1)**, **⚡ Vistas (2.1)**, **⬜ Extraer Mueble** o **✨ Mejora HD**.")
+            st.info("👈 Sube la foto del mueble en la **Casilla 1**, la muestra de madera/color en la **Casilla 2**, referencias en la **Casilla 3**, notas en la **Casilla 4** y presiona el botón que desees.")
 
         st.markdown('</div>', unsafe_allow_html=True)
