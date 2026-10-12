@@ -301,21 +301,22 @@ def render_prompt_studio_v3():
                 m_ana = None
 
                 try:
-                    if tela_bytes:
-                        progress_holder.info("🧵 Analizando micro-textura y color de la tela...")
-                        f_ana = ai_prompt_service_v3.analyze_material(tela_bytes, material_type="fabric")
-                    if madera_bytes:
-                        progress_holder.info("🪵 Analizando veta y textura de la madera...")
-                        w_ana = ai_prompt_service_v3.analyze_material(madera_bytes, material_type="wood")
+                    import concurrent.futures
+                    progress_holder.info("🚀 Analizando fotos y materiales en paralelo...")
                     
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                        fut_tela = executor.submit(ai_prompt_service_v3.analyze_material, tela_bytes, material_type="fabric") if tela_bytes else None
+                        fut_mad = executor.submit(ai_prompt_service_v3.analyze_material, madera_bytes, material_type="wood") if madera_bytes else None
+                        fut_mueble = executor.submit(ai_prompt_service_v3.analyze_furniture_for_enhancement, m_bytes) if m_bytes else None
+                        
+                        f_ana = fut_tela.result() if fut_tela else None
+                        w_ana = fut_mad.result() if fut_mad else None
+                        m_ana = fut_mueble.result() if fut_mueble else None
+
                     if modo_sel == "Solo mueble":
-                        progress_holder.info("🔄 Analizando mueble para extracción en fondo blanco...")
-                        m_ana = ai_prompt_service_v3.analyze_furniture_for_enhancement(m_bytes)
                         prompts = ai_prompt_service_v3.generate_extraction_prompt(m_name, m_ana, notas_usuario=notas_usuario)
 
                     elif modo_sel in ["Solo Tela", "Solo Madera", "Tela + Madera"]:
-                        progress_holder.info("🛋️ Analizando geometría del mueble...")
-                        m_ana = ai_prompt_service_v3.analyze_furniture_for_enhancement(m_bytes)
                         mode_map = {"Solo Tela": "fabric_only", "Solo Madera": "wood_only", "Tela + Madera": "dual"}
                         prompts = ai_prompt_service_v3.generate_material_swap_prompt_v3(
                             mode=mode_map[modo_sel],

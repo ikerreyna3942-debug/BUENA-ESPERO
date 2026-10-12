@@ -23,6 +23,7 @@ class FurnitureAnalysisV5(BaseModel):
 class AIPromptServiceV5:
     def __init__(self):
         self.default_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self._clients: Dict[str, Any] = {}
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -35,11 +36,27 @@ class AIPromptServiceV5:
             pass
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
+    def get_client(self, api_key: Optional[str] = None):
+        """Reutiliza el cliente con conexión Keep-Alive para evitar renegociación SSL en cada llamada."""
+        key = self.get_api_key(api_key)
+        if not key:
+            return None
+        if key in self._clients:
+            return self._clients[key]
+        try:
+            from google import genai
+            client = genai.Client(api_key=key)
+            self._clients[key] = client
+            return client
+        except Exception as e:
+            print(f"[AIPromptServiceV5] Error instanciando cliente: {e}")
+            return None
+
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automático."""
+        """Llama a Gemini con lista de modelos activos priorizando los más rápidos."""
         models_to_try = [
-            "gemini-flash-latest",
             "gemini-2.5-flash",
+            "gemini-flash-latest",
             "gemini-flash-lite-latest",
             "gemini-3-flash-preview",
             "gemini-2.0-flash",
@@ -54,12 +71,15 @@ class AIPromptServiceV5:
                 continue
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
-    def _prepare_image(self, img_bytes: bytes, max_dim: int = 800) -> Image.Image:
-        """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
+    def _prepare_image(self, img_bytes: bytes, max_dim: int = 768) -> Image.Image:
+        """Optimiza y comprime en memoria imágenes para envío ultra-rápido a Gemini."""
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
-        return img
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        buf.seek(0)
+        return Image.open(buf)
 
     def analyze_material(self, sample_bytes: bytes, api_key: Optional[str] = None, material_type: str = "auto") -> Dict[str, Any]:
         key = self.get_api_key(api_key)
@@ -124,10 +144,12 @@ Pay special attention to how light hits the threads/wood grain, color saturation
             ).model_dump()
             
         try:
-            from google import genai
             from google.genai import types
+            import concurrent.futures
             
-            client = genai.Client(api_key=key)
+            client = self.get_client(key)
+            if not client:
+                raise RuntimeError("No se pudo inicializar el cliente de Gemini API")
             
             # 1. Preparar imágenes actuales (Casilla 1)
             actual_imgs = []
@@ -146,7 +168,6 @@ Pay special attention to how light hits the threads/wood grain, color saturation
                         ref_imgs.append(self._prepare_image(rb))
 
             # PASO 1 (CRÍTICO): Extraer el COLOR y MATERIAL REAL EXCLUSIVAMENTE de la Foto Actual (Casilla 1).
-            # Esto blinda el sistema para que NUNCA adopte los colores de las fotos de referencia.
             mat_prompt = """You are a master furniture materials colorist and spectrophotometry expert.
 Look ONLY at the provided CURRENT TAKEN PHOTO(S) of the furniture piece.
 Identify with absolute scientific precision the EXACT MATERIAL, WOOD FINISH, AND COLOR:
@@ -157,20 +178,12 @@ CRITICAL: Do NOT guess darker woods or warm amber walnut if this photo shows a l
             if notas_usuario and notas_usuario.strip():
                 mat_prompt += f"\n\nUSER OVERRIDE NOTES:\n{notas_usuario.strip()}"
 
-            mat_res = self._call_gemini(
-                client=client,
-                contents=[mat_prompt] + actual_imgs,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=MaterialAnalysisV5,
-                    temperature=0.0
-                )
+            mat_contents = [mat_prompt] + actual_imgs
+            mat_config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=MaterialAnalysisV5,
+                temperature=0.0
             )
-            mat_data = json.loads(mat_res.text)
-            color_desc = mat_data.get("color_description", "")
-            name_desc = mat_data.get("name", "")
-            tex_desc = mat_data.get("texture_detail", "")
-            exact_material_description = f"{name_desc} ({color_desc}, {tex_desc})"
 
             # PASO 2: Extraer la GEOMETRÍA, ESTILO y PROPORCIONES 3D usando la foto actual + fotos de referencia
             geom_prompt = """You are an expert architectural visualizer, 3D furniture engineer, and commercial photographer.
@@ -182,15 +195,25 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
                 geom_prompt += f"\n\nUSER MANDATORY DIRECTIVES (STRICT OVERRIDE):\n{notas_usuario.strip()}"
 
             geom_contents = [geom_prompt] + actual_imgs + ref_imgs
-            geom_res = self._call_gemini(
-                client=client,
-                contents=geom_contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=FurnitureAnalysisV5,
-                    temperature=0.1
-                )
+            geom_config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=FurnitureAnalysisV5,
+                temperature=0.1
             )
+
+            # EJECUCIÓN EN PARALELO ULTRA-RÁPIDA (Ambas peticiones viajan al mismo tiempo)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                fut_mat = executor.submit(self._call_gemini, client, mat_contents, mat_config)
+                fut_geom = executor.submit(self._call_gemini, client, geom_contents, geom_config)
+                mat_res = fut_mat.result()
+                geom_res = fut_geom.result()
+
+            mat_data = json.loads(mat_res.text)
+            color_desc = mat_data.get("color_description", "")
+            name_desc = mat_data.get("name", "")
+            tex_desc = mat_data.get("texture_detail", "")
+            exact_material_description = f"{name_desc} ({color_desc}, {tex_desc})"
+
             furniture_data = json.loads(geom_res.text)
 
             # FORZAR QUE EL MATERIAL Y COLOR SEA 100% EL DE LA FOTO ACTUAL (CASILLA 1)
