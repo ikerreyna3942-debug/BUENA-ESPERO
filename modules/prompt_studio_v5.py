@@ -35,24 +35,13 @@ def cargar_maderas_menu_v5():
     return combined
 
 def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = "cp_v5"):
-    """Renderiza un botón que copia el texto al portapapeles nativamente en 1 clic."""
-    import json
+    """Renderiza un botón que copia el texto al portapapeles nativamente en 1 clic de forma 100% blindada."""
+    import base64
     import streamlit.components.v1 as components
-    escaped_text = json.dumps(text)
+    b64_text = base64.b64encode(text.encode("utf-8")).decode("utf-8")
     html_code = f"""
     <div style="margin: 4px 0 8px 0;">
-        <button id="btn_{key}" onclick='
-            navigator.clipboard.writeText({escaped_text}).then(() => {{
-                const b = document.getElementById("btn_{key}");
-                const orig = b.innerHTML;
-                b.innerHTML = "✅ ¡Copiado!";
-                b.style.backgroundColor = "#059669";
-                setTimeout(() => {{
-                    b.innerHTML = orig;
-                    b.style.backgroundColor = "#2563EB";
-                }}, 2000);
-            }});
-        ' style="
+        <button id="btn_{key}" onclick="copy_{key}()" style="
             width: 100%;
             background-color: #2563EB;
             color: #FFFFFF;
@@ -68,12 +57,100 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
             justify-content: center;
             gap: 6px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         ">
             {label}
         </button>
     </div>
+    <script>
+    function copy_{key}() {{
+        try {{
+            const b64 = "{b64_text}";
+            const raw = decodeURIComponent(escape(window.atob(b64)));
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(raw).then(function() {{
+                    showCopied_{key}();
+                }}).catch(function() {{
+                    fallbackCopy_{key}(raw);
+                }});
+            }} else {{
+                fallbackCopy_{key}(raw);
+            }}
+        }} catch (err) {{
+            console.error("Error al copiar:", err);
+        }}
+    }}
+    function fallbackCopy_{key}(textToCopy) {{
+        const ta = document.createElement("textarea");
+        ta.value = textToCopy;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        showCopied_{key}();
+    }}
+    function showCopied_{key}() {{
+        const b = document.getElementById("btn_{key}");
+        if (b) {{
+            const orig = b.innerHTML;
+            b.innerHTML = "✅ ¡Copiado!";
+            b.style.backgroundColor = "#059669";
+            setTimeout(function() {{
+                b.innerHTML = orig;
+                b.style.backgroundColor = "#2563EB";
+            }}, 2000);
+        }}
+    }}
+    </script>
     """
     components.html(html_code, height=44)
+
+def render_preview_image(img_data, caption: str = ""):
+    """Renderiza una imagen en Streamlit blindada con data URI en base64 para evitar errores 404 o caídas de caché."""
+    import base64
+    if not img_data:
+        return
+    try:
+        raw_bytes = None
+        if isinstance(img_data, dict) and "bytes" in img_data:
+            raw_bytes = img_data["bytes"]
+        elif hasattr(img_data, "getvalue"):
+            raw_bytes = img_data.getvalue()
+        elif hasattr(img_data, "read"):
+            if hasattr(img_data, "seek"):
+                img_data.seek(0)
+            raw_bytes = img_data.read()
+            if hasattr(img_data, "seek"):
+                img_data.seek(0)
+        elif isinstance(img_data, (bytes, bytearray)):
+            raw_bytes = bytes(img_data)
+
+        if raw_bytes and len(raw_bytes) > 0:
+            b64 = base64.b64encode(raw_bytes).decode("utf-8")
+            mime = "image/jpeg"
+            if raw_bytes.startswith(b"\x89PNG"):
+                mime = "image/png"
+            elif raw_bytes.startswith(b"RIFF") and b"WEBP" in raw_bytes[:16]:
+                mime = "image/webp"
+            elif raw_bytes.startswith(b"GIF8"):
+                mime = "image/gif"
+            st.markdown(f'''
+            <div style="text-align:center; margin-bottom:12px;">
+                <img src="data:{mime};base64,{b64}" style="max-width:100%; border-radius:8px; border:1px solid #475569; box-shadow:0 4px 10px rgba(0,0,0,0.25);" />
+                <div style="font-size:12px; color:#94A3B8; margin-top:4px;">{caption}</div>
+            </div>
+            ''', unsafe_allow_html=True)
+            return
+        
+        st.image(img_data, caption=caption, use_container_width=True)
+    except Exception:
+        try:
+            st.image(img_data, caption=caption, use_container_width=True)
+        except Exception:
+            st.caption(f"🖼️ {caption}")
 
 def render_prompt_studio_v5():
     if "clear_key_v5" not in st.session_state:
@@ -284,23 +361,15 @@ def render_prompt_studio_v5():
         if mueble_actual_up:
             st.markdown("<b>📸 Foto Actual (Casilla 1):</b>", unsafe_allow_html=True)
             for f in (mueble_actual_up if isinstance(mueble_actual_up, list) else [mueble_actual_up]):
-                try:
-                    f_name = getattr(f, "name", "Foto Actual")
-                    f_bytes = f.getvalue() if hasattr(f, "getvalue") else f.read()
-                    st.image(f_bytes, caption=f"Actual: {f_name}", use_container_width=True)
-                except Exception:
-                    st.caption("🖼️ Foto actual cargada")
+                f_name = getattr(f, "name", "Foto Actual")
+                render_preview_image(f, caption=f"Actual: {f_name}")
 
         # Miniaturas de Casilla 2
         if mueble_ref_up:
             st.markdown("<b>📐 Fotos de Referencia (Casilla 2):</b>", unsafe_allow_html=True)
             for f in (mueble_ref_up if isinstance(mueble_ref_up, list) else [mueble_ref_up]):
-                try:
-                    f_name = getattr(f, "name", "Referencia")
-                    f_bytes = f.getvalue() if hasattr(f, "getvalue") else f.read()
-                    st.image(f_bytes, caption=f"Ref: {f_name}", use_container_width=True)
-                except Exception:
-                    st.caption("🖼️ Foto de referencia cargada")
+                f_name = getattr(f, "name", "Referencia")
+                render_preview_image(f, caption=f"Ref: {f_name}")
 
         # Notas registradas
         if notas_usuario and notas_usuario.strip():
