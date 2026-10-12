@@ -164,7 +164,6 @@ def render_prompt_studio_v5():
 .studio-badge-v5 { background: rgba(168, 85, 247, 0.2); color: #C084FC; border: 1px solid rgba(168, 85, 247, 0.4); font-size: 11px; padding: 3px 8px; border-radius: 9999px; font-weight: 700; }
 .studio-card { background-color: #283548; border: 1px solid #475569; border-radius: 12px; padding: 18px; height: 100%; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
 .studio-card-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 8px; }
-.instruction-box-nano { background: rgba(168, 85, 247, 0.12); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: 12px; color: #E9D5FF; line-height: 1.5; }
 .casilla-badge { display: inline-block; background: #3B82F6; color: white; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 6px; }
 </style>
 """, unsafe_allow_html=True)
@@ -241,19 +240,8 @@ def render_prompt_studio_v5():
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
         st.markdown('<div class="studio-card-title">🎯 1. Configuración de Vistas y Materiales</div>', unsafe_allow_html=True)
         
-        st.markdown("""
-        <div class="instruction-box-nano">
-            <b>🎯 Vistas (1.1):</b> 5 vistas canónicas (3/4 Derecha, Lateral 90°, Frente 0°, 3/4 Picada Alta, Cenital 90°).<br>
-            <b>⚡ Vistas (2.1):</b> 4 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Superior Cenital).<br>
-            <b>⬜ Extraer Mueble:</b> Mueble centrado en fondo blanco puro (#FFFFFF) sin sombras (0%).<br>
-            <b>✨ Mejora HD:</b> 8K macro nítido anti-pixelado con bloqueo estricto de color, textura y geometría.<br>
-            <b>🪵 Muestras de Madera / Color:</b> Permite subir fotos de la madera real o muestras de color para transferirlas a todas las vistas.
-        </div>
-        """, unsafe_allow_html=True)
-
         # CASILLA 1: Foto(s) Actual(es) del Mueble
         st.markdown("##### 📸 Casilla 1: Foto(s) del Mueble (Modelo y Proporciones)")
-        st.caption("📷 Sube la foto o fotos del mueble para definir su modelo, silueta y proporciones.")
         mueble_actual_up = st.file_uploader(
             "Arrastra aquí la foto o fotos del mueble:",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
@@ -266,7 +254,6 @@ def render_prompt_studio_v5():
 
         # CASILLA 2: Foto(s) de Muestra de Madera / Color / Acabado
         st.markdown("##### 🪵 Casilla 2: Foto(s) de Madera, Color o Acabado (Muestra Real)")
-        st.caption("🪵 Sube fotos de la madera real (veta, tinte, acabado), color o tela para aplicarlos a todas las vistas.")
         mueble_madera_up = st.file_uploader(
             "Arrastra aquí la foto de la madera o muestras de color:",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
@@ -279,7 +266,6 @@ def render_prompt_studio_v5():
 
         # CASILLA 3: Fotos de Referencia del Mueble (Otros ángulos y Vistas 360°)
         st.markdown("##### 📐 Casilla 3: Fotos de Referencia (Otros Ángulos y Vistas 360°)")
-        st.caption("🖼️ Sube fotos de referencia del mueble (otros ángulos, laterales, trasera o detalles para entender la geometría 360°).")
         mueble_ref_up = st.file_uploader(
             "Arrastra aquí las fotos de referencia de ángulos y vistas:",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
@@ -292,7 +278,6 @@ def render_prompt_studio_v5():
 
         # CASILLA 4: Notas e instrucciones obligatorias
         st.markdown("##### 📝 Casilla 4: Notas / Directivas Obligatorias para la IA")
-        st.caption("✨ La IA **siempre acatará e integrará obligatoriamente** estas notas en todos los prompts generados.")
         notas_usuario = st.text_area(
             "Escribe tus notas obligatorias para la IA:",
             placeholder="Ej: Madera de roble claro acabado mate sedoso, tela de lino crudo beige, respetar costuras dobles, base metálica negra mate...",
@@ -460,17 +445,6 @@ def render_prompt_studio_v5():
             num_vistas = len(ind_vistas)
 
             if ind_vistas:
-                # Guía interactiva destacada para Nano Banana
-                st.markdown(f"""
-                <div style="background:rgba(16,185,129,0.12); border:1px solid #10B981; border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:12px; color:#A7F3D0; line-height:1.5;">
-                    🔥 <b>CÓMO USAR EN GOOGLE AI STUDIO (NANO BANANA 2.1 & PRO):</b><br>
-                    1. Adjunta tus fotos (el mueble y la muestra de madera si la tienes) y pega el <b>Prompt Maestro</b> en Google AI Studio.<br>
-                    2. Nano Banana generará la <b>Foto 1</b> con la madera y proporciones exactas y quedará en espera.<br>
-                    3. Escribe únicamente la palabra <b><code>foto</code></b> en el chat para recibir la <b>Foto 2</b>, luego escribe <b><code>foto</code></b> otra vez para la <b>Foto 3</b>, y así sucesivamente.<br>
-                    <i>✨ La madera, la veta, la tela y la geometría del mueble se mantendrán 100% idénticas en todas las vistas.</i>
-                </div>
-                """, unsafe_allow_html=True)
-
                 # Selector de formato
                 tipo_salida = st.radio(
                     "Formato de salida:",
@@ -482,12 +456,10 @@ def render_prompt_studio_v5():
                 if "1 Solo Prompt Maestro" in tipo_salida:
                     p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio (Nano Banana - Palabra 'foto')", "🤖 ChatGPT (DALL-E 3 - Todas las fotos)", "🎨 Midjourney v6.1"])
                     with p_tab1:
-                        st.caption("Pega este prompt en Google AI Studio. Te dará la Foto 1; luego escribe 'foto' para la Foto 2, etc.")
                         p_txt = prompts.get("google_ai_studio", "")
                         st.text_area("Prompt Maestro Interactivo (Google AI Studio):", p_txt, height=270, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}")
                         render_copy_button(p_txt, label="📋 Copiar Prompt Maestro para Google AI Studio (Secuencial)", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}")
                     with p_tab2:
-                        st.caption("Pega este prompt en ChatGPT. Generará el set completo de todas las fotos.")
                         p_dalle = prompts.get("chatgpt_dalle3", "")
                         st.text_area("Prompt Maestro ChatGPT (Genera todas las fotos):", p_dalle, height=250, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}")
                         render_copy_button(p_dalle, label="📋 Copiar Prompt Maestro para ChatGPT (Todas las fotos)", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}")
@@ -497,12 +469,6 @@ def render_prompt_studio_v5():
                         render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}")
 
                 else:
-                    st.markdown("""
-                    <div style="background:rgba(59,130,246,0.15); border:1px solid #3B82F6; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#BFDBFE;">
-                        ✅ <b>Prompts Individuales:</b> Copia y genera exactamente la vista que desees por separado.
-                    </div>
-                    """, unsafe_allow_html=True)
-
                     if ind_vistas:
                         vista_tabs = st.tabs([f"{v['icon']} {v.get('short_name', v['label'].split(':')[0])}" for v in ind_vistas])
                         for i, (tab, v_data) in enumerate(zip(vista_tabs, ind_vistas)):
@@ -518,36 +484,12 @@ def render_prompt_studio_v5():
                                     st.text_area(f"Prompt ChatGPT / DALL-E 3 ({v_data['label']}):", p_dal, height=200, key=f"txt_ind_dal_{i}_{st.session_state.clear_key_v5}")
                                     render_copy_button(p_dal, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para ChatGPT", key=f"cp_ind_dal_{i}_{st.session_state.clear_key_v5}")
             else:
-                # Modos directos: Extraer Mueble o Mejora HD
-                if "Extraer Mueble" in modo_actual:
-                    st.markdown("""
-                    <div style="background:rgba(255,255,255,0.08); border:1px solid #E2E8F0; border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:12px; color:#F8FAFC; line-height:1.6;">
-                        ⬜ <b>EXTRAER MUEBLE (FONDO BLANCO PURO):</b><br>
-                        • Mueble centrado simétricamente en el encuadre comercial.<br>
-                        • Fondo 100% blanco puro digital (#FFFFFF).<br>
-                        • <b>CERO SOMBRAS (0%):</b> Sin sombras de suelo, sin drop shadows, sin reflejos.<br>
-                        • Fidelidad estricta a los materiales, textura de tela y veta de madera de la Casilla 1.
-                    </div>
-                    """, unsafe_allow_html=True)
-                elif "Mejora HD" in modo_actual:
-                    st.markdown("""
-                    <div style="background:rgba(245,158,11,0.12); border:1px solid #F59E0B; border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:12px; color:#FDE68A; line-height:1.6;">
-                        ✨ <b>MEJORA HD (REMÁSTER MACRO 8K SIN CAMBIOS):</b><br>
-                        • Enfoque apilado (focus stacking) para máxima nitidez óptica.<br>
-                        • Elimina por completo pixelado, compresión y borrosidad.<br>
-                        • <b>CANDADO ABSOLUTO:</b> Cero alteración de color, tono de tinte, veta ni geometría.<br>
-                        • Enfatiza la textura táctil auténtica sobre fondo blanco de estudio.
-                    </div>
-                    """, unsafe_allow_html=True)
-
                 p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
                 with p_tab1:
-                    st.caption("Pega este prompt en Google AI Studio (con Gemini o Nano Banana).")
                     p_txt = prompts.get("google_ai_studio", "")
                     st.text_area("Prompt Google AI Studio:", p_txt, height=270, key=f"txt_res_ais_single_{st.session_state.clear_key_v5}")
                     render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_ais_single_{st.session_state.clear_key_v5}")
                 with p_tab2:
-                    st.caption("Pega este prompt en ChatGPT.")
                     p_dalle = prompts.get("chatgpt_dalle3", "")
                     st.text_area("Prompt ChatGPT / DALL-E 3:", p_dalle, height=250, key=f"txt_res_dal_single_{st.session_state.clear_key_v5}")
                     render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key=f"cp_res_dal_single_{st.session_state.clear_key_v5}")
