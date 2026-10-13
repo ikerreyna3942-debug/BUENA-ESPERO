@@ -191,34 +191,47 @@ CRITICAL: You MUST accurately describe the EXACT color (name, shade, and hex est
         else:
             user_directives_block = ""
 
-        # Manejo de muestras de material (Madera / Tela)
+        # Manejo de muestras de material (Madera / Tela) con identificación visual a prueba de nombres/GUIDs
         mat_rules = []
-        id_blocks = [f"- TARGET FURNITURE REFERENCE: Locate the image containing the furniture piece ('{furniture_name}')."]
+        id_blocks = [
+            f"- TARGET FURNITURE REFERENCE: Locate the photo showing the physical furniture object/piece ('{furn_item}'), uploaded with filename: '{furniture_name}'."
+        ]
 
         if wa:
             w_name = wa.get("name", "Wood Sample")
             w_color = wa.get("color_description", "")
             w_texture = wa.get("texture_detail", "")
             w_light = wa.get("light_interaction", "")
-            id_blocks.append(f"- WOOD / COLOR SAMPLE (ABSOLUTE SOURCE OF TRUTH): Locate the image containing the wood texture sample ('{w_name}').")
-            mat_rules.append(f"""- WOOD RE-FINISHING & UNIFORM MONOLITHIC TONE (CRITICAL):
-  * Apply the exact wood species, tone, and grain from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}) to ALL wooden surfaces.
-  * STRICT 100% UNIFORMITY: Drawer faces, chassis, top surface, side panels, handles, and legs MUST ALL share the identical uniform wood finish.
-  * ABSOLUTELY FORBIDDEN: Zero two-tone contrasting finishes. Do NOT render drawer faces in dark walnut, black, or contrasting wood unless explicitly demanded in notes. Every view must maintain the exact same wood hue and grain.""")
+            id_blocks.append(
+                f"- WOOD / COLOR SAMPLE (ABSOLUTE 100% SOURCE OF TRUTH): Locate the flat square/rectangular close-up swatch photo showing the raw wood grain texture and stain ('{w_name}')."
+            )
+            mat_rules.append(f"""- WOOD RE-FINISHING & CHROMATIC IDENTITY LOCK (CRITICAL):
+  * SINGLE MANUFACTURED SPECIMEN LOCK: You are photographing the EXACT SAME physical specimen across all perspectives. The veneer comes from the exact same log of wood.
+  * WOOD GRAIN CONTINUITY: The linear grain flow, pore structure, and warmth from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}) MUST be applied identically across all views.
+  * STRICT 100% UNIFORMITY: Drawer faces, chassis, top surface, side panels, handles, and legs MUST ALL share the exact same wood finish.
+  * ABSOLUTELY FORBIDDEN: Zero two-tone contrasting finishes. Do NOT render drawer faces in dark walnut, black, or contrasting wood. Every single view must maintain the exact same wood hue and grain.""")
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
             f_color = fa.get("color_description", "")
             f_texture = fa.get("texture_detail", "")
             f_light = fa.get("light_interaction", "")
-            id_blocks.append(f"- FABRIC SWATCH REFERENCE: Locate the image containing the fabric swatch ('{f_name}').")
+            id_blocks.append(
+                f"- FABRIC SWATCH REFERENCE: Locate the flat close-up textile swatch photo showing the upholstery fabric weave and color ('{f_name}')."
+            )
             mat_rules.append(f"""- UPHOLSTERY FABRIC: Apply the exact material from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}, {f_light}). Scale down weave pattern 98% for macro realism with zero chromatic shift.""")
 
         if not mat_rules:
-            mat_rules.append(f"- ORIGINAL MATERIAL PRESERVATION: Maintain 100% exact original upholstery, wood grain, and finishes from TARGET FURNITURE: [{existing_mats}].")
+            mat_rules.append(f"- ORIGINAL MATERIAL PRESERVATION: Maintain 100% exact original wood grain, finishes, and joinery from TARGET FURNITURE: [{existing_mats}].")
 
-        materials_final_block = "\n".join(mat_rules)
-        image_id_final_block = "IMAGE IDENTIFICATION & VISUAL MEMORY:\n" + "\n".join(id_blocks)
+        # Candado de medidas y proporciones 3D
+        proportions_lock = f"""
+3D GEOMETRIC & PROPORTIONAL INTEGRITY LOCK:
+- The furniture piece has fixed real-world dimensions ({geom_struct}).
+- Do NOT alter drawer aspect ratios, do NOT stretch legs vertically or horizontally, and do NOT resize circular handles between views. Maintain 100% mathematical perspective consistency as if moving a real camera on a tripod around a frozen static object."""
+
+        materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
+        image_id_final_block = "IMAGE IDENTIFICATION (ORDER-INDEPENDENT & VISUAL CONTENT BASED):\n" + "\n".join(id_blocks)
 
         vistas_specs = [
             {
@@ -390,34 +403,47 @@ Camera: {hardware_str}"""
         else:
             user_directives_block = ""
 
-        # Manejo de muestras de material (Madera / Tela)
+        # Manejo de muestras de material (Madera / Tela) con identificación visual a prueba de nombres/GUIDs
         mat_rules = []
-        id_blocks = [f"- TARGET FURNITURE REFERENCE: Locate the image containing the furniture piece ('{furniture_name}')."]
+        id_blocks = [
+            f"- TARGET FURNITURE REFERENCE: Locate the photo showing the physical furniture object/piece ('{furn_item}'), uploaded with filename: '{furniture_name}'."
+        ]
 
         if wa:
             w_name = wa.get("name", "Wood Sample")
             w_color = wa.get("color_description", "")
             w_texture = wa.get("texture_detail", "")
             w_light = wa.get("light_interaction", "")
-            id_blocks.append(f"- WOOD / COLOR SAMPLE (ABSOLUTE SOURCE OF TRUTH): Locate the image containing the wood texture sample ('{w_name}').")
-            mat_rules.append(f"""- WOOD RE-FINISHING & UNIFORM MONOLITHIC TONE (CRITICAL):
-  * Apply the exact wood species, tone, and grain from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}) to ALL wooden surfaces.
-  * STRICT 100% UNIFORMITY: Drawer faces, chassis, top surface, side panels, handles, and legs MUST ALL share the identical uniform wood finish.
-  * ABSOLUTELY FORBIDDEN: Zero two-tone contrasting finishes. Do NOT render drawer faces in dark walnut, black, or contrasting wood unless explicitly demanded in notes. Every view must maintain the exact same wood hue and grain.""")
+            id_blocks.append(
+                f"- WOOD / COLOR SAMPLE (ABSOLUTE 100% SOURCE OF TRUTH): Locate the flat square/rectangular close-up swatch photo showing the raw wood grain texture and stain ('{w_name}')."
+            )
+            mat_rules.append(f"""- WOOD RE-FINISHING & CHROMATIC IDENTITY LOCK (CRITICAL):
+  * SINGLE MANUFACTURED SPECIMEN LOCK: You are photographing the EXACT SAME physical specimen across all perspectives. The veneer comes from the exact same log of wood.
+  * WOOD GRAIN CONTINUITY: The linear grain flow, pore structure, and warmth from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}) MUST be applied identically across all views.
+  * STRICT 100% UNIFORMITY: Drawer faces, chassis, top surface, side panels, handles, and legs MUST ALL share the exact same wood finish.
+  * ABSOLUTELY FORBIDDEN: Zero two-tone contrasting finishes. Do NOT render drawer faces in dark walnut, black, or contrasting wood. Every single view must maintain the exact same wood hue and grain.""")
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
             f_color = fa.get("color_description", "")
             f_texture = fa.get("texture_detail", "")
             f_light = fa.get("light_interaction", "")
-            id_blocks.append(f"- FABRIC SWATCH REFERENCE: Locate the image containing the fabric swatch ('{f_name}').")
+            id_blocks.append(
+                f"- FABRIC SWATCH REFERENCE: Locate the flat close-up textile swatch photo showing the upholstery fabric weave and color ('{f_name}')."
+            )
             mat_rules.append(f"""- UPHOLSTERY FABRIC: Apply the exact material from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}, {f_light}). Scale down weave pattern 98% for macro realism with zero chromatic shift.""")
 
         if not mat_rules:
             mat_rules.append(f"- ORIGINAL MATERIAL PRESERVATION: Maintain 100% exact original wood grain, finishes, and joinery from TARGET FURNITURE: [{existing_mats}].")
 
-        materials_final_block = "\n".join(mat_rules)
-        image_id_final_block = "IMAGE IDENTIFICATION & VISUAL MEMORY:\n" + "\n".join(id_blocks)
+        # Candado de medidas y proporciones 3D
+        proportions_lock = f"""
+3D GEOMETRIC & PROPORTIONAL INTEGRITY LOCK:
+- The furniture piece has fixed real-world dimensions ({geom_struct}).
+- Do NOT alter drawer aspect ratios, do NOT stretch legs vertically or horizontally, and do NOT resize circular handles between views. Maintain 100% mathematical perspective consistency as if moving a real camera on a tripod around a frozen static object."""
+
+        materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
+        image_id_final_block = "IMAGE IDENTIFICATION (ORDER-INDEPENDENT & VISUAL CONTENT BASED):\n" + "\n".join(id_blocks)
 
         vistas_2_1_specs = [
             {
