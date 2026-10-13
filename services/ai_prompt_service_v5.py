@@ -422,6 +422,19 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             }
         ]
 
+        if has_wood_sample:
+            gen_directive_ais = f"""[MANDATORY GENERATION DIRECTIVE - MATERIAL TRANSFER]:
+Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master commercial catalog photograph with strict material replacement:
+* 100% UNIFORM MONOLITHIC WOOD LOCK: Transform all wooden components (front drawer faces, circular handles, outer casing, side panels, top surface, legs) using the exact timber species, continuous grain flow, and stain tone from IMAGE 2 ('{w_name}': {w_color}, {w_texture}). Zero two-tone mismatch, zero walnut contrast.
+* PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
+        else:
+            gen_directive_ais = f"""[MANDATORY GENERATION DIRECTIVE]:
+Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master commercial catalog photograph:
+* MATERIALS & TEXTURES: Preserve 100% exact original wood grain, timber species, stain tone, and textures ({materials_with_notes}).
+* PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
+
         individual_results = []
         for v in vistas_specs:
             extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
@@ -429,6 +442,8 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             # Prompt individual token-optimizado para Google AI Studio
             prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
 {image_id_final_block}
+
+{gen_directive_ais}
 
 {materials_final_block}
 {user_directives_block if user_notes_clean else ""}
@@ -468,6 +483,8 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
         # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO
         prompt_maestro_ais = f"""[TASK: SEQUENTIAL 5-VIEW COMMERCIAL CATALOG PHOTOGRAPHY | 8K RAW]
 {image_id_final_block}
+
+{gen_directive_ais}
 
 {materials_final_block}
 {user_directives_block if user_notes_clean else ""}
@@ -655,6 +672,19 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
             }
         ]
 
+        if has_wood_sample:
+            gen_directive_ais = f"""[MANDATORY GENERATION DIRECTIVE - MATERIAL TRANSFER]:
+Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master commercial catalog photograph with strict material replacement:
+* 100% UNIFORM MONOLITHIC WOOD LOCK: Transform all wooden components (front drawer faces, circular handles, outer casing, side panels, top surface, legs) using the exact timber species, continuous grain flow, and stain tone from IMAGE 2 ('{w_name}': {w_color}, {w_texture}). Zero two-tone mismatch, zero walnut contrast.
+* PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
+        else:
+            gen_directive_ais = f"""[MANDATORY GENERATION DIRECTIVE]:
+Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master commercial catalog photograph:
+* MATERIALS & TEXTURES: Preserve 100% exact original wood grain, timber species, stain tone, and textures ({materials_with_notes}).
+* PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
+
         individual_results = []
         for v in vistas_2_1_specs:
             extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
@@ -662,6 +692,8 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
             # Prompt individual token-optimizado para Google AI Studio
             prompt_ais = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
 {image_id_final_block}
+
+{gen_directive_ais}
 
 {materials_final_block}
 {user_directives_block if user_notes_clean else ""}
@@ -701,6 +733,8 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
         # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO
         prompt_maestro_ais = f"""[TASK: SEQUENTIAL 4-VIEW COMMERCIAL CATALOG PHOTOGRAPHY | 8K RAW]
 {image_id_final_block}
+
+{gen_directive_ais}
 
 {materials_final_block}
 {user_directives_block if user_notes_clean else ""}
@@ -752,6 +786,185 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
             "chatgpt_dalle3": prompt_maestro_dal,
             "midjourney_v6": f"Commercial catalog 4 separate shots of {furn_item}, {geom_struct}, white background #FFFFFF, {hardware_str} --ar 16:9 --v 6.1 --style raw",
             "individual_vistas": individual_results
+        }
+
+    def generate_material_swap_prompts(
+        self,
+        mode: str,
+        furniture_name: str,
+        furniture_analysis: Optional[Dict[str, Any]] = None,
+        fabric_analysis: Optional[Dict[str, Any]] = None,
+        wood_analysis: Optional[Dict[str, Any]] = None,
+        notas_usuario: str = "",
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filenames: Optional[List[str]] = None,
+        fabric_filenames: Optional[List[str]] = None,
+        reference_filenames: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Genera prompts individuales para CAMBIO DE MATERIAL (Madera, Tela, o Dual)
+        con alta densidad de tokens, compatible con Google AI Studio, ChatGPT (DALL-E 3) y Midjourney.
+        """
+        ma = furniture_analysis or {}
+        fa = fabric_analysis or {}
+        wa = wood_analysis or {}
+
+        furn_item = ma.get("furniture_item", furniture_name)
+        if "directives:" in str(furn_item).lower():
+            furn_item = furniture_name
+        if not furn_item:
+            furn_item = furniture_name
+        geom_struct = ma.get("geometric_structure", "original structural geometry")
+        existing_mats = ma.get("existing_materials", "original materials")
+        camera_angle = ma.get("camera_angle", "0-degree frontal and 3/4 perspective")
+        hardware_str = self._build_photo_hardware_str()
+        white_bg = self._build_white_isolation_str()
+
+        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        if user_notes_clean:
+            user_directives_block = f"""[MANDATORY USER OVERRIDE DIRECTIVES]:
+* {user_notes_clean}
+* Strictest adherence required: Ensure every specification, dimension, color tone, and material above is natively integrated without exceptions."""
+            materials_with_notes = f"{existing_mats} (User note: {user_notes_clean})"
+        else:
+            user_directives_block = ""
+            materials_with_notes = existing_mats
+
+        furn_file_str = ", ".join(f"'{fn}'" for fn in furniture_filenames) if furniture_filenames else f"'{furniture_name}'"
+        wood_file_str = ", ".join(f"'{fn}'" for fn in wood_filenames) if wood_filenames else ""
+        fab_file_str = ", ".join(f"'{fn}'" for fn in fabric_filenames) if fabric_filenames else ""
+
+        w_name = wa.get("name", "Roble Claro Natural / White Oak Swatch") if wa else "Roble Claro Natural / White Oak Swatch"
+        w_color = wa.get("color_description", materials_with_notes) if wa else materials_with_notes
+        w_texture = wa.get("texture_detail", "authentic wood grain pores") if wa else "authentic wood grain pores"
+        w_light = wa.get("light_interaction", "satin matte sheen") if wa else "satin matte sheen"
+
+        if "fallback" in w_name.lower() or "detected" in str(w_color).lower() or not w_color:
+            w_name = "Roble Claro Natural / White Oak Swatch"
+            w_color = "warm light honey natural timber tone (#D5A869) with subtle amber undertones"
+            w_texture = "fine continuous horizontal wood grain pores, smooth satin finish"
+            w_light = "matte satin sheen"
+
+        f_name = fa.get("name", "Fabric Sample") if fa else "Fabric Sample"
+        f_color = fa.get("color_description", "true-to-life textile color") if fa else "true-to-life textile color"
+        f_texture = fa.get("texture_detail", "dense textured textile weave") if fa else "dense textured textile weave"
+        f_light = fa.get("light_interaction", "matte fabric surface") if fa else "matte fabric surface"
+
+        if mode == "dual":
+            wood_label = f" [File: {wood_file_str}]" if wood_file_str else ""
+            fab_label = f" [File: {fab_file_str}]" if fab_file_str else ""
+            id_block = f"""[INPUT IMAGE REFERENCES]:
+- IMAGE 1 (TARGET FURNITURE) [File: {furn_file_str}]: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
+- IMAGE 2 (WOOD SAMPLE){wood_label}: Reference for wood species, continuous grain flow, warmth, and stain tone ('{w_name}': {w_color}, {w_texture}, {w_light}).
+- IMAGE 3 (FABRIC SWATCH){fab_label}: Reference for upholstery textile weave, density, and hue ('{f_name}': {f_color}, {f_texture}, {f_light})."""
+
+            prompt_ais = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
+{id_block}
+
+[MANDATORY GENERATION COMMAND]:
+Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with strict material replacement:
+* UPHOLSTERY FABRIC LOCK: Accurately replace all upholstery fabric with the exact textile weave pattern and chromatic hue from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}, {f_light}). Scale down weave pattern for macroscopic realism without solid flat washes.
+* 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components (legs, frame, casing, drawers) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}). Natural continuous anatomical grain flow. Zero two-tone mismatch.
+* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), cushions, armrests, seams, and proportions from TARGET FURNITURE. Zero distortion, zero leg stretching.
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
+
+{user_directives_block if user_notes_clean else ""}
+
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- {hardware_str}
+
+Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone drawers, wrong wood color, dark drawers, mismatched grain, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark."""
+
+            prompt_dalle = f"""[COMMAND: ULTRA-HD RAW COMMERCIAL PHOTOGRAPHY]
+[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
+Generate a photorealistic, ultra-high-definition e-commerce catalog image of a {furn_item} ('{furniture_name}').
+Crucial Structure: {geom_struct}.
+Material Design: The upholstery must be a highly detailed {f_name} ({f_texture}) in {f_color}. The wooden components (legs, frame, casing) must be 100% monolithic {w_name} ({w_texture}) with {w_color} and {w_light}. Zero two-tone drawers.
+{user_directives_block if user_notes_clean else ""}
+Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Camera: {hardware_str}
+Negative Prompt: CGI, 3D render, shadows, room, two-tone drawers, dark walnut drawers, text, watermark."""
+
+            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_color} {f_texture}, {w_name} wooden legs and frame ({w_color}, {w_texture}). {hardware_str} --no shadows, room, CGI, text --ar 1:1 --v 6.1 --style raw"
+
+        elif mode == "fabric_only":
+            fab_label = f" [File: {fab_file_str}]" if fab_file_str else ""
+            id_block = f"""[INPUT IMAGE REFERENCES]:
+- IMAGE 1 (TARGET FURNITURE) [File: {furn_file_str}]: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
+- IMAGE 2 (FABRIC SWATCH){fab_label}: Reference for upholstery textile weave, yarn density, and hue ('{f_name}': {f_color}, {f_texture}, {f_light})."""
+
+            prompt_ais = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
+{id_block}
+
+[MANDATORY GENERATION COMMAND]:
+Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with strict material replacement:
+* UPHOLSTERY FABRIC LOCK: Accurately replace all upholstery fabric with the exact textile weave pattern and chromatic hue from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}, {f_light}). Scale down weave pattern for macroscopic realism without solid flat washes.
+* WOOD PRESERVATION LOCK: Strictly preserve the original wooden components (legs, frame) from TARGET FURNITURE without altering their original grain or finish.
+* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), cushions, armrests, seams, and proportions from TARGET FURNITURE. Zero distortion, zero leg stretching.
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
+
+{user_directives_block if user_notes_clean else ""}
+
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- {hardware_str}
+
+Negative Prompt: CGI, 3D render, cartoon, plastic, altered wood, changed legs, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark."""
+
+            prompt_dalle = f"""[COMMAND: ULTRA-HD RAW COMMERCIAL PHOTOGRAPHY]
+[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
+Generate a photorealistic catalog image of a {furn_item} ('{furniture_name}').
+Structure: {geom_struct}. Original wooden parts strictly preserved.
+Material: Upholstery meticulously crafted from {f_name} ({f_texture}, {f_color}).
+{user_directives_block if user_notes_clean else ""}
+Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Camera: {hardware_str}
+Negative Prompt: CGI, 3D render, shadows, room, altered wood, text, watermark."""
+
+            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_name} ({f_color}, {f_texture}), original wooden legs preserved. {hardware_str} --no shadows, room, CGI, text --ar 1:1 --v 6.1 --style raw"
+
+        else: # wood_only
+            wood_label = f" [File: {wood_file_str}]" if wood_file_str else ""
+            id_block = f"""[INPUT IMAGE REFERENCES]:
+- IMAGE 1 (TARGET FURNITURE) [File: {furn_file_str}]: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
+- IMAGE 2 (WOOD SAMPLE){wood_label}: Reference for wood species, continuous anatomical grain flow, warmth, and stain tone ('{w_name}': {w_color}, {w_texture}, {w_light})."""
+
+            prompt_ais = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
+{id_block}
+
+[MANDATORY GENERATION COMMAND]:
+Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with strict material replacement:
+* 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components (front drawer faces, circular handles, outer casing, side panels, top surface, legs) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}). Natural continuous horizontal grain flow. Zero two-tone mismatch, zero dark walnut contrast.
+* FABRIC PRESERVATION LOCK: Strictly preserve the original upholstery fabric, color, and weave from TARGET FURNITURE without altering cushions or textile parts.
+* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, seams, and proportions from TARGET FURNITURE. Zero distortion, zero leg stretching.
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
+
+{user_directives_block if user_notes_clean else ""}
+
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- {hardware_str}
+
+Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone drawers, wrong wood color, dark drawers, walnut drawer faces, mismatched grain, altered fabric, changed upholstery, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark."""
+
+            prompt_dalle = f"""[COMMAND: ULTRA-HD RAW COMMERCIAL PHOTOGRAPHY]
+[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
+Generate a photorealistic catalog image of a {furn_item} ('{furniture_name}').
+Structure: {geom_struct}. Original upholstery strictly preserved.
+Wood Material: Wooden components (legs, frame, casing, drawer faces, top) crafted 100% monolithically from {w_name} ({w_texture}, {w_color}, {w_light}). Zero two-tone finish, zero dark walnut drawer contrast.
+{user_directives_block if user_notes_clean else ""}
+Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Camera: {hardware_str}
+Negative Prompt: CGI, 3D render, shadows, room, two-tone drawers, dark walnut drawers, altered fabric, text, watermark."""
+
+            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, original upholstery preserved, wooden components replaced with {w_name} ({w_color}, {w_texture}, {w_light}). {hardware_str} --no shadows, room, CGI, altered fabric, two-tone drawers, text --ar 1:1 --v 6.1 --style raw"
+
+        return {
+            "google_ai_studio": prompt_ais,
+            "chatgpt_dalle3": prompt_dalle,
+            "midjourney_v6": prompt_mj,
+            "individual_vistas": []
         }
 
     def generate_extraction_prompts(

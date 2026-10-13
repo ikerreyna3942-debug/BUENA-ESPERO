@@ -215,38 +215,42 @@ Environment: {white_bg}{notes_part}"""
         wa = wood_analysis or {}
         ma = furniture_analysis or {}
         
-        f_name = fa.get("name", "Fabric")
-        f_color = fa.get("color_description", "")
-        f_texture = fa.get("texture_detail", "")
+        f_name = fa.get("name", "Fabric Sample")
+        f_color = fa.get("color_description") or "authentic textile chromatic tone from sample"
+        f_texture = fa.get("texture_detail") or "dense textured loops and yarn weave micro-structure"
         
-        w_name = wa.get("name", "Wood")
-        w_color = wa.get("color_description", "")
-        w_texture = wa.get("texture_detail", "")
-        w_finish = wa.get("finish_type", "")
+        w_name = wa.get("name", "Wood Sample")
+        w_color = wa.get("color_description") or "warm natural wood tone (#D5A869) with subtle amber undertones"
+        w_texture = wa.get("texture_detail") or "fine continuous anatomical wood grain flow, smooth satin finish"
+        w_finish = wa.get("finish_type") or "satin matte sheen"
 
         furn_item = ma.get("furniture_item", furniture_name)
-        camera_angle = ma.get("camera_angle", "original perspective")
-        geom_struct = ma.get("geometric_structure", "original structural geometry")
+        camera_angle = ma.get("camera_angle", "the exact same eye-level commercial perspective")
+        geom_struct = ma.get("geometric_structure", "original structural geometry and joinery")
 
         white_bg = self._build_white_background_enforcement()
         bg_neg = "shadows, drop shadows, dark background, black background, grey background, original background, room environment, floor reflection, text, numbers"
         notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
 
         if mode == "dual":
-            prompt_ai_studio = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer and AI image editor.
-IMAGE IDENTIFICATION (Order-Independent):
-- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
-- FABRIC SWATCH: Locate the image containing the fabric swatch ('{f_name}').
-- WOOD SAMPLE: Locate the image containing the wood texture sample ('{w_name}').
+            prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
+[INPUT IMAGE REFERENCES]:
+- TARGET FURNITURE: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
+- FABRIC SWATCH: Reference for upholstery textile weave, yarn density, and hue ('{f_name}': {f_color}, {f_texture}).
+- WOOD SAMPLE: Reference for wood species, continuous anatomical grain flow, warmth, and stain tone ('{w_name}': {w_color}, {w_texture}, {w_finish}).
 
-TASK: Accurately replace BOTH the fabric upholstery AND the wooden components on the TARGET FURNITURE using the macro textures provided.
-TARGET ITEM: {furn_item}.
-GEOMETRY PRESERVATION: Strictly preserve the exact shape, structural geometry ({geom_struct}), and contours. Camera must be locked to {camera_angle}.
-{white_bg}
-FABRIC APPLICATION: Apply the precise weave pattern and thread colors from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}). Scale down texture dramatically (97% reduction) for macroscopic realism. Lock exact hue.
-WOOD APPLICATION: Apply the precise wood grain flow, pores, and color from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_finish}) to all legs and frames. Ensure grain follows natural anatomical direction.{notes_part}
+[MANDATORY GENERATION DIRECTIVE - MATERIAL REPLACEMENT]:
+Photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with the following strict material replacements:
+1. UPHOLSTERY FABRIC LOCK: Accurately replace all upholstery fabric with the exact textile weave pattern and chromatic hue from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}). Scale down weave pattern for macroscopic realism without solid flat washes.
+2. 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components (legs, frame, casing, drawers) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_finish}). Natural anatomical grain flow. Zero two-tone mismatch.
+3. TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, seams, and camera angle ({camera_angle}) from TARGET FURNITURE. Zero distortion, zero leg stretching.{notes_part}
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
 
-Negative Prompt: generic fabric, solid color, loss of weave pattern, suede, velvet, leather, flat wood colors, color shift, altered geometry, perspective distortion, {bg_neg}"""
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- Optics: 100MP medium format RAW, 80mm lens, f/11 aperture, ISO 64, studio strobe lighting with soft diffuse octabox fill. Razor-sharp micro-textures.
+
+Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone drawers, wrong wood color, dark drawers, mismatched grain, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, {bg_neg}"""
 
             prompt_dalle = f"""Generate a photorealistic, ultra-high-definition e-commerce catalog image of a {furn_item} ('{furniture_name}'). 
 Crucial Structure: The furniture features {geom_struct} viewed from a {camera_angle}. 
@@ -256,18 +260,23 @@ Environment: {white_bg}{notes_part}"""
             prompt_mj = f"""Commercial product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_color} {f_texture}, {w_name} wooden legs and frame with {w_finish} finish. Shot from {camera_angle}, studio lighting, highly detailed macro texture, 8k resolution, photorealistic, catalog style{notes_part} --no {bg_neg}, suede, velvet, leather, shadows, text --ar 1:1 --v 6.1 --style raw"""
 
         elif mode == "fabric_only":
-            prompt_ai_studio = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer and AI image editor.
-IMAGE IDENTIFICATION (Order-Independent):
-- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
-- FABRIC SWATCH: Locate the image containing the fabric swatch ('{f_name}').
+            prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
+[INPUT IMAGE REFERENCES]:
+- TARGET FURNITURE: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
+- FABRIC SWATCH: Reference for upholstery textile weave, yarn density, and hue ('{f_name}': {f_color}, {f_texture}).
 
-TASK: Accurately replace the fabric upholstery on the TARGET FURNITURE using the FABRIC SWATCH.
-TARGET ITEM: {furn_item}.
-GEOMETRY PRESERVATION: Strictly preserve the exact shape, structural geometry ({geom_struct}), and contours of the wooden parts and cushions. Camera must be locked to {camera_angle}.
-{white_bg}
-MATERIAL APPLICATION: Apply the precise weave pattern ({f_texture}) and thread colors ({f_color}) from FABRIC SWATCH ('{f_name}'). Scale down texture dramatically (97% reduction). Retain micro-thread details without turning into a flat color. Lock exact hue.{notes_part}
+[MANDATORY GENERATION DIRECTIVE - FABRIC REPLACEMENT]:
+Photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with the following strict material replacements:
+1. UPHOLSTERY FABRIC LOCK: Accurately replace all upholstery fabric with the exact textile weave pattern and chromatic hue from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}). Scale down weave pattern for macroscopic realism without solid flat washes.
+2. WOOD PRESERVATION LOCK: Strictly preserve the original wooden components (legs, frame) from TARGET FURNITURE without altering their original grain or finish.
+3. TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), cushions, armrests, seams, and camera angle ({camera_angle}) from TARGET FURNITURE.{notes_part}
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
 
-Negative Prompt: generic fabric, solid color, flat texture, loss of weave pattern, suede, velvet, leather, color shift, altered geometry, perspective distortion, {bg_neg}"""
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- Optics: 100MP medium format RAW, 80mm lens, f/11 aperture, ISO 64, studio strobe lighting with soft diffuse octabox fill. Razor-sharp micro-textures.
+
+Negative Prompt: CGI, 3D render, cartoon, plastic, altered wood, changed legs, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, {bg_neg}"""
 
             prompt_dalle = f"""Generate a photorealistic catalog image of a {furn_item} ('{furniture_name}').
 Structure: {geom_struct} at {camera_angle}.
@@ -277,18 +286,23 @@ Environment: {white_bg}{notes_part}"""
             prompt_mj = f"""Commercial product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_name} ({f_color}, {f_texture}), original wooden legs preserved. Shot from {camera_angle}, studio lighting, 8k resolution{notes_part} --no {bg_neg}, suede, velvet, leather, shadows, text --ar 1:1 --v 6.1 --style raw"""
 
         else: # wood_only
-            prompt_ai_studio = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer and AI image editor.
-IMAGE IDENTIFICATION (Order-Independent):
-- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
-- WOOD SAMPLE: Locate the image containing the wood texture sample ('{w_name}').
+            prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
+[INPUT IMAGE REFERENCES]:
+- TARGET FURNITURE: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
+- WOOD SAMPLE: Reference for wood species, continuous anatomical grain flow, warmth, and stain tone ('{w_name}': {w_color}, {w_texture}, {w_finish}).
 
-TASK: Accurately replace ONLY the wooden components (legs, frame, base) on the TARGET FURNITURE using the WOOD SAMPLE.
-TARGET ITEM: {furn_item}.
-GEOMETRY PRESERVATION: Strictly preserve the exact shape, structural geometry ({geom_struct}), contours, and original fabric upholstery. Camera locked to {camera_angle}.
-{white_bg}
-MATERIAL APPLICATION: Apply the precise wood grain flow, pores, and color ({w_color}) from WOOD SAMPLE ('{w_name}': {w_texture}, {w_finish}). Ensure grain follows natural anatomical direction.{notes_part}
+[MANDATORY GENERATION DIRECTIVE - WOOD REPLACEMENT]:
+Photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with the following strict material replacements:
+1. 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components (legs, frame, casing, drawers) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_finish}). Natural anatomical grain flow. Zero two-tone mismatch.
+2. FABRIC PRESERVATION LOCK: Strictly preserve the original upholstery fabric, color, and weave from TARGET FURNITURE without altering cushions or textile parts.
+3. TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, seams, and camera angle ({camera_angle}) from TARGET FURNITURE.{notes_part}
+* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
 
-Negative Prompt: altered fabric, changed upholstery, color shift, flat colors, changed geometry, {bg_neg}"""
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- Optics: 100MP medium format RAW, 80mm lens, f/11 aperture, ISO 64, studio strobe lighting with soft diffuse octabox fill. Razor-sharp micro-textures.
+
+Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone drawers, wrong wood color, dark drawers, mismatched grain, altered fabric, changed upholstery, altered geometry, perspective distortion, {bg_neg}"""
 
             prompt_dalle = f"""Generate a photorealistic catalog image of a {furn_item} ('{furniture_name}').
 Structure: {geom_struct} at {camera_angle}. Original fabric upholstery preserved.
