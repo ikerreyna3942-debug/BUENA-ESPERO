@@ -394,16 +394,17 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
             },
             {
                 "id": "vista_5_cenital",
-                "label": "Vista 5: Cenital Superior Directo (90° desde arriba)",
+                "label": "Vista 5: Cenital Superior Plano Directo (90° desde arriba)",
                 "short_name": "Cenital 90°",
                 "icon": "🔝",
-                "angle_desc": "Direct 90-degree top-down cenital bird's-eye view. Camera positioned directly overhead pointing straight down. Shows pure geometric top footprint and proportions.",
-                "dalle_angle": "Direct 90-degree bird's-eye top-down view pointing straight down from above."
+                "angle_desc": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top wooden surface (camera pitch: -90 degrees). The rectangular top wooden surface fills the frame, showcasing the rich continuous horizontal wood grain patterns and edge joins. Zero camera tilt: do NOT angle the camera, do NOT show the front facade, and do NOT show the drawer faces. Pure flat overhead view.",
+                "dalle_angle": "Pure 90-degree orthogonal flat overhead top-down view looking straight down at the top surface, flat rectangular wood grain plan view, zero front facade visible, no drawers visible."
             }
         ]
 
         individual_results = []
         for v in vistas_specs:
+            extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
             # Prompt individual para Google AI Studio
             prompt_ai_studio = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
 {image_id_final_block}
@@ -422,7 +423,7 @@ MATERIAL & GEOMETRIC FIDELITY:
 HARDWARE & RENDERING:
 {hardware_str}
 
-Negative Prompt: collage, contact sheet, multiple views, multiple furniture pieces, grid, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark."""
+Negative Prompt: collage, contact sheet, multiple views, multiple furniture pieces, grid, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark{extra_neg}."""
 
             # Prompt individual para ChatGPT / DALL-E 3
             prompt_dalle = f"""[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography, Real-world micro-imperfections]
@@ -473,7 +474,7 @@ You must generate the 5 required catalog perspectives ONE BY ONE in sequence. Si
    - End with: "📸 Vista 4 generada. Escribe 'foto' para la Vista 5 (Cenital Superior 90°)."
 
 5. TURN 5 (TRIGGERED BY 'foto'):
-   - Generate ONLY Vista 5: Direct 90-degree top-down cenital bird's-eye view pointing straight down from above.
+   - Generate ONLY Vista 5: Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top surface (camera pitch: -90 degrees). ONLY the flat top wooden rectangular surface is visible, showcasing rich continuous horizontal wood grain patterns. Zero camera tilt: do NOT angle the camera, do NOT show the front drawers, do NOT show the front facade. Pure flat overhead plan view.
 
 ABSOLUTE CONSISTENCY IN ALL 5 VIEWS:
 {materials_final_block}
@@ -502,7 +503,7 @@ CRITICAL EXECUTION: Execute the image tool separately for EACH view below so the
 2. SECOND IMAGE (View 2): Strict Lateral Side Profile (90° orthogonal side view from edge to edge).
 3. THIRD IMAGE (View 3): Direct Front View (0° flat frontal elevation at eye-level center).
 4. FOURTH IMAGE (View 4): High-Angle Semi-Top Perspective (60°-70° elevated front view showing seat cushion and top surface).
-5. FIFTH IMAGE (View 5): Direct Top-Down Cenital View (90° overhead bird's-eye geometric footprint).
+5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View (camera perpendicular looking straight down at the top wooden surface, plan view, zero front facade visible, no drawers visible).
 
 Topological Geometry: {geom_struct}.
 {user_directives_block if user_notes_clean else ""}
@@ -639,16 +640,17 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
             },
             {
                 "id": "vista_2_1_superior_cenital",
-                "label": "Vista 4: Superior Cenital (Top-Down)",
-                "short_name": "Superior Cenital",
+                "label": "Vista 4: Superior Cenital Plano Directo (90° Desde Arriba)",
+                "short_name": "Superior Cenital 90°",
                 "icon": "🔝",
-                "angle_desc": "High-angle top-down cenital perspective view looking directly down from above. Captures the rich wood grain on the entire top flat surface, rounded corner radii, and lower protruding shelf structure with its ambient warm glow.",
-                "dalle_angle": "Direct high-angle top-down shot from above, showcasing top wood surface grain and lower shelf footprint."
+                "angle_desc": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top wooden surface (camera pitch: -90 degrees). The rectangular top wooden surface fills the frame, showcasing the rich continuous horizontal wood grain patterns and edge joins. Zero camera tilt: do NOT angle the camera, do NOT show the front facade, and do NOT show the drawer faces. Pure flat overhead view.",
+                "dalle_angle": "Pure 90-degree orthogonal flat overhead top-down view looking straight down at the top surface, flat rectangular wood grain plan view, zero front facade visible, no drawers visible."
             }
         ]
 
         individual_results = []
         for v in vistas_2_1_specs:
+            extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
             # Prompt individual para Google AI Studio (Nano Banana 2.1 & Pro)
             prompt_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
 {image_id_final_block}
@@ -667,7 +669,7 @@ MATERIAL & GEOMETRIC FIDELITY:
 HARDWARE & RENDERING:
 {hardware_str}
 
-Negative Prompt: collage, contact sheet, multiple views, multiple furniture pieces, grid, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark."""
+Negative Prompt: collage, contact sheet, multiple views, multiple furniture pieces, grid, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark{extra_neg}."""
 
             # Prompt individual para ChatGPT / DALL-E 3
             prompt_dal = f"""[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography, Real-world timber micro-imperfections]
@@ -714,7 +716,7 @@ You must generate the 4 canonical catalog perspectives ONE BY ONE in sequence. S
    - End with: "📸 Vista 3 generada. Escribe 'foto' para la Vista 4 (Superior Cenital)."
 
 4. TURN 4 (TRIGGERED BY 'foto'):
-   - Generate ONLY Vista 4: High-angle top-down cenital view from above showcasing top wood surface grain flow, rounded edge radii, and lower base.
+   - Generate ONLY Vista 4: Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top surface (camera pitch: -90 degrees). ONLY the flat top wooden rectangular surface is visible, showcasing rich continuous horizontal wood grain patterns. Zero camera tilt: do NOT angle the camera, do NOT show the front drawers, do NOT show the front facade, and do NOT show the legs. Pure flat overhead plan view.
 
 ABSOLUTE CONSISTENCY IN ALL 4 VIEWS:
 {materials_final_block}
@@ -723,7 +725,7 @@ ABSOLUTE CONSISTENCY IN ALL 4 VIEWS:
 HARDWARE & RENDERING:
 {hardware_str}
 
-Negative Prompt: collage, single-image multi-view strip, contact sheet, grid, multi-image strip, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark."""
+Negative Prompt: collage, single-image multi-view strip, contact sheet, grid, multi-image strip, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark, tilted camera, downward perspective, 3/4 high angle, visible drawer faces."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3 (Generación completa de las 4 fotos)
         wood_dal_maestro_21 = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
@@ -742,7 +744,7 @@ CRITICAL EXECUTION: Execute the image tool separately for EACH view below so the
 1. FIRST IMAGE (View 1): Front View (0° flat eye-level elevation showing facade and joinery).
 2. SECOND IMAGE (View 2): 3/4 Perspective View (45° angle showing front and side depth).
 3. THIRD IMAGE (View 3): Side Profile (90° orthogonal flat lateral elevation).
-4. FOURTH IMAGE (View 4): Top-Down Cenital View (overhead angle showing top surface wood grain and lower base).
+4. FOURTH IMAGE (View 4): Pure 90-Degree Orthogonal Flat Overhead Top-Down View (camera perpendicular looking straight down at the top wooden surface, plan view, zero front facade visible, no drawers visible).
 
 Topological Geometry: {geom_struct}.
 {user_directives_block if user_notes_clean else ""}
