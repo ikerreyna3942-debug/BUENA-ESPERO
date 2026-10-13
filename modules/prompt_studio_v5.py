@@ -134,6 +134,15 @@ def render_prompt_studio_v5():
 .studio-card { background-color: #283548; border: 1px solid #475569; border-radius: 12px; padding: 18px; height: 100%; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
 .studio-card-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 8px; }
 .casilla-badge { display: inline-block; background: #3B82F6; color: white; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 6px; }
+.stButton > button {
+    white-space: normal !important;
+    word-break: normal !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    padding: 8px 10px !important;
+    height: auto !important;
+    min-height: 42px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -212,7 +221,7 @@ def render_prompt_studio_v5():
         st.markdown("""
         <div style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#E9D5FF; line-height:1.5;">
             <b>🎯 Vistas (1.1):</b> 5 vistas canónicas (3/4 Derecha, Lateral 90°, Frente 0°, 3/4 Picada Alta, Cenital 90°).<br>
-            <b>⚡ Vistas (2.1):</b> 4 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Superior Cenital).
+            <b>⚡ Vistas (2.1):</b> 5 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Picada Alta 65°, Superior Cenital 90°).
         </div>
         """, unsafe_allow_html=True)
 
@@ -240,18 +249,6 @@ def render_prompt_studio_v5():
 
         st.markdown("---")
 
-        # CASILLA 2B: Foto(s) de Muestra de Tela / Tapicería (Opcional)
-        st.markdown("##### 🧵 Casilla 2B: Foto(s) de Muestra de Tela / Tapicería (Opcional)")
-        mueble_tela_up = st.file_uploader(
-            "Arrastra aquí la foto de la tela o tapicería (opcional):",
-            type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
-            key=f"st_mueble_tela_v5_{st.session_state.clear_key_v5}",
-            accept_multiple_files=True,
-            help="Opcional. Sube aquí una muestra de tela si deseas cambiar la tapicería del mueble."
-        )
-
-        st.markdown("---")
-
         # CASILLA 3: Fotos de Referencia del Mueble (Opcional)
         st.markdown("##### 📐 Casilla 3: Fotos de Referencia (Opcional - Déjalo vacío para usar SOLO Mueble y Madera)")
         mueble_ref_up = st.file_uploader(
@@ -275,51 +272,30 @@ def render_prompt_studio_v5():
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # BOTONERA: Vistas y Cambios de Material
-        st.markdown("###### 🎯 Vistas Panorámicas y Catálogo:")
+        # BOTONERA: Vistas y Herramientas
+        st.markdown("###### 🎯 Generación de Vistas de Catálogo:")
         col_b1, col_b2 = st.columns([1, 1])
         with col_b1:
             btn_1_1 = st.button("🎯 Vistas (1.1)", type="primary", use_container_width=True, key=f"btn_gen_11_{st.session_state.clear_key_v5}")
         with col_b2:
             btn_2_1 = st.button("⚡ Vistas (2.1)", type="primary", use_container_width=True, key=f"btn_gen_21_{st.session_state.clear_key_v5}")
 
-        st.markdown("###### 🪵 Cambios de Material:")
-        col_b3, col_b4, col_b5 = st.columns([1, 1, 1])
-        with col_b3:
-            btn_madera = st.button("🪵 Cambio Madera", use_container_width=True, key=f"btn_gen_mad_{st.session_state.clear_key_v5}")
-        with col_b4:
-            btn_tela = st.button("🧵 Cambio Tela", use_container_width=True, key=f"btn_gen_tela_{st.session_state.clear_key_v5}")
-        with col_b5:
-            btn_dual = st.button("🎨 Tela + Madera", use_container_width=True, key=f"btn_gen_dual_{st.session_state.clear_key_v5}")
-
         st.markdown("###### 🛠️ Herramientas de Estudio:")
-        col_b6, col_b7 = st.columns([1, 1])
-        with col_b6:
+        col_b3, col_b4 = st.columns([1, 1])
+        with col_b3:
             btn_extraer = st.button("⬜ Extraer Mueble", use_container_width=True, key=f"btn_gen_ext_{st.session_state.clear_key_v5}")
-        with col_b7:
+        with col_b4:
             btn_hd = st.button("✨ Mejora HD", use_container_width=True, key=f"btn_gen_hd_{st.session_state.clear_key_v5}")
 
-        if btn_1_1 or btn_2_1 or btn_madera or btn_tela or btn_dual or btn_extraer or btn_hd:
-            if not mueble_actual_up and not mueble_madera_up and not mueble_tela_up and not mueble_ref_up:
-                st.error("⚠️ Por favor sube al menos una fotografía (mueble, muestra de madera, tela o referencias).")
-            elif btn_madera and not mueble_madera_up:
-                st.error("⚠️ Sube la muestra de madera en la Casilla 2 para Cambio de Madera.")
-            elif btn_tela and not mueble_tela_up:
-                st.error("⚠️ Sube la muestra de tela en la Casilla 2B para Cambio de Tela.")
-            elif btn_dual and (not mueble_madera_up or not mueble_tela_up):
-                st.error("⚠️ Requiere muestra de madera (Casilla 2) y muestra de tela (Casilla 2B).")
+        if btn_1_1 or btn_2_1 or btn_extraer or btn_hd:
+            if not mueble_actual_up and not mueble_madera_up and not mueble_ref_up:
+                st.error("⚠️ Por favor sube al menos una fotografía (mueble, muestra de madera o referencias).")
             else:
                 progress_holder = st.empty()
                 if btn_extraer:
                     modo_nombre = "Extraer Mueble (Fondo Blanco)"
                 elif btn_hd:
                     modo_nombre = "Mejora HD"
-                elif btn_madera:
-                    modo_nombre = "Cambio de Madera"
-                elif btn_tela:
-                    modo_nombre = "Cambio de Tela"
-                elif btn_dual:
-                    modo_nombre = "Tela + Madera"
                 elif btn_2_1:
                     modo_nombre = "Vistas (2.1)"
                 else:
@@ -346,15 +322,6 @@ def render_prompt_studio_v5():
                             m_madera_bytes.append(f.getvalue() if hasattr(f, "getvalue") else f.read())
                             m_madera_filenames.append(getattr(f, "name", "Madera"))
 
-                    # Bytes y nombres de fotos de muestra de tela (Casilla 2B)
-                    m_tela_bytes = []
-                    m_tela_filenames = []
-                    if mueble_tela_up:
-                        tela_list = mueble_tela_up if isinstance(mueble_tela_up, list) else [mueble_tela_up]
-                        for f in tela_list:
-                            m_tela_bytes.append(f.getvalue() if hasattr(f, "getvalue") else f.read())
-                            m_tela_filenames.append(getattr(f, "name", "Tela"))
-
                     # Bytes y nombres de fotos de referencia (Casilla 3)
                     m_ref_bytes = []
                     m_ref_filenames = []
@@ -368,7 +335,7 @@ def render_prompt_studio_v5():
 
                     # Análisis integral con Gemini
                     m_ana = ai_prompt_service_v5.analyze_furniture_for_enhancement(
-                        furniture_bytes=m_actual_bytes or m_ref_bytes or m_madera_bytes or m_tela_bytes,
+                        furniture_bytes=m_actual_bytes or m_ref_bytes or m_madera_bytes,
                         reference_bytes=m_ref_bytes,
                         wood_bytes=m_madera_bytes,
                         notas_usuario=notas_usuario
@@ -378,11 +345,6 @@ def render_prompt_studio_v5():
                     if m_madera_bytes:
                         progress_holder.info("🪵 Analizando muestra de madera con Gemini Vision...")
                         w_ana = ai_prompt_service_v5.analyze_material(m_madera_bytes[0], material_type="wood")
-
-                    f_ana = None
-                    if m_tela_bytes:
-                        progress_holder.info("🧵 Analizando muestra de tela con Gemini Vision...")
-                        f_ana = ai_prompt_service_v5.analyze_material(m_tela_bytes[0], material_type="fabric")
 
                     if btn_extraer:
                         prompts = ai_prompt_service_v5.generate_extraction_prompts(
@@ -396,50 +358,11 @@ def render_prompt_studio_v5():
                             furniture_analysis=m_ana,
                             notas_usuario=notas_usuario
                         )
-                    elif btn_madera:
-                        prompts = ai_prompt_service_v5.generate_material_swap_prompts(
-                            mode="wood_only",
-                            furniture_name=m_name,
-                            furniture_analysis=m_ana,
-                            fabric_analysis=f_ana,
-                            wood_analysis=w_ana,
-                            notas_usuario=notas_usuario,
-                            furniture_filenames=m_actual_filenames,
-                            wood_filenames=m_madera_filenames,
-                            fabric_filenames=m_tela_filenames,
-                            reference_filenames=m_ref_filenames
-                        )
-                    elif btn_tela:
-                        prompts = ai_prompt_service_v5.generate_material_swap_prompts(
-                            mode="fabric_only",
-                            furniture_name=m_name,
-                            furniture_analysis=m_ana,
-                            fabric_analysis=f_ana,
-                            wood_analysis=w_ana,
-                            notas_usuario=notas_usuario,
-                            furniture_filenames=m_actual_filenames,
-                            wood_filenames=m_madera_filenames,
-                            fabric_filenames=m_tela_filenames,
-                            reference_filenames=m_ref_filenames
-                        )
-                    elif btn_dual:
-                        prompts = ai_prompt_service_v5.generate_material_swap_prompts(
-                            mode="dual",
-                            furniture_name=m_name,
-                            furniture_analysis=m_ana,
-                            fabric_analysis=f_ana,
-                            wood_analysis=w_ana,
-                            notas_usuario=notas_usuario,
-                            furniture_filenames=m_actual_filenames,
-                            wood_filenames=m_madera_filenames,
-                            fabric_filenames=m_tela_filenames,
-                            reference_filenames=m_ref_filenames
-                        )
                     elif btn_2_1:
                         prompts = ai_prompt_service_v5.generate_vistas_2_1_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
-                            fabric_analysis=f_ana,
+                            fabric_analysis=None,
                             wood_analysis=w_ana,
                             notas_usuario=notas_usuario,
                             furniture_filenames=m_actual_filenames,
@@ -450,7 +373,7 @@ def render_prompt_studio_v5():
                         prompts = ai_prompt_service_v5.generate_vistas_1_1_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
-                            fabric_analysis=f_ana,
+                            fabric_analysis=None,
                             wood_analysis=w_ana,
                             notas_usuario=notas_usuario,
                             furniture_filenames=m_actual_filenames,
@@ -462,13 +385,13 @@ def render_prompt_studio_v5():
                         "modo": modo_nombre,
                         "mueble_name": m_name,
                         "furniture_analysis": m_ana,
-                        "fabric_analysis": f_ana,
+                        "fabric_analysis": None,
                         "wood_analysis": w_ana,
                         "prompts": prompts,
                         "notas_usuario": notas_usuario,
                         "has_actual": bool(mueble_actual_up),
                         "has_madera": bool(mueble_madera_up),
-                        "has_tela": bool(mueble_tela_up),
+                        "has_tela": False,
                         "has_ref": bool(mueble_ref_up)
                     }
                     progress_holder.success(f"✅ ¡Prompts para {modo_nombre} generados exitosamente!")
@@ -494,13 +417,6 @@ def render_prompt_studio_v5():
             for f in (mueble_madera_up if isinstance(mueble_madera_up, list) else [mueble_madera_up]):
                 f_name = getattr(f, "name", "Muestra Madera")
                 render_preview_image(f, caption=f"Madera/Color: {f_name}")
-
-        # Miniaturas de Casilla 2B: Muestra de Tela / Tapicería
-        if mueble_tela_up:
-            st.markdown("<b>🧵 Muestra de Tela / Tapicería (Casilla 2B):</b>", unsafe_allow_html=True)
-            for f in (mueble_tela_up if isinstance(mueble_tela_up, list) else [mueble_tela_up]):
-                f_name = getattr(f, "name", "Muestra Tela")
-                render_preview_image(f, caption=f"Tela: {f_name}")
 
         # Miniaturas de Casilla 3: Fotos de Referencia
         if mueble_ref_up:

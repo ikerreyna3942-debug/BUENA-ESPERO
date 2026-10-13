@@ -435,27 +435,25 @@ Generate and photograph the {furn_item} ('{furniture_name}') isolated as a maste
 * PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
 * EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
 
+        user_notes_ais = f"\n* DIRECTIVA OBLIGATORIA: {user_notes_clean}" if user_notes_clean else ""
+        wood_ais_lock = f"Apply 100% monolithic wood from Image 2 ('{w_name}': {w_color}, {w_texture}) across all parts (drawers, circular handles, chassis, top, sides, legs). Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut drawers." if has_wood_sample else f"Preserve 100% original authentic wood materials and finishes ({materials_with_notes})."
+
         individual_results = []
         for v in vistas_specs:
             extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
             
-            # Prompt individual token-optimizado para Google AI Studio
-            prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
-{image_id_final_block}
+            # Prompt individual conciso y ultra-específico para Google AI Studio (Nano Banana 2.1 / Pro)
+            prompt_ai_studio = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | COMMERCIAL PHOTOGRAPHY]
+• Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
+• Image 2 (Wood Swatch - Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture}).
 
-{gen_directive_ais}
+DIRECTIVES:
+1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock}
+2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
+3. VIEW: {v['label']} - {v['angle_desc']}
+4. STUDIO: Pure seamless solid white background (#FFFFFF), studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
 
-{materials_final_block}
-{user_directives_block if user_notes_clean else ""}
-
-[MANDATORY PERSPECTIVE: {v['label']}]:
-- {v['angle_desc']}
-
-[ENVIRONMENT & HARDWARE]:
-- {white_bg}
-- {hardware_str}
-
-Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark{extra_neg}."""
+Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{extra_neg}."""
 
             # Prompt individual token-optimizado para ChatGPT / DALL-E 3
             prompt_dalle = f"""[COMMAND: COMMERCIAL PRODUCT PHOTOGRAPHY | 35MM RAW MEDIUM FORMAT]
@@ -480,29 +478,27 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
                 "chatgpt_dalle3": prompt_dalle
             })
 
-        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO
-        prompt_maestro_ais = f"""[TASK: SEQUENTIAL 5-VIEW COMMERCIAL CATALOG PHOTOGRAPHY | 8K RAW]
-{image_id_final_block}
+        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO (Nano Banana 2.1 / Pro)
+        prompt_maestro_ais = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | 5-VIEW COMMERCIAL CATALOG]
+• Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
+• Image 2 (Wood Swatch - Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture}).
 
-{gen_directive_ais}
+DIRECTIVES:
+1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock}
+2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
+3. STUDIO: Pure seamless solid white background (#FFFFFF), studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
 
-{materials_final_block}
-{user_directives_block if user_notes_clean else ""}
+EXECUTION (TURN-BY-TURN):
+Generate ONE single standalone photo per turn.
+- CURRENT TURN: Generate ONLY Vista 1 (3/4 Isométrica Derecha 45°: elevated 15° showing front-right depth, contour, and legs).
+Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (Perfil Lateral 90°)."
+- Subsequent views (triggered ONLY by typing 'foto'):
+  2. Vista 2: Lateral Perfil Estricto 90° (orthogonal side profile).
+  3. Vista 3: Elevación Frontal Directa 0° (flat eye-level front view).
+  4. Vista 4: 3/4 Picada Alta 65° (high angle showing top surface textures and front depth).
+  5. Vista 5: Cenital Superior Plano 90° (strict perpendicular overhead view, top wood surface only, zero front drawers visible).
 
-[INTERACTIVE TURN-BY-TURN EXECUTION PROTOCOL]:
-Generate the 5 required catalog views ONE BY ONE in sequence:
-* CURRENT TURN (IMAGE 1): Generate ONLY Vista 1: 3/4 isometric perspective at 45° facing right, elevated 15° to reveal front-right depth, contour, and legs. Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (Perfil Lateral 90°)."
-* SUBSEQUENT TURNS (TRIGGERED ONLY BY 'foto'):
-  - Turn 2: Vista 2 (Strict 90° orthogonal lateral side profile elevation). End with 'foto' prompt.
-  - Turn 3: Vista 3 (Direct flat 0° frontal elevation at eye-level center). End with 'foto' prompt.
-  - Turn 4: Vista 4 (High-angle semi-top perspective at 60°-70° looking down at front). End with 'foto' prompt.
-  - Turn 5: Vista 5 (Strict 90° orthogonal overhead flat top-down view, ceiling perpendicular -90° pitch, showing only top wooden surface, zero tilt, no front drawers visible).
-
-[ENVIRONMENT & HARDWARE]:
-- {white_bg}
-- {hardware_str}
-
-Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, single-image multi-view strip, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark, tilted camera, downward perspective, 3/4 high angle, visible drawer faces."""
+Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3
         wood_dal_maestro = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
@@ -643,7 +639,7 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
                 "label": "Vista 1: Frontal Directa (0°)",
                 "short_name": "Frontal 0°",
                 "icon": "🖼️",
-                "angle_desc": "Direct flat 0-degree front elevation view. Camera level with furniture center at eye-line pointing directly dead-on at front facade, displaying drawer faces, clean joinery, and lower structure.",
+                "angle_desc": "Direct flat 0-degree front elevation view. Camera level with furniture center at eye-line pointing directly dead-on at front facade, displaying drawer faces, circular handles, clean joinery, and lower structure.",
                 "dalle_angle": "Direct flat 0-degree frontal view, eye-level lens, centered horizon showing facade and joinery."
             },
             {
@@ -659,12 +655,20 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
                 "label": "Vista 3: Lateral Perfil Estricto (90°)",
                 "short_name": "Lateral 90°",
                 "icon": "➡️",
-                "angle_desc": "Strict orthogonal 90-degree lateral side profile view. Full silhouette from front edge to back edge with zero perspective vanishing points, showcasing vertical silhouette, panel thickness, and open shelf cavity.",
+                "angle_desc": "Strict orthogonal 90-degree lateral side profile view. Full silhouette from front edge to back edge with zero perspective vanishing points, showcasing vertical silhouette, panel thickness, and structure.",
                 "dalle_angle": "Strict 90-degree side profile orthogonal view, perfectly flat lateral elevation."
             },
             {
+                "id": "vista_2_1_picada_frontal",
+                "label": "Vista 4: Picada Alta / Semi-Cenital Frontal (60°-70°)",
+                "short_name": "Picada Alta 65°",
+                "icon": "↗️",
+                "angle_desc": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front. The top wooden surface AND front facade with drawers and circular handles are clearly visible with three-dimensional depth and rich wood grain.",
+                "dalle_angle": "Elevated high-angle shot from above at 65 degrees looking down at the front, showing both the top wooden surface and front drawers in depth."
+            },
+            {
                 "id": "vista_2_1_superior_cenital",
-                "label": "Vista 4: Superior Cenital Plano Directo (90° Desde Arriba)",
+                "label": "Vista 5: Superior Cenital Plano Directo (90° Desde Arriba)",
                 "short_name": "Superior Cenital 90°",
                 "icon": "🔝",
                 "angle_desc": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top wooden surface (camera pitch: -90 degrees). The rectangular top wooden surface fills the frame, showcasing the rich continuous horizontal wood grain patterns and edge joins. Zero camera tilt: do NOT angle the camera, do NOT show the front facade, and do NOT show the drawer faces. Pure flat overhead view.",
@@ -685,27 +689,25 @@ Generate and photograph the {furn_item} ('{furniture_name}') isolated as a maste
 * PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
 * EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
 
+        user_notes_ais = f"\n* DIRECTIVA OBLIGATORIA: {user_notes_clean}" if user_notes_clean else ""
+        wood_ais_lock_21 = f"Apply 100% monolithic wood from Image 2 ('{w_name}': {w_color}, {w_texture}) across all parts (drawers, circular handles, chassis, top, sides, legs). Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut drawers." if has_wood_sample else f"Preserve 100% original authentic wood materials and finishes ({materials_with_notes})."
+
         individual_results = []
         for v in vistas_2_1_specs:
             extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
             
-            # Prompt individual token-optimizado para Google AI Studio
-            prompt_ais = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
-{image_id_final_block}
+            # Prompt individual conciso y ultra-específico para Google AI Studio (Nano Banana 2.1 / Pro)
+            prompt_ais = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | COMMERCIAL PHOTOGRAPHY]
+• Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
+• Image 2 (Wood Swatch - Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture}).
 
-{gen_directive_ais}
+DIRECTIVES:
+1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock_21}
+2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
+3. VIEW: {v['label']} - {v['angle_desc']}
+4. STUDIO: Pure seamless solid white background (#FFFFFF), studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
 
-{materials_final_block}
-{user_directives_block if user_notes_clean else ""}
-
-[MANDATORY PERSPECTIVE: {v['label']}]:
-- {v['angle_desc']}
-
-[ENVIRONMENT & HARDWARE]:
-- {white_bg}
-- {hardware_str}
-
-Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark{extra_neg}."""
+Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{extra_neg}."""
 
             # Prompt individual token-optimizado para ChatGPT / DALL-E 3
             prompt_dal = f"""[COMMAND: COMMERCIAL PRODUCT PHOTOGRAPHY | 35MM RAW MEDIUM FORMAT]
@@ -730,35 +732,34 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
                 "chatgpt_dalle3": prompt_dal
             })
 
-        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO
-        prompt_maestro_ais = f"""[TASK: SEQUENTIAL 4-VIEW COMMERCIAL CATALOG PHOTOGRAPHY | 8K RAW]
-{image_id_final_block}
+        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO (Nano Banana 2.1 / Pro)
+        prompt_maestro_ais = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | 5-VIEW COMMERCIAL CATALOG]
+• Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
+• Image 2 (Wood Swatch - Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture}).
 
-{gen_directive_ais}
+DIRECTIVES:
+1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock_21}
+2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
+3. STUDIO: Pure seamless solid white background (#FFFFFF), studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
 
-{materials_final_block}
-{user_directives_block if user_notes_clean else ""}
+EXECUTION (TURN-BY-TURN):
+Generate ONE single standalone photo per turn.
+- CURRENT TURN: Generate ONLY Vista 1 (Frontal Directa 0°: flat eye-level elevation showing facade, drawers, circular handles, and joinery).
+Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva 45°)."
+- Subsequent views (triggered ONLY by typing 'foto'):
+  2. Vista 2: 3/4 Perspectiva 45° (front facade, side depth).
+  3. Vista 3: Lateral Perfil Estricto 90° (flat side elevation).
+  4. Vista 4: Picada Alta / Semi-Cenital 65° (high angle showing top surface AND front drawers/handles in depth).
+  5. Vista 5: Superior Cenital Plano 90° (strict perpendicular overhead view, top wood surface only, zero front drawers visible).
 
-[INTERACTIVE TURN-BY-TURN EXECUTION PROTOCOL]:
-Generate the 4 required catalog views ONE BY ONE in sequence:
-* CURRENT TURN (IMAGE 1): Generate ONLY Vista 1: Direct flat 0-degree front elevation (level eye-line lens pointing dead-center at facade, drawer faces, and lower structure). Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva 45°)."
-* SUBSEQUENT TURNS (TRIGGERED ONLY BY 'foto'):
-  - Turn 2: Vista 2 (Commercial 3/4 perspective shot at 45° revealing front facade, side depth, and cantilevered architecture). End with 'foto' prompt.
-  - Turn 3: Vista 3 (Strict 90° orthogonal lateral side profile elevation). End with 'foto' prompt.
-  - Turn 4: Vista 4 (Strict 90° orthogonal overhead flat top-down view, ceiling perpendicular -90° pitch, showing only top wooden surface, zero tilt, no front drawers visible).
-
-[ENVIRONMENT & HARDWARE]:
-- {white_bg}
-- {hardware_str}
-
-Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, single-image multi-view strip, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark, tilted camera, downward perspective, 3/4 high angle, visible drawer faces."""
+Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3
         wood_dal_maestro_21 = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
         prompt_maestro_dal = f"""[COMMAND: MULTI-IMAGE SEQUENTIAL GENERATION FOR COMMERCIAL CATALOG]
 [ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
-Generate ALL 4 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){wood_dal_maestro_21}.
+Generate ALL 5 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){wood_dal_maestro_21}.
 
 [IMAGE REFERENCES & GROUND TRUTH]:
 - Target Furniture: 3D model and facade proportions from '{furniture_name}'.
@@ -768,12 +769,13 @@ Generate ALL 4 SEPARATE STANDALONE commercial catalog photos in sequence for a {
 * 100% UNIFORM MONOLITHIC WOOD: Entire unit (front drawer faces, circular handles, chassis, side panels, top surface, legs) must share the identical wood finish and grain from the wood swatch.
 * ZERO TWO-TONE FINISH: Do NOT make drawer faces dark walnut or contrasting color.
 
-CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 4 distinct, separate image files. DO NOT combine them into a collage or split canvas.
+CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage or split canvas.
 
 1. FIRST IMAGE (View 1): Front View (0° flat eye-level elevation showing facade and joinery).
 2. SECOND IMAGE (View 2): 3/4 Perspective View (45° angle showing front and side depth).
 3. THIRD IMAGE (View 3): Side Profile (90° orthogonal flat lateral elevation).
-4. FOURTH IMAGE (View 4): Pure 90-Degree Orthogonal Flat Overhead Top-Down View (camera perpendicular looking straight down at the top wooden surface, plan view, zero front facade visible, no drawers visible).
+4. FOURTH IMAGE (View 4): Elevated High-Angle Semi-Top View (65° shot showing top surface AND front drawers in depth).
+5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View (camera perpendicular looking straight down at the top wooden surface, plan view, zero front facade visible, no drawers visible).
 
 Topological Geometry: {geom_struct}.
 {user_directives_block if user_notes_clean else ""}
@@ -784,7 +786,7 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
         return {
             "google_ai_studio": prompt_maestro_ais,
             "chatgpt_dalle3": prompt_maestro_dal,
-            "midjourney_v6": f"Commercial catalog 4 separate shots of {furn_item}, {geom_struct}, white background #FFFFFF, {hardware_str} --ar 16:9 --v 6.1 --style raw",
+            "midjourney_v6": f"Commercial catalog 5 separate shots of {furn_item}, {geom_struct}, white background #FFFFFF, {hardware_str} --ar 16:9 --v 6.1 --style raw",
             "individual_vistas": individual_results
         }
 
