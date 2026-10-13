@@ -407,6 +407,64 @@ def render_prompt_studio_v5():
                     if wa:
                         st.markdown(f"**🪵 Madera:** `{wa.get('name', 'N/A')}` | `{wa.get('color_description', 'N/A')}`")
         else:
-            st.info("👈 Arrastra la(s) foto(s) de tu mueble a la izquierda y presiona **🎯 Vistas (1.1)** o **⚡ Vistas (2.1)**.")
+            st.info("👈 Arrastra la(s) foto(s) de tu mueble a la izquierda y presiona **🎯 Vistas (1.1)** o **⚡ Vistas (2.1)** para generar tus prompts.")
 
         st.markdown('</div>', unsafe_allow_html=True)
+
+    # SECCIÓN: SEPARADOR AUTOMÁTICO DE VISTAS (DIVIDE TIRAS DE CATÁLOGO EN FOTOS SEPARADAS)
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown("""
+        <div style="background-color: #283548; border: 1px solid #475569; border-radius: 12px; padding: 18px 20px; margin-bottom: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+            <div style="font-size: 16px; font-weight: 800; color: #38BDF8; margin-bottom: 6px; display: flex; align-items: center; gap: 8px;">
+                <span>✂️ Separador Automático de Vistas (Corta tu tira de catálogo en fotos 100% separadas)</span>
+            </div>
+            <div style="font-size: 13px; color: #CBD5E1; line-height: 1.5;">
+                💡 <b>La Solución a la Inconsistencia de la Madera y Tamaño:</b><br>
+                Cuando generas las 4 o 5 vistas en <b>1 sola imagen panorámica</b> (con el Prompt Maestro), la IA bloquea el mueble y te da la <b>misma veta, mismo color y mismas medidas exactas</b>. Arrastra esa imagen aquí abajo para que la App la recorte automáticamente en fotos 100% individuales sobre fondo blanco.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        c_spl1, c_spl2 = st.columns([1.2, 2.8])
+        with c_spl1:
+            strip_up = st.file_uploader(
+                "Arrastra aquí tu tira o cuadrícula de vistas generada:",
+                type=['png', 'jpg', 'jpeg', 'webp'],
+                key=f"st_strip_splitter_{st.session_state.clear_key_v5}"
+            )
+        
+        with c_spl2:
+            if strip_up:
+                from services.image_splitter_service import split_catalog_strip, create_zip_from_cropped
+                crops = split_catalog_strip(strip_up.getvalue())
+                if crops:
+                    st.success(f"✅ ¡Detectadas y recortadas exitosamente **{len(crops)} vistas individuales**!")
+                    
+                    # Botón para descargar el ZIP completo
+                    zip_data = create_zip_from_cropped(crops, base_name=strip_up.name.split('.')[0])
+                    st.download_button(
+                        label=f"📦 Descargar Todas las Vistas ({len(crops)} fotos) en ZIP",
+                        data=zip_data,
+                        file_name=f"vistas_separadas_{strip_up.name.split('.')[0]}.zip",
+                        mime="application/zip",
+                        key="btn_dl_all_crops_zip"
+                    )
+                    
+                    # Mostrar cuadrícula de fotos separadas
+                    cols_crops = st.columns(min(len(crops), 5))
+                    for idx, c in enumerate(crops):
+                        col_idx = idx % len(cols_crops)
+                        with cols_crops[col_idx]:
+                            st.image(c["bytes"], caption=f"Vista {c['index']}", use_container_width=True)
+                            st.download_button(
+                                label=f"⬇️ Vista {c['index']}",
+                                data=c["bytes"],
+                                file_name=f"vista_{c['index']}_{strip_up.name.split('.')[0]}.png",
+                                mime="image/png",
+                                key=f"btn_dl_crop_{idx}"
+                            )
+                else:
+                    st.warning("⚠️ No se detectaron objetos aislados con suficiente separación sobre fondo blanco en esta imagen.")
+            else:
+                st.info("👈 Arrastra una imagen panorámica de catálogo para recortar cada ángulo automáticamente en alta resolución.")
