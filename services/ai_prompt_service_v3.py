@@ -24,6 +24,7 @@ class FurnitureAnalysisV3(BaseModel):
 class AIPromptServiceV3:
     def __init__(self):
         self.default_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self._clients: Dict[str, Any] = {}
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -36,11 +37,27 @@ class AIPromptServiceV3:
             pass
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
+    def get_client(self, api_key: Optional[str] = None):
+        """Reutiliza el cliente con conexión Keep-Alive para evitar renegociación SSL en cada llamada."""
+        key = self.get_api_key(api_key)
+        if not key:
+            return None
+        if key in self._clients:
+            return self._clients[key]
+        try:
+            from google import genai
+            client = genai.Client(api_key=key)
+            self._clients[key] = client
+            return client
+        except Exception as e:
+            print(f"[AIPromptServiceV3] Error instanciando cliente: {e}")
+            return None
+
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automático."""
+        """Llama a Gemini con lista de modelos activos priorizando los más rápidos."""
         models_to_try = [
-            "gemini-flash-latest",
             "gemini-2.5-flash",
+            "gemini-flash-latest",
             "gemini-flash-lite-latest",
             "gemini-3-flash-preview",
             "gemini-2.0-flash",
@@ -55,12 +72,15 @@ class AIPromptServiceV3:
                 continue
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
-    def _prepare_image(self, img_bytes: bytes, max_dim: int = 800) -> Image.Image:
-        """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
+    def _prepare_image(self, img_bytes: bytes, max_dim: int = 768) -> Image.Image:
+        """Optimiza y comprime en memoria imágenes para envío ultra-rápido a Gemini."""
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
-        return img
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        buf.seek(0)
+        return Image.open(buf)
 
     def analyze_material(self, sample_bytes: bytes, api_key: Optional[str] = None, material_type: str = "auto") -> Dict[str, Any]:
         key = self.get_api_key(api_key)

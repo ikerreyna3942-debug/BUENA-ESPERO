@@ -75,24 +75,13 @@ def cargar_maderas_menu():
 
 
 def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = "cp_v1"):
-    """Renderiza un botón que copia el texto al portapapeles nativamente en 1 clic."""
-    import json
+    """Renderiza un botón que copia el texto al portapapeles nativamente en 1 clic de forma 100% blindada."""
+    import base64
     import streamlit.components.v1 as components
-    escaped_text = json.dumps(text)
+    b64_text = base64.b64encode(text.encode("utf-8")).decode("utf-8")
     html_code = f"""
     <div style="margin: 4px 0 8px 0;">
-        <button id="btn_{key}" onclick='
-            navigator.clipboard.writeText({escaped_text}).then(() => {{
-                const b = document.getElementById("btn_{key}");
-                const orig = b.innerHTML;
-                b.innerHTML = "✅ ¡Copiado!";
-                b.style.backgroundColor = "#059669";
-                setTimeout(() => {{
-                    b.innerHTML = orig;
-                    b.style.backgroundColor = "#2563EB";
-                }}, 2000);
-            }});
-        ' style="
+        <button id="btn_{key}" onclick="copy_{key}()" style="
             width: 100%;
             background-color: #2563EB;
             color: #FFFFFF;
@@ -108,14 +97,104 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
             justify-content: center;
             gap: 6px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         ">
             {label}
         </button>
     </div>
+    <script>
+    function copy_{key}() {{
+        try {{
+            const b64 = "{b64_text}";
+            const raw = decodeURIComponent(escape(window.atob(b64)));
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(raw).then(function() {{
+                    showCopied_{key}();
+                }}).catch(function() {{
+                    fallbackCopy_{key}(raw);
+                }});
+            }} else {{
+                fallbackCopy_{key}(raw);
+            }}
+        }} catch (err) {{
+            console.error("Error al copiar:", err);
+        }}
+    }}
+    function fallbackCopy_{key}(textToCopy) {{
+        const ta = document.createElement("textarea");
+        ta.value = textToCopy;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        showCopied_{key}();
+    }}
+    function showCopied_{key}() {{
+        const b = document.getElementById("btn_{key}");
+        if (b) {{
+            const orig = b.innerHTML;
+            b.innerHTML = "✅ ¡Copiado!";
+            b.style.backgroundColor = "#059669";
+            setTimeout(function() {{
+                b.innerHTML = orig;
+                b.style.backgroundColor = "#2563EB";
+            }}, 2000);
+        }}
+    }}
+    </script>
     """
     components.html(html_code, height=44)
 
+def render_preview_image(img_data, caption: str = ""):
+    """Renderiza una imagen en Streamlit blindada con data URI en base64 para evitar errores 404 o caídas de caché."""
+    import base64
+    if not img_data:
+        return
+    try:
+        raw_bytes = None
+        if isinstance(img_data, dict) and "bytes" in img_data:
+            raw_bytes = img_data["bytes"]
+        elif hasattr(img_data, "getvalue"):
+            raw_bytes = img_data.getvalue()
+        elif hasattr(img_data, "read"):
+            if hasattr(img_data, "seek"):
+                img_data.seek(0)
+            raw_bytes = img_data.read()
+            if hasattr(img_data, "seek"):
+                img_data.seek(0)
+        elif isinstance(img_data, (bytes, bytearray)):
+            raw_bytes = bytes(img_data)
+
+        if raw_bytes and len(raw_bytes) > 0:
+            b64 = base64.b64encode(raw_bytes).decode("utf-8")
+            mime = "image/jpeg"
+            if raw_bytes.startswith(b"\x89PNG"):
+                mime = "image/png"
+            elif raw_bytes.startswith(b"RIFF") and b"WEBP" in raw_bytes[:16]:
+                mime = "image/webp"
+            elif raw_bytes.startswith(b"GIF8"):
+                mime = "image/gif"
+            st.markdown(f'''
+            <div style="text-align:center; margin-bottom:12px;">
+                <img src="data:{mime};base64,{b64}" style="max-width:100%; border-radius:8px; border:1px solid #475569; box-shadow:0 4px 10px rgba(0,0,0,0.25);" />
+                <div style="font-size:12px; color:#94A3B8; margin-top:4px;">{caption}</div>
+            </div>
+            ''', unsafe_allow_html=True)
+            return
+        
+        st.image(img_data, caption=caption, use_container_width=True)
+    except Exception:
+        try:
+            st.image(img_data, caption=caption, use_container_width=True)
+        except Exception:
+            st.caption(f"🖼️ {caption}")
+
 def render_prompt_studio():
+    if "clear_key_v1" not in st.session_state:
+        st.session_state.clear_key_v1 = 0
 
     from services.ai_prompt_service_v1 import ai_prompt_service
 
@@ -320,13 +399,16 @@ def render_prompt_studio():
                     if prompt_txt:
                         zip_file.writestr(f"prompt_{res.get('mueble_name', 'generado')}.txt", prompt_txt)
                     
-                    m_files = st.session_state.get("st_mueble")
-                    if m_files: 
+                    m_files = st.session_state.get(f"st_mueble_v1_{st.session_state.clear_key_v1}")
+                    if not m_files and "mueble_bytes" in res:
+                        for i, mb in enumerate(res["mueble_bytes"]):
+                            zip_file.writestr(f"1_foto_mueble_{i+1}.jpg", mb)
+                    elif m_files: 
                         for i, m in enumerate(m_files):
                             zip_file.writestr(f"1_foto_mueble_{i+1}.jpg", m.getvalue())
-                    t = st.session_state.get("st_tela")
+                    t = st.session_state.get(f"st_tela_v1_{st.session_state.clear_key_v1}")
                     if t: zip_file.writestr("2_foto_tela.jpg", t.getvalue())
-                    w = st.session_state.get("st_madera")
+                    w = st.session_state.get(f"st_madera_v1_{st.session_state.clear_key_v1}")
                     if w: zip_file.writestr("3_foto_madera.jpg", w.getvalue())
                 
                 st.download_button(
@@ -339,13 +421,10 @@ def render_prompt_studio():
                 )
         with btn_col2:
             if st.button("🗑️ Limpiar Todo", key="btn_clear_studio", use_container_width=True):
-
-                for k in ["last_studio_result", "st_mueble", "st_tela", "st_madera", "sb_tela_oficial", "sb_madera_oficial"]:
-
-                    if k in st.session_state:
-
-                        del st.session_state[k]
-
+                keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith("last_studio_result") or k.startswith("st_") or k.startswith("sb_") or k.startswith("txt_") or k.startswith("rad_") or k.startswith("render_generado") or k.startswith("studio_mode_radio")]
+                for k in keys_to_del:
+                    del st.session_state[k]
+                st.session_state.clear_key_v1 = st.session_state.get("clear_key_v1", 0) + 1
                 st.rerun()
 
 
@@ -409,7 +488,7 @@ def render_prompt_studio():
             ["Solo Tela", "Solo Madera", "Tela + Madera", "Extraer Mueble (Fondo Blanco)", "Aumento HD", "Vistas (360)"],
             horizontal=True,
             label_visibility="collapsed",
-            key="studio_mode_radio"
+            key=f"studio_mode_radio_v1_{st.session_state.clear_key_v1}"
         )
 
 
@@ -430,7 +509,7 @@ def render_prompt_studio():
 
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
 
-            key="st_mueble",
+            key=f"st_mueble_v1_{st.session_state.clear_key_v1}",
 
             accept_multiple_files=True,
 
@@ -458,7 +537,7 @@ def render_prompt_studio():
 
                 horizontal=True,
 
-                key="rad_tipo_tela"
+                key=f"rad_tipo_tela_v1_{st.session_state.clear_key_v1}"
 
             )
 
@@ -472,7 +551,7 @@ def render_prompt_studio():
 
                     opciones_telas,
 
-                    key="sb_tela_oficial"
+                    key=f"sb_tela_oficial_v1_{st.session_state.clear_key_v1}"
 
                 )
 
@@ -488,7 +567,7 @@ def render_prompt_studio():
 
             else:
 
-                tela_up = st.file_uploader("Haz clic o arrastra muestra de tela", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key="st_tela")
+                tela_up = st.file_uploader("Haz clic o arrastra muestra de tela", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_tela_v1_{st.session_state.clear_key_v1}")
 
                 if tela_up:
 
@@ -516,7 +595,7 @@ def render_prompt_studio():
 
                 horizontal=True,
 
-                key="rad_tipo_mad"
+                key=f"rad_tipo_mad_v1_{st.session_state.clear_key_v1}"
 
             )
 
@@ -530,7 +609,7 @@ def render_prompt_studio():
 
                     opciones_maderas,
 
-                    key="sb_madera_oficial"
+                    key=f"sb_madera_oficial_v1_{st.session_state.clear_key_v1}"
 
                 )
 
@@ -552,7 +631,7 @@ def render_prompt_studio():
 
             else:
 
-                madera_up = st.file_uploader("Haz clic o arrastra muestra de madera", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key="st_madera")
+                madera_up = st.file_uploader("Haz clic o arrastra muestra de madera", type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'], key=f"st_madera_v1_{st.session_state.clear_key_v1}")
 
                 if madera_up:
 
@@ -872,31 +951,14 @@ def render_prompt_studio():
 
         if mueble_up:
             for f in mueble_up:
-                try:
-                    f_name = getattr(f, "name", None) or (f.get("name") if isinstance(f, dict) else "Mueble")
-                    if isinstance(f, dict) and "bytes" in f:
-                        f_bytes = f["bytes"]
-                    elif hasattr(f, "getvalue"):
-                        f_bytes = f.getvalue()
-                    elif hasattr(f, "read"):
-                        f_bytes = f.read()
-                    else:
-                        f_bytes = f
-                    st.image(f_bytes, caption=f"Mueble: {f_name}", use_container_width=True)
-                except Exception:
-                    st.caption(f"🖼️ Mueble cargado")
+                f_name = getattr(f, "name", None) or (f.get("name") if isinstance(f, dict) else "Mueble")
+                render_preview_image(f, caption=f"Mueble: {f_name}")
 
         if tela_bytes:
-            try:
-                st.image(tela_bytes, caption=f"Muestra Tela: {tela_name}", use_container_width=True)
-            except Exception:
-                st.caption(f"🧵 Tela: {tela_name}")
+            render_preview_image(tela_bytes, caption=f"Muestra Tela: {tela_name}")
 
         if madera_bytes:
-            try:
-                st.image(madera_bytes, caption=f"Muestra Madera: {madera_name}", use_container_width=True)
-            except Exception:
-                st.caption(f"🪵 Madera: {madera_name}")
+            render_preview_image(madera_bytes, caption=f"Muestra Madera: {madera_name}")
 
 
 
@@ -972,34 +1034,37 @@ def render_prompt_studio():
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.code(v_dict["google_ai_studio"], language="markdown")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["google_ai_studio"], height=160, key=f"txt_v_{v_key}_g_{st.session_state.clear_key_v1}")
+                        render_copy_button(v_dict["google_ai_studio"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_g_{st.session_state.clear_key_v1}")
                 else:
                     p_google = res["prompts"]["google_ai_studio"]
-                    st.text_area("Prompt Google AI Studio / Imagen 3:", value=p_google, height=300, key="txt_res_g")
-                    st.code(p_google, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_google, file_name=f"prompt_google_{res['mueble_name']}.txt", use_container_width=True)
+                    st.text_area("Prompt Google AI Studio / Imagen 3:", value=p_google, height=300, key=f"txt_res_g_{st.session_state.clear_key_v1}")
+                    render_copy_button(p_google, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_g_{st.session_state.clear_key_v1}")
+                    st.download_button("💾 Descargar .txt", data=p_google, file_name=f"prompt_google_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_g_{st.session_state.clear_key_v1}")
 
             with p_tabs[1]:
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.code(v_dict["flux_midjourney"], language="markdown")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["flux_midjourney"], height=160, key=f"txt_v_{v_key}_f_{st.session_state.clear_key_v1}")
+                        render_copy_button(v_dict["flux_midjourney"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_f_{st.session_state.clear_key_v1}")
                 else:
                     p_flux = res["prompts"]["flux_midjourney"]
-                    st.text_area("Prompt Flux / Midjourney v6.1:", value=p_flux, height=180, key="txt_res_f")
-                    st.code(p_flux, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_flux, file_name=f"prompt_flux_{res['mueble_name']}.txt", use_container_width=True)
+                    st.text_area("Prompt Flux / Midjourney v6.1:", value=p_flux, height=180, key=f"txt_res_f_{st.session_state.clear_key_v1}")
+                    render_copy_button(p_flux, label="📋 Copiar Prompt para Flux / Midjourney", key=f"cp_res_f_{st.session_state.clear_key_v1}")
+                    st.download_button("💾 Descargar .txt", data=p_flux, file_name=f"prompt_flux_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_f_{st.session_state.clear_key_v1}")
 
             with p_tabs[2]:
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.code(v_dict["dalle_chatgpt"], language="markdown")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["dalle_chatgpt"], height=160, key=f"txt_v_{v_key}_d_{st.session_state.clear_key_v1}")
+                        render_copy_button(v_dict["dalle_chatgpt"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_d_{st.session_state.clear_key_v1}")
                 else:
                     p_dalle = res["prompts"]["dalle_chatgpt"]
-                    st.text_area("Prompt DALL-E 3 / ChatGPT:", value=p_dalle, height=180, key="txt_res_d")
-                    st.code(p_dalle, language="markdown")
-                    st.download_button("💾 Descargar .txt", data=p_dalle, file_name=f"prompt_dalle_{res['mueble_name']}.txt", use_container_width=True)
+                    st.text_area("Prompt DALL-E 3 / ChatGPT:", value=p_dalle, height=180, key=f"txt_res_d_{st.session_state.clear_key_v1}")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT / DALL-E", key=f"cp_res_d_{st.session_state.clear_key_v1}")
+                    st.download_button("💾 Descargar .txt", data=p_dalle, file_name=f"prompt_dalle_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_d_{st.session_state.clear_key_v1}")
 
 
 
