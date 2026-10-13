@@ -173,7 +173,7 @@ def render_prompt_studio_v5():
         
         st.markdown("""
         <div style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#E9D5FF; line-height:1.5;">
-            <b>🎯 Vistas (1.1):</b> 5 vistas (3/4 Derecha, Lateral 90°, Frente 0°, 3/4 Picada Alta, Cenital 90°).<br>
+            <b>🎯 Vistas (1.1):</b> 5 vistas canónicas (3/4 Derecha, Lateral 90°, Frente 0°, 3/4 Picada Alta, Cenital 90°).<br>
             <b>⚡ Vistas (2.1):</b> 4 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Superior Cenital).
         </div>
         """, unsafe_allow_html=True)
@@ -188,10 +188,48 @@ def render_prompt_studio_v5():
         )
 
         st.markdown("---")
+        st.markdown("##### 🪵 Muestra de Madera / Acabado (Opcional)")
+        st.caption("Si deseas cambiar el tono de la madera (ej. roble dorado, nogal), arrastra la foto de la madera o elígela:")
+        c_m1, c_m2 = st.columns([1, 1])
+        with c_m1:
+            sel_madera_nom = st.selectbox("Catálogo Maderas:", opciones_maderas, key=f"sb_madera_v5_{st.session_state.clear_key_v5}")
+        with c_m2:
+            madera_up = st.file_uploader("O arrastra foto de madera:", type=['png', 'jpg', 'jpeg', 'webp', 'bmp'], key=f"st_madera_v5_{st.session_state.clear_key_v5}")
+        
+        if madera_up:
+            madera_bytes = madera_up.getvalue()
+            madera_name = madera_up.name
+        elif sel_madera_nom:
+            obj_m = map_maderas.get(sel_madera_nom.upper())
+            if obj_m:
+                madera_name = sel_madera_nom
+                if obj_m.get("local_path") and os.path.exists(obj_m["local_path"]):
+                    madera_bytes = Path(obj_m["local_path"]).read_bytes()
+                elif obj_m.get("id"):
+                    madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
+
+        st.markdown("##### 🧵 Muestra de Tela / Tapicería (Opcional)")
+        st.caption("Si deseas cambiar la tela o tapizado, arrastra la muestra o elígela:")
+        c_t1, c_t2 = st.columns([1, 1])
+        with c_t1:
+            sel_tela_nom = st.selectbox("Catálogo Telas:", opciones_telas, key=f"sb_tela_v5_{st.session_state.clear_key_v5}")
+        with c_t2:
+            tela_up = st.file_uploader("O arrastra foto de tela:", type=['png', 'jpg', 'jpeg', 'webp', 'bmp'], key=f"st_tela_v5_{st.session_state.clear_key_v5}")
+        
+        if tela_up:
+            tela_bytes = tela_up.getvalue()
+            tela_name = tela_up.name
+        elif sel_tela_nom:
+            obj_t = map_telas.get(sel_tela_nom.upper())
+            if obj_t and obj_t.get("id"):
+                tela_name = sel_tela_nom
+                tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
+
+        st.markdown("---")
         st.markdown("##### 💬 Notas / Directivas Especiales para la IA")
         st.caption("✨ Las notas que escribas aquí se integran **directamente dentro del prompt** como especificaciones obligatorias de materiales, iluminación y acabados.")
         notas_usuario = st.text_area(
-            "Indica especificaciones clave (ej. Mantener las costuras beige, patas de roble claro, luz LED cálida integrada):",
+            "Indica especificaciones clave (ej. Mantener las costuras beige, patas de roble claro, medidas, luz LED cálida):",
             placeholder="Escribe aquí tus observaciones y ajustes para que la IA los integre en el prompt...",
             key=f"txt_notas_usuario_v5_{st.session_state.clear_key_v5}",
             height=90
@@ -224,16 +262,30 @@ def render_prompt_studio_v5():
 
                     m_ana = ai_prompt_service_v5.analyze_furniture_for_enhancement(m_bytes_list)
 
+                    w_ana = None
+                    if madera_bytes:
+                        progress_holder.info("🪵 Analizando muestra de madera con Gemini Vision...")
+                        w_ana = ai_prompt_service_v5.analyze_material(madera_bytes, material_type="wood")
+
+                    f_ana = None
+                    if tela_bytes:
+                        progress_holder.info("🧵 Analizando muestra de tela con Gemini Vision...")
+                        f_ana = ai_prompt_service_v5.analyze_material(tela_bytes, material_type="fabric")
+
                     if btn_2_1:
                         prompts = ai_prompt_service_v5.generate_vistas_2_1_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
+                            fabric_analysis=f_ana,
+                            wood_analysis=w_ana,
                             notas_usuario=notas_usuario
                         )
                     else:
                         prompts = ai_prompt_service_v5.generate_vistas_1_1_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
+                            fabric_analysis=f_ana,
+                            wood_analysis=w_ana,
                             notas_usuario=notas_usuario
                         )
 
@@ -241,6 +293,8 @@ def render_prompt_studio_v5():
                         "modo": modo_nombre,
                         "mueble_name": m_name,
                         "furniture_analysis": m_ana,
+                        "fabric_analysis": f_ana,
+                        "wood_analysis": w_ana,
                         "prompts": prompts,
                         "notas_usuario": notas_usuario
                     }
