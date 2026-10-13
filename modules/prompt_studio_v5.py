@@ -444,16 +444,34 @@ def render_prompt_studio_v5():
                 )
 
                 if "1 Solo Prompt Maestro" in tipo_salida:
-                    p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio (Nano Banana - Palabra 'foto')", "🤖 ChatGPT (DALL-E 3 - Todas las fotos)", "🎨 Midjourney v6.1"])
+                    p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio (Nano Banana)", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1 (Discord)"])
                     with p_tab1:
+                        st.markdown("""
+                        <div style="background: rgba(16, 185, 129, 0.15); border-left: 4px solid #10B981; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
+                            <strong style="color: #10B981; font-size: 14px;">🌐 PROMPT PARA GOOGLE AI STUDIO (Nano Banana / Gemini 2.0 / Imagen 3)</strong><br>
+                            <span style="color: #E2E8F0; font-size: 12px;">✅ Pega este prompt en Google AI Studio junto a tus fotos. Te dará la Foto 1; luego escribe la palabra <b>foto</b> en el chat para la siguiente vista.</span>
+                        </div>
+                        """, unsafe_allow_html=True)
                         p_txt = prompts.get("google_ai_studio", "")
                         st.text_area("Prompt Maestro Interactivo (Google AI Studio):", p_txt, height=270, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}")
                         render_copy_button(p_txt, label="📋 Copiar Prompt Maestro para Google AI Studio (Secuencial)", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}")
                     with p_tab2:
+                        st.markdown("""
+                        <div style="background: rgba(59, 130, 246, 0.15); border-left: 4px solid #3B82F6; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
+                            <strong style="color: #3B82F6; font-size: 14px;">🤖 PROMPT PARA CHATGPT (DALL-E 3)</strong><br>
+                            <span style="color: #E2E8F0; font-size: 12px;">✅ Pega este prompt en ChatGPT. Generará todas las vistas secuenciales manteniendo la madera idéntica y congelada.</span>
+                        </div>
+                        """, unsafe_allow_html=True)
                         p_dalle = prompts.get("chatgpt_dalle3", "")
                         st.text_area("Prompt Maestro ChatGPT (Genera todas las fotos):", p_dalle, height=250, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}")
                         render_copy_button(p_dalle, label="📋 Copiar Prompt Maestro para ChatGPT (Todas las fotos)", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}")
                     with p_tab3:
+                        st.markdown("""
+                        <div style="background: rgba(245, 158, 11, 0.15); border-left: 4px solid #F59E0B; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
+                            <strong style="color: #F59E0B; font-size: 14px;">🎨 PROMPT EXCLUSIVO PARA MIDJOURNEY v6.1</strong><br>
+                            <span style="color: #F87171; font-weight: bold; font-size: 12px;">⚠️ NO PEGAR EN GOOGLE AI STUDIO NI EN CHATGPT:</span> <span style="color: #E2E8F0; font-size: 12px;">Este prompt contiene parámetros como <code>--ar 16:9 --v 6.1</code> que solo funcionan dentro de Discord / Midjourney.</span>
+                        </div>
+                        """, unsafe_allow_html=True)
                         p_mj = prompts.get("midjourney_v6", "")
                         st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_v5_{st.session_state.clear_key_v5}")
                         render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}")
@@ -466,24 +484,50 @@ def render_prompt_studio_v5():
                                 st.markdown(f"##### {v_data['icon']} {v_data['label']}")
                                 engine_tabs = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)"])
                                 with engine_tabs[0]:
+                                    st.markdown("""
+                                    <div style="background: rgba(16, 185, 129, 0.15); border-left: 4px solid #10B981; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
+                                        <strong style="color: #10B981; font-size: 13px;">🌐 Google AI Studio:</strong> <span style="color: #E2E8F0; font-size: 12px;">Copia y pega individualmente para esta vista exacta.</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
                                     p_ais = v_data.get("google_ai_studio", "")
                                     st.text_area(f"Prompt AI Studio ({v_data['label']}):", p_ais, height=220, key=f"txt_ind_ais_{i}_{st.session_state.clear_key_v5}")
                                     render_copy_button(p_ais, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para Google AI Studio", key=f"cp_ind_ais_{i}_{st.session_state.clear_key_v5}")
                                 with engine_tabs[1]:
+                                    st.markdown("""
+                                    <div style="background: rgba(59, 130, 246, 0.15); border-left: 4px solid #3B82F6; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
+                                        <strong style="color: #3B82F6; font-size: 13px;">🤖 ChatGPT (DALL-E 3):</strong> <span style="color: #E2E8F0; font-size: 12px;">Copia y pega individualmente para esta vista exacta.</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
                                     p_dal = v_data.get("chatgpt_dalle3", "")
                                     st.text_area(f"Prompt ChatGPT / DALL-E 3 ({v_data['label']}):", p_dal, height=200, key=f"txt_ind_dal_{i}_{st.session_state.clear_key_v5}")
                                     render_copy_button(p_dal, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para ChatGPT", key=f"cp_ind_dal_{i}_{st.session_state.clear_key_v5}")
             else:
-                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1"])
+                p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1 (Discord)"])
                 with p_tab1:
+                    st.markdown("""
+                    <div style="background: rgba(16, 185, 129, 0.15); border-left: 4px solid #10B981; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
+                        <strong style="color: #10B981; font-size: 14px;">🌐 PROMPT PARA GOOGLE AI STUDIO (Gemini / Imagen 3)</strong>
+                    </div>
+                    """, unsafe_allow_html=True)
                     p_txt = prompts.get("google_ai_studio", "")
                     st.text_area("Prompt Google AI Studio:", p_txt, height=270, key=f"txt_res_ais_single_{st.session_state.clear_key_v5}")
                     render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_ais_single_{st.session_state.clear_key_v5}")
                 with p_tab2:
+                    st.markdown("""
+                    <div style="background: rgba(59, 130, 246, 0.15); border-left: 4px solid #3B82F6; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
+                        <strong style="color: #3B82F6; font-size: 14px;">🤖 PROMPT PARA CHATGPT (DALL-E 3)</strong>
+                    </div>
+                    """, unsafe_allow_html=True)
                     p_dalle = prompts.get("chatgpt_dalle3", "")
                     st.text_area("Prompt ChatGPT / DALL-E 3:", p_dalle, height=250, key=f"txt_res_dal_single_{st.session_state.clear_key_v5}")
                     render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key=f"cp_res_dal_single_{st.session_state.clear_key_v5}")
                 with p_tab3:
+                    st.markdown("""
+                    <div style="background: rgba(245, 158, 11, 0.15); border-left: 4px solid #F59E0B; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
+                        <strong style="color: #F59E0B; font-size: 14px;">🎨 PROMPT EXCLUSIVO PARA MIDJOURNEY v6.1</strong><br>
+                        <span style="color: #F87171; font-weight: bold; font-size: 12px;">⚠️ NO PEGAR EN GOOGLE AI STUDIO NI EN CHATGPT:</span> <span style="color: #E2E8F0; font-size: 12px;">Solo funciona en Discord / Midjourney.</span>
+                    </div>
+                    """, unsafe_allow_html=True)
                     p_mj = prompts.get("midjourney_v6", "")
                     st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_single_{st.session_state.clear_key_v5}")
                     render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_single_{st.session_state.clear_key_v5}")
