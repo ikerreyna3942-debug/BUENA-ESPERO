@@ -254,10 +254,10 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
             ).model_dump()
 
     def _build_photo_hardware_str(self) -> str:
-        return "Camera: Hasselblad H6D-100c, 100MP medium format sensor, HC 2,8/80mm lens, f/11 aperture, ISO 64, 1/160s shutter, Broncolor Siros 800 S strobe lighting with 120cm Octabox soft diffuse fill, calibrated X-Rite ColorChecker passport accuracy."
+        return "Optics: 100MP medium format RAW, 80mm lens, f/11 aperture, ISO 64, studio strobe lighting with soft diffuse octabox fill. Razor-sharp micro-textures."
 
     def _build_white_isolation_str(self) -> str:
-        return "ENVIRONMENT: Isolate the furniture piece on a pure seamless solid white background (#FFFFFF), with zero floor shadows, no drop shadows, and no harsh reflections. CRITICAL: DO NOT include any text, typography, watermark, letters, numbers, color chips, or palettes."
+        return "Solid pure seamless white background (#FFFFFF), 0% floor shadows, 0% drop shadows, zero reflections. No typography, no watermarks."
 
     def generate_vistas_1_1_prompts(
         self,
@@ -271,16 +271,7 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
         reference_filenames: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Genera el set 'Vistas (1.1)' con las 5 vistas canónicas completas:
-        1. 3/4 Isométrica mirando a la derecha (45°, elevación 15°)
-        2. Lateral estricta (90°)
-        3. Frontal directa (0°)
-        4. 3/4 Picada alta / semi-arriba (60°-70°)
-        5. Cenital superior (90° desde arriba)
-        
-        Optimizado para:
-        - Google AI Studio (Nano Banana): Protocolo secuencial interactivo paso a paso con la palabra clave 'foto'.
-        - ChatGPT (DALL-E 3): Generación secuencial completa de todas las fotos.
+        Genera el set 'Vistas (1.1)' con las 5 vistas canónicas completas con arquitectura de Alta Densidad de Tokens.
         """
         ma = furniture_analysis or {}
         fa = fabric_analysis or {}
@@ -294,26 +285,23 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
 
         user_notes_clean = notas_usuario.strip() if notas_usuario else ""
         if user_notes_clean:
-            user_directives_block = f"""
-===================================================================
-⚡ MANDATORY USER CUSTOM DIRECTIVES (EMBEDDED ARCHITECTURAL & MATERIAL OVERRIDES):
-{user_notes_clean}
-* Strictest adherence required: Ensure every specification, dimensions, color tone, and material above is natively integrated across each view render without exceptions.
-==================================================================="""
-            materials_with_notes = f"{existing_mats} (User mandatory note applied: {user_notes_clean})"
+            user_directives_block = f"""[MANDATORY USER OVERRIDE DIRECTIVES]:
+* {user_notes_clean}
+* Strictest adherence required: Ensure every specification, dimension, color tone, and material above is natively integrated without exceptions."""
+            materials_with_notes = f"{existing_mats} (User note: {user_notes_clean})"
         else:
             user_directives_block = ""
             materials_with_notes = existing_mats
 
-        # Construcción de nombres de archivos para identificación transparente
+        # Construcción de nombres de archivos para identificación transparente de tokens
         furn_file_str = ", ".join(f"'{fn}'" for fn in furniture_filenames) if furniture_filenames else f"'{furniture_name}'"
         wood_file_str = ", ".join(f"'{fn}'" for fn in wood_filenames) if wood_filenames else ""
         ref_file_str = ", ".join(f"'{fn}'" for fn in reference_filenames) if reference_filenames else ""
 
-        # Manejo de muestras de material (Madera / Tela) con identificación visual y por nombre de archivo
+        # Identificación de imágenes y candados de material con Alta Densidad de Tokens
         mat_rules = []
         id_blocks = [
-            f"- TARGET FURNITURE REFERENCE [Archivo(s): {furn_file_str}]: Foto que muestra el mueble tridimensional físico ('{furn_item}'). Fija el modelo base, proporciones 3D y silueta."
+            f"- IMAGE 1 (TARGET FURNITURE) [File: {furn_file_str}]: Reference for 3D model, proportions, silhouette, and joinery ('{furn_item}')."
         ]
 
         has_wood_sample = bool(wa) or ma.get("has_wood_sample", False)
@@ -322,15 +310,14 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
             w_color = wa.get("color_description", materials_with_notes) if wa else materials_with_notes
             w_texture = wa.get("texture_detail", "authentic wood grain pores") if wa else "authentic wood grain pores"
             w_light = wa.get("light_interaction", "satin matte sheen") if wa else "satin matte sheen"
-            wood_label = f" [Archivo(s): {wood_file_str}]" if wood_file_str else ""
+            wood_label = f" [File: {wood_file_str}]" if wood_file_str else ""
             id_blocks.append(
-                f"- WOOD / COLOR SAMPLE (ABSOLUTE 100% SOURCE OF TRUTH){wood_label}: Foto plana cuadrada de primer plano (swatch) con la muestra de madera real, color y acabado ('{w_name}')."
+                f"- IMAGE 2 (WOOD / FINISH SWATCH) [100% GROUND TRUTH]{wood_label}: Primary source of truth for wood species, continuous grain flow, stain tone, warmth, and surface sheen ('{w_name}': {w_color}, {w_texture}, {w_light})."
             )
-            mat_rules.append(f"""- WOOD RE-FINISHING & CHROMATIC IDENTITY LOCK (CRITICAL):
-  * SINGLE MANUFACTURED SPECIMEN LOCK: You are photographing the EXACT SAME physical specimen across all perspectives. The veneer comes from the exact same log of wood.
-  * WOOD GRAIN CONTINUITY: The linear grain flow, pore structure, and warmth from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}) MUST be applied identically across all views.
-  * STRICT 100% UNIFORMITY (NO CONTRASTING DRAWERS): Drawer faces, chassis, top surface, side panels, circular handles, and legs MUST ALL share the exact same wood finish.
-  * ABSOLUTELY FORBIDDEN: Zero two-tone contrasting finishes. Do NOT render drawer faces in dark walnut, black, or contrasting wood. Every single view must maintain the exact same wood hue, warmth, and grain.""")
+            mat_rules.append(f"""[CRITICAL MATERIAL & WOOD GRAIN LOCK]:
+* 100% UNIFORM MONOLITHIC FINISH: The entire furniture piece—front drawer faces, circular handles, outer casing, side panels, top surface, and legs—MUST be crafted from the EXACT SAME SINGLE BATCH OF WOOD from IMAGE 2.
+* ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to render drawer faces in dark walnut, black, or contrasting wood. All surfaces share identical grain flow, color saturation, and satin matte sheen.
+* CONTINUOUS GRAIN FLOW: Natural horizontal grain continuity across drawer faces and top surface.""")
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
@@ -338,26 +325,25 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
             f_texture = fa.get("texture_detail", "")
             f_light = fa.get("light_interaction", "")
             id_blocks.append(
-                f"- FABRIC SWATCH REFERENCE: Locate the flat close-up textile swatch photo showing the upholstery fabric weave and color ('{f_name}')."
+                f"- IMAGE 3 (FABRIC SWATCH REFERENCE): Reference for upholstery textile weave and color ('{f_name}': {f_color}, {f_texture}, {f_light})."
             )
-            mat_rules.append(f"""- UPHOLSTERY FABRIC: Apply the exact material from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}, {f_light}). Scale down weave pattern 98% for macro realism with zero chromatic shift.""")
+            mat_rules.append(f"""[UPHOLSTERY FABRIC LOCK]:
+* Apply exact upholstery weave and color from FABRIC SWATCH ('{f_name}'). Micro-texture realism, 0% color shift.""")
 
         if ref_file_str:
             id_blocks.append(
-                f"- 360-DEGREE REFERENCE PHOTOS [Archivos: {ref_file_str}]: Vistas auxiliares para verificar uniones, estructura inferior y topología oculta."
+                f"- AUXILIARY REFERENCES [Files: {ref_file_str}]: Auxiliary reference views for rear joints and hidden structural angles."
             )
 
         if not mat_rules:
-            mat_rules.append(f"- ORIGINAL MATERIAL PRESERVATION: Maintain 100% exact original wood grain, finishes, and joinery from TARGET FURNITURE: [{materials_with_notes}].")
+            mat_rules.append(f"[MATERIAL PRESERVATION LOCK]:\n* Lock 100% authentic original materials, finishes, and wood grain from TARGET FURNITURE: [{materials_with_notes}].")
 
         # Candado de medidas y proporciones 3D
-        proportions_lock = f"""
-3D GEOMETRIC & PROPORTIONAL INTEGRITY LOCK:
-- The furniture piece has fixed real-world dimensions ({geom_struct}).
-- Do NOT alter drawer aspect ratios, do NOT stretch legs vertically or horizontally, and do NOT resize circular handles between views. Maintain 100% mathematical perspective consistency as if moving a real camera on a tripod around a frozen static object."""
+        proportions_lock = f"""[3D TURNTABLE SCALE & PROPORTIONAL LOCK]:
+* Rotate the exact same frozen physical prototype ({geom_struct}). Proportions, drawer heights, and circular handle diameter are strictly locked 1:1. Zero distortion, zero leg stretching."""
 
         materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
-        image_id_final_block = "IMAGE IDENTIFICATION (ORDER-INDEPENDENT, FILENAME & VISUAL CONTENT BASED):\n" + "\n".join(id_blocks)
+        image_id_final_block = "[INPUT IMAGE REFERENCES]:\n" + "\n".join(id_blocks)
 
         vistas_specs = [
             {
@@ -405,38 +391,36 @@ Analyze the 3D topology, proportions, angles, joinery, and structure of this fur
         individual_results = []
         for v in vistas_specs:
             extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
-            # Prompt individual para Google AI Studio
-            prompt_ai_studio = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
+            
+            # Prompt individual token-optimizado para Google AI Studio
+            prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
 {image_id_final_block}
-{user_directives_block}
 
-TASK: Generate ONE SINGLE INDIVIDUAL COMMERCIAL CATALOG PHOTOGRAPH of the target furniture item ({furn_item}), isolated as a single object centered in the frame. DO NOT generate multiple items, do not generate a collage, do not generate a contact sheet. Only ONE single standalone furniture piece.
+{materials_final_block}
+{user_directives_block if user_notes_clean else ""}
 
-MANDATORY CAMERA PERSPECTIVE:
+[MANDATORY PERSPECTIVE: {v['label']}]:
 - {v['angle_desc']}
 
-MATERIAL & GEOMETRIC FIDELITY:
-{materials_final_block}
-- Topology & Geometry: {geom_struct}.
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- {hardware_str}
 
-{white_bg}
-HARDWARE & RENDERING:
-{hardware_str}
+Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark{extra_neg}."""
 
-Negative Prompt: collage, contact sheet, multiple views, multiple furniture pieces, grid, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark{extra_neg}."""
-
-            # Prompt individual para ChatGPT / DALL-E 3
-            prompt_dalle = f"""[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography, Real-world micro-imperfections]
+            # Prompt individual token-optimizado para ChatGPT / DALL-E 3
+            prompt_dalle = f"""[COMMAND: COMMERCIAL PRODUCT PHOTOGRAPHY | 35MM RAW MEDIUM FORMAT]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
-Generate ONE single standalone commercial catalog photo of a {furn_item} ('{furniture_name}').
+Photograph ONE single standalone commercial catalog photo of {furn_item} ('{furniture_name}').
 Camera Angle: {v['dalle_angle']}
 CRITICAL: Only 1 single furniture object centered in the image. No multiple angles, no contact sheet, no collage.
 Topological Geometry: {geom_struct}.
-Materials:
+Materials & Monolithic Lock:
 {materials_final_block}
 {user_directives_block if user_notes_clean else ""}
 Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
-Camera: {hardware_str}"""
+Camera: {hardware_str}
+Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon{extra_neg}."""
 
             individual_results.append({
                 "id": v["id"],
@@ -447,55 +431,42 @@ Camera: {hardware_str}"""
                 "chatgpt_dalle3": prompt_dalle
             })
 
-        # 1 SOLO PROMPT UNIFICADO PARA GOOGLE AI STUDIO (Ordena generar las 5 fotos por separado)
-        prompt_maestro_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
+        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO
+        prompt_maestro_ais = f"""[TASK: SEQUENTIAL 5-VIEW COMMERCIAL CATALOG PHOTOGRAPHY | 8K RAW]
 {image_id_final_block}
-{user_directives_block}
 
-CRITICAL EXECUTION PROTOCOL (INTERACTIVE TURN-BY-TURN GENERATION WITH TRIGGER WORD 'foto'):
-You must generate the 5 required catalog perspectives ONE BY ONE in sequence. Since Google AI Studio outputs one image per turn, follow this strict interactive protocol:
-
-1. CURRENT TURN (IMAGE 1):
-   - GENERATE ONLY THE FIRST VIEW: Vista 1 (3/4 Isométrica mirando a la derecha a 45°, elevación 15°).
-   - Angle details: 3/4 isometric perspective at 45 degrees, facing toward the right. Elevated 15 degrees to show depth, front-right profile, seat thickness, and leg geometry.
-   - STOP IMMEDIATELY after generating Image 1. DO NOT generate View 2 yet.
-   - At the bottom of your response, indicate: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (Perfil Lateral 90°)."
-
-2. TURN 2 (TRIGGERED ONLY WHEN THE USER TYPES 'foto'):
-   - Generate ONLY Vista 2: Strict 90-degree orthogonal lateral side profile. Full silhouette from front edge to back edge with zero perspective vanishing points.
-   - End with: "📸 Vista 2 generada. Escribe 'foto' para la Vista 3 (Elevación Frontal 0°)."
-
-3. TURN 3 (TRIGGERED BY 'foto'):
-   - Generate ONLY Vista 3: Direct flat 0-degree front elevation view. Camera level at eye-line pointing directly dead-center.
-   - End with: "📸 Vista 3 generada. Escribe 'foto' para la Vista 4 (3/4 Picada Alta)."
-
-4. TURN 4 (TRIGGERED BY 'foto'):
-   - Generate ONLY Vista 4: High-angle elevated 3/4 semi-top perspective shot at 60-70 degrees looking down at the front.
-   - End with: "📸 Vista 4 generada. Escribe 'foto' para la Vista 5 (Cenital Superior 90°)."
-
-5. TURN 5 (TRIGGERED BY 'foto'):
-   - Generate ONLY Vista 5: Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top surface (camera pitch: -90 degrees). ONLY the flat top wooden rectangular surface is visible, showcasing rich continuous horizontal wood grain patterns. Zero camera tilt: do NOT angle the camera, do NOT show the front drawers, do NOT show the front facade. Pure flat overhead plan view.
-
-ABSOLUTE CONSISTENCY IN ALL 5 VIEWS:
 {materials_final_block}
+{user_directives_block if user_notes_clean else ""}
 
-{white_bg}
-HARDWARE & RENDERING:
-{hardware_str}
+[INTERACTIVE TURN-BY-TURN EXECUTION PROTOCOL]:
+Generate the 5 required catalog views ONE BY ONE in sequence:
+* CURRENT TURN (IMAGE 1): Generate ONLY Vista 1: 3/4 isometric perspective at 45° facing right, elevated 15° to reveal front-right depth, contour, and legs. Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (Perfil Lateral 90°)."
+* SUBSEQUENT TURNS (TRIGGERED ONLY BY 'foto'):
+  - Turn 2: Vista 2 (Strict 90° orthogonal lateral side profile elevation). End with 'foto' prompt.
+  - Turn 3: Vista 3 (Direct flat 0° frontal elevation at eye-level center). End with 'foto' prompt.
+  - Turn 4: Vista 4 (High-angle semi-top perspective at 60°-70° looking down at front). End with 'foto' prompt.
+  - Turn 5: Vista 5 (Strict 90° orthogonal overhead flat top-down view, ceiling perpendicular -90° pitch, showing only top wooden surface, zero tilt, no front drawers visible).
 
-Negative Prompt: collage, single-image multi-view strip, contact sheet, grid, multi-image strip, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark."""
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- {hardware_str}
 
-        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3 (Generación secuencial completa de las 5 fotos)
+Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, single-image multi-view strip, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark, tilted camera, downward perspective, 3/4 high angle, visible drawer faces."""
+
+        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3
         wood_dal_maestro = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
         prompt_maestro_dal = f"""[COMMAND: MULTI-IMAGE SEQUENTIAL GENERATION FOR COMMERCIAL CATALOG]
 [ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
 Generate ALL 5 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){wood_dal_maestro}.
-Image references:
-{image_id_final_block}
 
-Materials & Monolithic Lock:
-{materials_final_block}
+[IMAGE REFERENCES & GROUND TRUTH]:
+- Target Furniture: 3D model and facade proportions from '{furniture_name}'.
+- Wood / Color Sample: Exact wood species, continuous grain flow, and stain tone from wood reference ('{w_name}': {w_color}, {w_texture}).
+
+[CRITICAL MONOLITHIC WOOD LOCK]:
+* 100% UNIFORM MONOLITHIC WOOD: Entire unit (front drawer faces, circular handles, chassis, side panels, top surface, legs) must share the identical wood finish and grain from the wood swatch.
+* ZERO TWO-TONE FINISH: Do NOT make drawer faces dark walnut or contrasting color.
 
 CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage or split canvas.
 
@@ -530,11 +501,7 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
         reference_filenames: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Genera el set 'Vistas (2.1)' con las 4 vistas canónicas exactas de catálogo (Frontal, 3/4 Perspectiva, Lateral 90°, Superior Cenital):
-        
-        Optimizado para:
-        - Google AI Studio (Nano Banana): Protocolo secuencial paso a paso con la palabra clave 'foto'.
-        - ChatGPT (DALL-E 3): Generación secuencial completa de todas las 4 fotos.
+        Genera el set 'Vistas (2.1)' con las 4 vistas canónicas exactas de catálogo con arquitectura de Alta Densidad de Tokens.
         """
         ma = furniture_analysis or {}
         fa = fabric_analysis or {}
@@ -548,26 +515,23 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
 
         user_notes_clean = notas_usuario.strip() if notas_usuario else ""
         if user_notes_clean:
-            user_directives_block = f"""
-===================================================================
-⚡ MANDATORY USER CUSTOM DIRECTIVES (EMBEDDED ARCHITECTURAL & MATERIAL OVERRIDES):
-{user_notes_clean}
-* Strictest adherence required: Ensure every specification, dimensions, color tone, and material above is natively integrated across each view render without exceptions.
-==================================================================="""
-            materials_with_notes = f"{existing_mats} (User mandatory note applied: {user_notes_clean})"
+            user_directives_block = f"""[MANDATORY USER OVERRIDE DIRECTIVES]:
+* {user_notes_clean}
+* Strictest adherence required: Ensure every specification, dimension, color tone, and material above is natively integrated without exceptions."""
+            materials_with_notes = f"{existing_mats} (User note: {user_notes_clean})"
         else:
             user_directives_block = ""
             materials_with_notes = existing_mats
 
-        # Construcción de nombres de archivos para identificación transparente
+        # Construcción de nombres de archivos para identificación transparente de tokens
         furn_file_str = ", ".join(f"'{fn}'" for fn in furniture_filenames) if furniture_filenames else f"'{furniture_name}'"
         wood_file_str = ", ".join(f"'{fn}'" for fn in wood_filenames) if wood_filenames else ""
         ref_file_str = ", ".join(f"'{fn}'" for fn in reference_filenames) if reference_filenames else ""
 
-        # Manejo de muestras de material (Madera / Tela) con identificación visual y por nombre de archivo
+        # Identificación de imágenes y candados de material con Alta Densidad de Tokens
         mat_rules = []
         id_blocks = [
-            f"- TARGET FURNITURE REFERENCE [Archivo(s): {furn_file_str}]: Foto que muestra el mueble tridimensional físico ('{furn_item}'). Fija el diseño, arquitectura y proporción."
+            f"- IMAGE 1 (TARGET FURNITURE) [File: {furn_file_str}]: Reference for 3D model, proportions, silhouette, and joinery ('{furn_item}')."
         ]
 
         has_wood_sample = bool(wa) or ma.get("has_wood_sample", False)
@@ -576,15 +540,14 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
             w_color = wa.get("color_description", materials_with_notes) if wa else materials_with_notes
             w_texture = wa.get("texture_detail", "authentic wood grain pores") if wa else "authentic wood grain pores"
             w_light = wa.get("light_interaction", "satin matte sheen") if wa else "satin matte sheen"
-            wood_label = f" [Archivo(s): {wood_file_str}]" if wood_file_str else ""
+            wood_label = f" [File: {wood_file_str}]" if wood_file_str else ""
             id_blocks.append(
-                f"- WOOD / COLOR SAMPLE (ABSOLUTE 100% SOURCE OF TRUTH){wood_label}: Foto plana cuadrada de primer plano (swatch) con la muestra de madera real, color y acabado ('{w_name}')."
+                f"- IMAGE 2 (WOOD / FINISH SWATCH) [100% GROUND TRUTH]{wood_label}: Primary source of truth for wood species, continuous grain flow, stain tone, warmth, and surface sheen ('{w_name}': {w_color}, {w_texture}, {w_light})."
             )
-            mat_rules.append(f"""- WOOD RE-FINISHING & CHROMATIC IDENTITY LOCK (CRITICAL):
-  * SINGLE MANUFACTURED SPECIMEN LOCK: You are photographing the EXACT SAME physical specimen across all perspectives. The veneer comes from the exact same log of wood.
-  * WOOD GRAIN CONTINUITY: The linear grain flow, pore structure, and warmth from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}) MUST be applied identically across all views.
-  * STRICT 100% UNIFORMITY (NO CONTRASTING DRAWERS): Drawer faces, chassis, top surface, side panels, circular handles, and legs MUST ALL share the exact same wood finish.
-  * ABSOLUTELY FORBIDDEN: Zero two-tone contrasting finishes. Do NOT render drawer faces in dark walnut, black, or contrasting wood. Every single view must maintain the exact same wood hue, warmth, and grain.""")
+            mat_rules.append(f"""[CRITICAL MATERIAL & WOOD GRAIN LOCK]:
+* 100% UNIFORM MONOLITHIC FINISH: The entire furniture piece—front drawer faces, circular handles, outer casing, side panels, top surface, and legs—MUST be crafted from the EXACT SAME SINGLE BATCH OF WOOD from IMAGE 2.
+* ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to render drawer faces in dark walnut, black, or contrasting wood. All surfaces share identical grain flow, color saturation, and satin matte sheen.
+* CONTINUOUS GRAIN FLOW: Natural horizontal grain continuity across drawer faces and top surface.""")
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
@@ -592,26 +555,25 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
             f_texture = fa.get("texture_detail", "")
             f_light = fa.get("light_interaction", "")
             id_blocks.append(
-                f"- FABRIC SWATCH REFERENCE: Locate the flat close-up textile swatch photo showing the upholstery fabric weave and color ('{f_name}')."
+                f"- IMAGE 3 (FABRIC SWATCH REFERENCE): Reference for upholstery textile weave and color ('{f_name}': {f_color}, {f_texture}, {f_light})."
             )
-            mat_rules.append(f"""- UPHOLSTERY FABRIC: Apply the exact material from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}, {f_light}). Scale down weave pattern 98% for macro realism with zero chromatic shift.""")
+            mat_rules.append(f"""[UPHOLSTERY FABRIC LOCK]:
+* Apply exact upholstery weave and color from FABRIC SWATCH ('{f_name}'). Micro-texture realism, 0% color shift.""")
 
         if ref_file_str:
             id_blocks.append(
-                f"- 360-DEGREE REFERENCE PHOTOS [Archivos: {ref_file_str}]: Vistas auxiliares para verificar uniones, estructura inferior y topología oculta."
+                f"- AUXILIARY REFERENCES [Files: {ref_file_str}]: Auxiliary reference views for rear joints and hidden structural angles."
             )
 
         if not mat_rules:
-            mat_rules.append(f"- ORIGINAL MATERIAL PRESERVATION: Maintain 100% exact original wood grain, finishes, and joinery from TARGET FURNITURE: [{materials_with_notes}].")
+            mat_rules.append(f"[MATERIAL PRESERVATION LOCK]:\n* Lock 100% authentic original materials, finishes, and wood grain from TARGET FURNITURE: [{materials_with_notes}].")
 
         # Candado de medidas y proporciones 3D
-        proportions_lock = f"""
-3D GEOMETRIC & PROPORTIONAL INTEGRITY LOCK:
-- The furniture piece has fixed real-world dimensions ({geom_struct}).
-- Do NOT alter drawer aspect ratios, do NOT stretch legs vertically or horizontally, and do NOT resize circular handles between views. Maintain 100% mathematical perspective consistency as if moving a real camera on a tripod around a frozen static object."""
+        proportions_lock = f"""[3D TURNTABLE SCALE & PROPORTIONAL LOCK]:
+* Rotate the exact same frozen physical prototype ({geom_struct}). Proportions, drawer heights, and circular handle diameter are strictly locked 1:1. Zero distortion, zero leg stretching."""
 
         materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
-        image_id_final_block = "IMAGE IDENTIFICATION (ORDER-INDEPENDENT, FILENAME & VISUAL CONTENT BASED):\n" + "\n".join(id_blocks)
+        image_id_final_block = "[INPUT IMAGE REFERENCES]:\n" + "\n".join(id_blocks)
 
         vistas_2_1_specs = [
             {
@@ -651,38 +613,36 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
         individual_results = []
         for v in vistas_2_1_specs:
             extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
-            # Prompt individual para Google AI Studio (Nano Banana 2.1 & Pro)
-            prompt_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
+            
+            # Prompt individual token-optimizado para Google AI Studio
+            prompt_ais = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
 {image_id_final_block}
-{user_directives_block}
 
-TASK: Generate ONE SINGLE INDIVIDUAL COMMERCIAL CATALOG PHOTOGRAPH of the target furniture item ({furn_item}), isolated as a single object centered in the frame. DO NOT generate multiple items, do not generate a collage, do not generate a contact sheet. Only ONE single standalone furniture piece.
+{materials_final_block}
+{user_directives_block if user_notes_clean else ""}
 
-MANDATORY CAMERA PERSPECTIVE:
+[MANDATORY PERSPECTIVE: {v['label']}]:
 - {v['angle_desc']}
 
-MATERIAL & GEOMETRIC FIDELITY:
-{materials_final_block}
-- Topology & Geometry: {geom_struct}.
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- {hardware_str}
 
-{white_bg}
-HARDWARE & RENDERING:
-{hardware_str}
+Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark{extra_neg}."""
 
-Negative Prompt: collage, contact sheet, multiple views, multiple furniture pieces, grid, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, room, text, watermark{extra_neg}."""
-
-            # Prompt individual para ChatGPT / DALL-E 3
-            prompt_dal = f"""[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography, Real-world timber micro-imperfections]
+            # Prompt individual token-optimizado para ChatGPT / DALL-E 3
+            prompt_dal = f"""[COMMAND: COMMERCIAL PRODUCT PHOTOGRAPHY | 35MM RAW MEDIUM FORMAT]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
 Generate ONE single standalone commercial catalog photo of a {furn_item} ('{furniture_name}').
 Camera Angle: {v['dalle_angle']}
 CRITICAL: Only 1 single furniture object centered in the image. No multiple angles, no contact sheet, no collage.
 Topological Geometry: {geom_struct}.
-Materials:
+Materials & Monolithic Lock:
 {materials_final_block}
 {user_directives_block if user_notes_clean else ""}
 Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
-Camera: {hardware_str}"""
+Camera: {hardware_str}
+Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon{extra_neg}."""
 
             individual_results.append({
                 "id": v["id"],
@@ -693,51 +653,41 @@ Camera: {hardware_str}"""
                 "chatgpt_dalle3": prompt_dal
             })
 
-        # 1 SOLO PROMPT UNIFICADO PARA GOOGLE AI STUDIO (Ordena generar las 4 fotos por separado)
-        prompt_maestro_ais = f"""SYSTEM: You are a World-Class Master Commercial Product Photographer and AI Visual Director for Luxury Furniture Catalogs.
+        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO
+        prompt_maestro_ais = f"""[TASK: SEQUENTIAL 4-VIEW COMMERCIAL CATALOG PHOTOGRAPHY | 8K RAW]
 {image_id_final_block}
-{user_directives_block}
 
-CRITICAL EXECUTION PROTOCOL (INTERACTIVE TURN-BY-TURN GENERATION WITH TRIGGER WORD 'foto'):
-You must generate the 4 canonical catalog perspectives ONE BY ONE in sequence. Since Google AI Studio outputs one image per turn, follow this strict interactive protocol:
-
-1. CURRENT TURN (IMAGE 1):
-   - GENERATE ONLY THE FIRST VIEW: Vista 1 (Direct Flat Front Elevation 0°).
-   - Angle details: Camera perfectly level at eye-line pointing dead-center at front facade, displaying drawer faces, clean joinery, and lower structure.
-   - STOP IMMEDIATELY after generating Image 1. DO NOT generate View 2 yet.
-   - At the bottom of your response, indicate: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva 45°)."
-
-2. TURN 2 (TRIGGERED ONLY WHEN THE USER TYPES 'foto'):
-   - Generate ONLY Vista 2: 3/4 Commercial Perspective shot at 45 degrees revealing front facade, side depth, cantilevered architecture, and top surface edge.
-   - End with: "📸 Vista 2 generada. Escribe 'foto' para la Vista 3 (Lateral Estricta 90°)."
-
-3. TURN 3 (TRIGGERED BY 'foto'):
-   - Generate ONLY Vista 3: Strict orthogonal 90-degree lateral side profile elevation. Perfectly flat side view capturing vertical silhouette and panel thickness.
-   - End with: "📸 Vista 3 generada. Escribe 'foto' para la Vista 4 (Superior Cenital)."
-
-4. TURN 4 (TRIGGERED BY 'foto'):
-   - Generate ONLY Vista 4: Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top surface (camera pitch: -90 degrees). ONLY the flat top wooden rectangular surface is visible, showcasing rich continuous horizontal wood grain patterns. Zero camera tilt: do NOT angle the camera, do NOT show the front drawers, do NOT show the front facade, and do NOT show the legs. Pure flat overhead plan view.
-
-ABSOLUTE CONSISTENCY IN ALL 4 VIEWS:
 {materials_final_block}
+{user_directives_block if user_notes_clean else ""}
 
-{white_bg}
-HARDWARE & RENDERING:
-{hardware_str}
+[INTERACTIVE TURN-BY-TURN EXECUTION PROTOCOL]:
+Generate the 4 required catalog views ONE BY ONE in sequence:
+* CURRENT TURN (IMAGE 1): Generate ONLY Vista 1: Direct flat 0-degree front elevation (level eye-line lens pointing dead-center at facade, drawer faces, and lower structure). Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva 45°)."
+* SUBSEQUENT TURNS (TRIGGERED ONLY BY 'foto'):
+  - Turn 2: Vista 2 (Commercial 3/4 perspective shot at 45° revealing front facade, side depth, and cantilevered architecture). End with 'foto' prompt.
+  - Turn 3: Vista 3 (Strict 90° orthogonal lateral side profile elevation). End with 'foto' prompt.
+  - Turn 4: Vista 4 (Strict 90° orthogonal overhead flat top-down view, ceiling perpendicular -90° pitch, showing only top wooden surface, zero tilt, no front drawers visible).
 
-Negative Prompt: collage, single-image multi-view strip, contact sheet, grid, multi-image strip, split screen, two-tone drawers, contrasting dark drawers, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark, tilted camera, downward perspective, 3/4 high angle, visible drawer faces."""
+[ENVIRONMENT & HARDWARE]:
+- {white_bg}
+- {hardware_str}
 
-        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3 (Generación completa de las 4 fotos)
+Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, single-image multi-view strip, contact sheet, grid, multi-image strip, split screen, CGI, 3D render, cartoon, plastic, floor shadows, grey backdrop, text, labels, watermark, tilted camera, downward perspective, 3/4 high angle, visible drawer faces."""
+
+        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3
         wood_dal_maestro_21 = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
         prompt_maestro_dal = f"""[COMMAND: MULTI-IMAGE SEQUENTIAL GENERATION FOR COMMERCIAL CATALOG]
 [ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
 Generate ALL 4 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){wood_dal_maestro_21}.
-Image references:
-{image_id_final_block}
 
-Materials & Monolithic Lock:
-{materials_final_block}
+[IMAGE REFERENCES & GROUND TRUTH]:
+- Target Furniture: 3D model and facade proportions from '{furniture_name}'.
+- Wood / Color Sample: Exact wood species, continuous grain flow, and stain tone from wood reference ('{w_name}': {w_color}, {w_texture}).
+
+[CRITICAL MONOLITHIC WOOD LOCK]:
+* 100% UNIFORM MONOLITHIC WOOD: Entire unit (front drawer faces, circular handles, chassis, side panels, top surface, legs) must share the identical wood finish and grain from the wood swatch.
+* ZERO TWO-TONE FINISH: Do NOT make drawer faces dark walnut or contrasting color.
 
 CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 4 distinct, separate image files. DO NOT combine them into a collage or split canvas.
 
