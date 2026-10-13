@@ -17,8 +17,11 @@ class FurnitureAnalysisV5(BaseModel):
     furniture_item: str = Field(description="Nombre y estilo arquitectónico (ej. mid-century modern curved modular sofa)")
     camera_angle: str = Field(description="Ángulo de cámara en grados y perspectiva geométrica (ej. 45-degree elevated isometric, strict 0-degree frontal)")
     lighting_direction: str = Field(description="Dirección exacta de la luz y tipo de sombra (ej. Key light from top-left, soft diffuse fill)")
-    geometric_structure: str = Field(description="Descripción topológica de la forma (ej. sharp 90-degree corners, sweeping organic curves)")
-    existing_materials: str = Field(description="Tapicería y partes rígidas actuales con su color y textura exacta, veta de madera y tonos")
+    geometric_structure: str = Field(description="Descripción topológica de la forma, silueta y ensambles 360°")
+    wood_and_finish_analysis: str = Field(description="Especie exacta de madera, tonalidad, veta, calidez y acabado superficial (ej. Roble Blanco natural con veta sutil mate, #D2B48C). Si se subieron muestras de madera, basarse prioritariamente en ellas.")
+    upholstery_analysis: str = Field(description="Detalle micro-textil y color de tapicería si aplica (ej. lino crudo beige, bouclé, o 'Sin tapicería' si es 100% madera)")
+    existing_materials: str = Field(description="Descripción técnica integral consolidada de todos los materiales, madera y tapicería")
+    wood_details: Optional[str] = Field(default="", description="Detalle específico de la madera detectada")
 
 class AIPromptServiceV5:
     def __init__(self):
@@ -37,7 +40,7 @@ class AIPromptServiceV5:
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
     def get_client(self, api_key: Optional[str] = None):
-        """Reutiliza el cliente con conexión Keep-Alive para evitar renegociación SSL en cada llamada."""
+        """Reutiliza el cliente con conexión Keep-Alive y timeout para evitar cuelgues."""
         key = self.get_api_key(api_key)
         if not key:
             return None
@@ -45,7 +48,7 @@ class AIPromptServiceV5:
             return self._clients[key]
         try:
             from google import genai
-            client = genai.Client(api_key=key)
+            client = genai.Client(api_key=key, http_options={"timeout": 25})
             self._clients[key] = client
             return client
         except Exception as e:
@@ -53,14 +56,11 @@ class AIPromptServiceV5:
             return None
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos priorizando los más rápidos."""
+        """Llama a Gemini priorizando modelos oficiales rápidos existentes sin fallos 404."""
         models_to_try = [
-            "gemini-2.5-flash",
-            "gemini-flash-latest",
-            "gemini-flash-lite-latest",
-            "gemini-3-flash-preview",
             "gemini-2.0-flash",
             "gemini-1.5-flash",
+            "gemini-2.0-flash-lite",
         ]
         last_err = None
         for m in models_to_try:
@@ -71,13 +71,13 @@ class AIPromptServiceV5:
                 continue
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
-    def _prepare_image(self, img_bytes: bytes, max_dim: int = 768) -> Image.Image:
-        """Optimiza y comprime en memoria imágenes para envío ultra-rápido a Gemini."""
+    def _prepare_image(self, img_bytes: bytes, max_dim: int = 512) -> Image.Image:
+        """Optimiza y comprime en memoria imágenes a 512px y JPEG 75 para envío ultra-rápido (<50KB)."""
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=82, optimize=True)
+        img.save(buf, format="JPEG", quality=75, optimize=True)
         buf.seek(0)
         return Image.open(buf)
 
@@ -95,8 +95,10 @@ class AIPromptServiceV5:
             from google import genai
             from google.genai import types
             
-            client = genai.Client(api_key=key)
-            img = self._prepare_image(sample_bytes)
+            client = self.get_client(key)
+            if not client:
+                raise RuntimeError("No se pudo inicializar cliente")
+            img = self._prepare_image(sample_bytes, max_dim=512)
             
             prompt = f"""You are an expert materials engineer and luxury product photographer.
 Analyze this material sample ({material_type}) with microscopic precision.
@@ -130,8 +132,8 @@ Pay special attention to how light hits the threads/wood grain, color saturation
         api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Analiza conjuntamente la foto actual del mueble, las fotos de muestra de madera/color,
-        las fotos de referencia (vistas y geometría 360°) y las notas obligatorias del usuario.
+        Analiza conjuntamente en 1 sola llamada rápida la foto del mueble, muestras de madera/color,
+        referencias 360° y notas del usuario, evitando OOM y caídas de servidor.
         """
         key = self.get_api_key(api_key)
         if not key:
@@ -141,115 +143,108 @@ Pay special attention to how light hits the threads/wood grain, color saturation
                 camera_angle="original camera angle",
                 lighting_direction="soft studio lighting",
                 geometric_structure="original geometry and 360 reference topology",
+                wood_and_finish_analysis="natural wood finish",
+                upholstery_analysis="coordinating upholstery",
                 existing_materials="original materials and wood finish"
             ).model_dump()
             
         try:
             from google.genai import types
-            import concurrent.futures
             
             client = self.get_client(key)
             if not client:
                 raise RuntimeError("No se pudo inicializar el cliente de Gemini API")
             
-            # 1. Preparar imágenes actuales del mueble (Casilla 1)
+            # 1. Preparar imágenes del mueble (Casilla 1) - max 2 para ligereza
             actual_imgs = []
             if isinstance(furniture_bytes, list):
-                for fb in furniture_bytes:
+                for fb in furniture_bytes[:2]:
                     if fb:
-                        actual_imgs.append(self._prepare_image(fb))
+                        actual_imgs.append(self._prepare_image(fb, max_dim=512))
             elif furniture_bytes:
-                actual_imgs.append(self._prepare_image(furniture_bytes))
+                actual_imgs.append(self._prepare_image(furniture_bytes, max_dim=512))
 
-            # 2. Preparar imágenes de muestra de madera / color (Casilla 2)
+            # 2. Preparar imágenes de muestra de madera / color (Casilla 2) - max 2
             wood_imgs = []
             if wood_bytes and isinstance(wood_bytes, list):
-                for wb in wood_bytes:
+                for wb in wood_bytes[:2]:
                     if wb:
-                        wood_imgs.append(self._prepare_image(wb))
+                        wood_imgs.append(self._prepare_image(wb, max_dim=512))
             elif wood_bytes:
-                wood_imgs.append(self._prepare_image(wood_bytes))
+                wood_imgs.append(self._prepare_image(wood_bytes, max_dim=512))
 
-            # 3. Preparar imágenes de referencia (Casilla 3)
+            # 3. Preparar imágenes de referencia (Casilla 3) - max 2
             ref_imgs = []
             if reference_bytes and isinstance(reference_bytes, list):
-                for rb in reference_bytes:
+                for rb in reference_bytes[:2]:
                     if rb:
-                        ref_imgs.append(self._prepare_image(rb))
+                        ref_imgs.append(self._prepare_image(rb, max_dim=512))
             elif reference_bytes:
-                ref_imgs.append(self._prepare_image(reference_bytes))
+                ref_imgs.append(self._prepare_image(reference_bytes, max_dim=512))
 
-            # PASO 1 (CRÍTICO): Extraer el COLOR, ESPECIE DE MADERA Y TEXTURA
-            # Si el usuario subió fotos de muestra de madera/color, tienen máxima prioridad
-            if wood_imgs:
-                mat_prompt = """You are a master furniture materials colorist, timber technologist, and spectrophotometry expert.
-Look at the provided WOOD / COLOR SAMPLE PHOTO(S) and the FURNITURE PHOTO(S).
-Identify with absolute scientific precision the EXACT WOOD FINISH, GRAIN, AND MATERIAL:
-1. WOOD FINISH & SPECIES: Analyze the wood sample photo(s) to determine the exact species (e.g. natural light oak / roble claro, white oak / encino, American walnut / nogal, ash / fresno, teak / teca, pine / pino, etc.), grain flow, pores, warmth, stain tone, and Hex code estimate.
-2. UPHOLSTERY & FABRIC: If upholstered cushions/panels are present in the furniture photos, identify the exact fabric weave, texture, and color.
-CRITICAL: The wood sample photo is the definitive reference for the furniture's wooden surfaces."""
-                mat_contents = [mat_prompt] + wood_imgs + actual_imgs
+            has_wood = bool(wood_imgs)
+            if has_wood:
+                prompt = """You are an elite furniture materials engineer, 3D architectural visualizer, and commercial product photographer.
+Analyze the provided images to create an exhaustive, production-grade technical specification for this furniture piece:
+
+1. WOOD SAMPLE IMAGE(S) PROVIDED (ABSOLUTE PRIORITY & TRUTH FOR TIMBER / COLOR):
+   - Analyze the wood / color sample photos first.
+   - Identify the exact timber species (e.g. White Oak / Roble Blanco, American Walnut / Nogal, Ash / Fresno, Teak / Teca, Bleached Pine / Pino, etc.).
+   - Specify the exact grain direction, pore openness, warmth/undertones, and sheen (matte, satin).
+   - This exact wood species and finish MUST be assigned to all wooden surfaces of the furniture across all catalog renders!
+
+2. FURNITURE PHOTO(S) & 360° REFERENCES (GEOMETRY & TOPOLOGY):
+   - Identify the furniture item type and design style (e.g. mid-century modern curved wooden armchair).
+   - Detail the 3D topology, proportions, joinery, leg construction, and backrest angle across the views.
+   - Describe any upholstery, cushions, fabric weave, and color.
+   - Identify the observed camera angle and studio lighting."""
             else:
-                mat_prompt = """You are a master furniture materials colorist and spectrophotometry expert.
-Look at the provided FURNITURE PHOTO(S).
-Identify with absolute scientific precision the EXACT MATERIAL, WOOD FINISH, AND COLOR:
-1. WOOD FINISH & SPECIES: Describe the EXACT shade, grain, and tone seen in this specific photo (e.g. light washed oak, bleached ash, pale greyish natural timber, blonde wood, walnut, etc.) with Hex code estimate.
-2. UPHOLSTERY & FABRIC: Describe the exact weave and color of any padded or upholstered surface (e.g. pitch black matte panel, charcoal, etc.).
-CRITICAL: Report EXACTLY what is visible in the photos."""
-                mat_contents = [mat_prompt] + (actual_imgs or ref_imgs)
-            
-            if notas_usuario and notas_usuario.strip():
-                mat_prompt += f"\n\nUSER OVERRIDE NOTES:\n{notas_usuario.strip()}"
+                prompt = """You are an elite furniture materials engineer, 3D architectural visualizer, and commercial product photographer.
+Analyze the provided furniture and reference images to create an exhaustive, production-grade technical specification:
 
-            mat_config = types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=MaterialAnalysisV5,
-                temperature=0.0
-            )
+1. FURNITURE TOPOLOGY & GEOMETRY:
+   - Identify the furniture item type and design style (e.g. mid-century modern, Japandi, contemporary sculptural).
+   - Detail the 3D topology, silhouette, joints, leg construction, and proportions across all provided angles.
+   - Identify the observed camera angle and studio lighting.
 
-            # PASO 2: Extraer la GEOMETRÍA, ESTILO y PROPORCIONES 3D usando la foto actual + fotos de referencia
-            geom_prompt = """You are an expert architectural visualizer, 3D furniture engineer, and commercial photographer.
-Analyze the 3D topology, proportions, angles, joinery, and structure of this furniture piece using the current photo and reference view photos:
-1. Identify the furniture type, style, exact proportions, joinery, and 3D silhouette.
-2. Cross-reference the CURRENT TAKEN PHOTO with the REFERENCE PHOTOS (which show the design angles, views, and details) to understand the complete 360-degree geometry."""
+2. MATERIALS & COLOR FIDELITY:
+   - Describe the exact wood species, grain flow, stain tone, and surface sheen visible in the photos.
+   - Describe any upholstery, cushion fabric, weave texture, and exact color."""
 
             if notas_usuario and notas_usuario.strip():
-                geom_prompt += f"\n\nUSER MANDATORY DIRECTIVES (STRICT OVERRIDE):\n{notas_usuario.strip()}"
+                prompt += f"\n\nUSER MANDATORY DIRECTIVES (STRICT OVERRIDE):\n{notas_usuario.strip()}"
 
-            geom_contents = [geom_prompt] + (actual_imgs or ref_imgs) + ref_imgs
-            geom_config = types.GenerateContentConfig(
+            contents = [prompt] + wood_imgs + (actual_imgs or ref_imgs)
+            if ref_imgs and actual_imgs:
+                contents += ref_imgs[:1]
+
+            config = types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=FurnitureAnalysisV5,
                 temperature=0.1
             )
 
-            # EJECUCIÓN EN PARALELO ULTRA-RÁPIDA (Ambas peticiones viajan al mismo tiempo)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                fut_mat = executor.submit(self._call_gemini, client, mat_contents, mat_config)
-                fut_geom = executor.submit(self._call_gemini, client, geom_contents, geom_config)
-                mat_res = fut_mat.result()
-                geom_res = fut_geom.result()
+            res = self._call_gemini(client=client, contents=contents, config=config)
+            furniture_data = json.loads(res.text)
 
-            mat_data = json.loads(mat_res.text)
-            color_desc = mat_data.get("color_description", "")
-            name_desc = mat_data.get("name", "")
-            tex_desc = mat_data.get("texture_detail", "")
-            exact_material_description = f"{name_desc} ({color_desc}, {tex_desc})"
+            if "existing_materials" not in furniture_data or not furniture_data["existing_materials"]:
+                w = furniture_data.get("wood_and_finish_analysis", "")
+                u = furniture_data.get("upholstery_analysis", "")
+                furniture_data["existing_materials"] = f"{w}, {u}".strip(", ")
 
-            furniture_data = json.loads(geom_res.text)
-
-            # REGISTRAR MATERIALES Y DETECCIÓN DE MUESTRA DE MADERA
-            furniture_data["existing_materials"] = exact_material_description
-            furniture_data["has_wood_sample"] = bool(wood_imgs)
+            furniture_data["has_wood_sample"] = has_wood
             return furniture_data
+
         except Exception as e:
             print(f"[AIPromptServiceV5] Error analyzing furniture: {e}")
             notes_desc = f" with directives: {notas_usuario.strip()}" if notas_usuario else ""
             return FurnitureAnalysisV5(
                 furniture_item="furniture piece" + notes_desc,
                 camera_angle="original perspective",
-                lighting_direction="original lighting",
+                lighting_direction="soft studio lighting",
                 geometric_structure="original shape and 360-degree reference structure",
+                wood_and_finish_analysis="natural wood finish",
+                upholstery_analysis="matching upholstery",
                 existing_materials="original fabric and wood finish"
             ).model_dump()
 

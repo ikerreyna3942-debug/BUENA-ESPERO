@@ -38,11 +38,9 @@ class QualityInspectorService:
 
     def _call_gemini(self, client, contents, config=None):
         models_to_try = [
-            "gemini-flash-latest",
-            "gemini-2.5-flash",
-            "gemini-flash-lite-latest",
-            "gemini-3-flash-preview",
-            "gemini-2.5-pro"
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash-lite",
         ]
         last_err = None
         for m in models_to_try:
