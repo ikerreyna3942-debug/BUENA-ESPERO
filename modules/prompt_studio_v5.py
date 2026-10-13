@@ -240,14 +240,14 @@ def render_prompt_studio_v5():
 
         st.markdown("---")
 
-        # CASILLA 3: Fotos de Referencia del Mueble (Otros ángulos y Vistas 360°)
-        st.markdown("##### 📐 Casilla 3: Fotos de Referencia (Otros Ángulos y Vistas 360°)")
+        # CASILLA 3: Fotos de Referencia del Mueble (Opcional)
+        st.markdown("##### 📐 Casilla 3: Fotos de Referencia (Opcional - Déjalo vacío para usar SOLO Mueble y Madera)")
         mueble_ref_up = st.file_uploader(
-            "Arrastra aquí las fotos de referencia de ángulos y vistas:",
+            "Arrastra aquí fotos de referencia (opcional):",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
             key=f"st_mueble_ref_v5_{st.session_state.clear_key_v5}",
             accept_multiple_files=True,
-            help="Fotos de referencia del diseño, otros ángulos o planos del mueble."
+            help="Opcional. Para obtener máxima fidelidad de color y evitar que la IA se confunda, deja esta casilla vacía y sube únicamente la Casilla 1 y la Casilla 2."
         )
 
         st.markdown("---")
@@ -448,8 +448,9 @@ def render_prompt_studio_v5():
                     with p_tab1:
                         st.markdown("""
                         <div style="background: rgba(16, 185, 129, 0.15); border-left: 4px solid #10B981; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
-                            <strong style="color: #10B981; font-size: 14px;">🌐 PROMPT PARA GOOGLE AI STUDIO (Nano Banana / Gemini 2.0 / Imagen 3)</strong><br>
-                            <span style="color: #E2E8F0; font-size: 12px;">✅ Pega este prompt en Google AI Studio junto a tus fotos. Te dará la Foto 1; luego escribe la palabra <b>foto</b> en el chat para la siguiente vista.</span>
+                            <strong style="color: #10B981; font-size: 14px;">🌐 PROMPT PARA GOOGLE AI STUDIO (Nano Banana / Gemini)</strong><br>
+                            <span style="color: #E2E8F0; font-size: 12px;">✅ <b>SUBE SOLO 2 FOTOS (Igual que en ChatGPT):</b> 1) Foto del Mueble y 2) Foto de la Madera. No subas fotos de referencia adicionales.<br>
+                            💬 Pega este prompt con las 2 fotos. Te dará la Foto 1; luego escribe la palabra <b>foto</b> en el chat para la siguiente vista.</span>
                         </div>
                         """, unsafe_allow_html=True)
                         p_txt = prompts.get("google_ai_studio", "")
