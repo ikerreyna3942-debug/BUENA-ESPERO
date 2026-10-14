@@ -86,7 +86,7 @@ class AIPromptServiceV5:
         key = self.get_api_key(api_key)
         default_material = MaterialAnalysisV5(
             name="Roble Claro Natural / Natural Honey Oak",
-            color_description="warm light honey wood tone (#D5A869) with soft amber undertones",
+            color_description="warm light honey wood tone with soft amber undertones",
             texture_detail="fine continuous horizontal wood grain pores, smooth satin texture",
             light_interaction="matte satin sheen without glare"
         ).model_dump()
@@ -106,7 +106,7 @@ class AIPromptServiceV5:
             prompt = f"""You are an expert materials engineer, timber technologist, and luxury product photographer.
 Analyze this material sample ({material_type}) with microscopic precision:
 1. Identify the exact timber species (e.g. Roble Claro Natural / Natural Light Oak, Nogal / American Walnut, Encino, Fresno, Teca).
-2. Report the exact color description with estimated Hex code (e.g. #D5A869), warmth, and undertones.
+2. Report the exact color description with organic timber tone, warmth, and amber/golden undertones (avoid generic hex codes).
 3. Report wood grain flow, pore openness, and texture.
 4. Report light interaction and surface sheen (matte, low lustre satin)."""
             
@@ -122,7 +122,7 @@ Analyze this material sample ({material_type}) with microscopic precision:
             data = json.loads(res.text)
             c_desc = data.get("color_description", "")
             if not c_desc or "detected" in c_desc.lower():
-                data["color_description"] = "warm light honey natural oak tone (#D5A869) with subtle amber undertones"
+                data["color_description"] = "warm light honey natural oak tone with subtle amber undertones"
             return data
         except Exception as e:
             print(f"[AIPromptServiceV5] Error analyzing material: {e}")
@@ -161,7 +161,7 @@ Analyze this material sample ({material_type}) with microscopic precision:
                 camera_angle="0-degree frontal and 3/4 perspective",
                 lighting_direction="soft studio lighting with subtle fill",
                 geometric_structure="clean geometric joinery and exact proportional dimensions as specified by user",
-                wood_and_finish_analysis="warm natural honey oak (#D5A869) with continuous horizontal grain flow and satin finish",
+                wood_and_finish_analysis="warm natural honey oak with continuous horizontal grain flow and satin finish",
                 upholstery_analysis="none (100% solid wood construction)",
                 existing_materials="monolithic natural light oak wood with continuous horizontal grain"
             ).model_dump()
@@ -274,7 +274,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
                 camera_angle="0-degree frontal and 3/4 perspective",
                 lighting_direction="soft studio lighting with subtle fill",
                 geometric_structure="clean geometric joinery and exact proportional dimensions as specified by user",
-                wood_and_finish_analysis="warm natural honey oak (#D5A869) with continuous horizontal grain flow and satin finish",
+                wood_and_finish_analysis="warm natural honey oak with continuous horizontal grain flow and satin finish",
                 upholstery_analysis="none (100% solid wood construction)",
                 existing_materials="monolithic natural light oak wood with continuous horizontal grain"
             ).model_dump()
@@ -284,8 +284,8 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 
     def _build_white_isolation_str(self, is_mirror: bool = False) -> str:
         if is_mirror:
-            return "Solid pure seamless white background (#FFFFFF), 0% floor shadows, 0% drop shadows, authentic reflective mirror glass physics with clean diffuse studio softbox highlight (zero room interior, no windows, no furniture reflection). No typography, no watermarks."
-        return "Solid pure seamless white background (#FFFFFF), 0% floor shadows, 0% drop shadows, zero background reflections. No typography, no watermarks."
+            return "pure seamless solid white background (#FFFFFF) with zero floor dirt or background clutter, while preserving delicate physical self-ambient occlusion shadows in frame rebates, corner bevels, and joinery crevices to convey authentic tangible weight and 3D volume"
+        return "pure seamless solid white background (#FFFFFF) with zero floor dirt or background clutter, while preserving delicate physical self-ambient occlusion shadows in joinery crevices, under-edges, and structural seams to convey authentic tangible weight and 3D volume"
 
     def _detect_furniture_profile(self, furn_item: str, user_notes: str, geom_struct: str) -> Dict[str, Any]:
         text_to_search = f"{furn_item} {user_notes} {geom_struct}".lower()
@@ -345,7 +345,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             parts_str = "perimeter wood frame, curved corner radii, outer border profile, inner bevel, and structural edge joinery"
             wood_parts_ais = "perimeter wood frame, curved corners, outer borders, inner bevel, and edge joinery"
             mirror_optics = (
-                "• REFLECTIVE MIRROR OPTICS & GLASS FIDELITY: The central pane must render as an authentic high-clarity reflective silvered glass mirror with a subtle, soft diffuse studio lightbox reflection gradient across the surface (zero room interior, no windows, no furniture reflection). It must visibly function as a real mirror with depth and specular highlights, not flat painted white or grey board, while keeping the background around the exterior wooden frame pure solid white (#FFFFFF)."
+                "• REFLECTIVE MIRROR GLASS OPTICS: The central pane must render as authentic high-clarity 4mm silvered reflective glass mirror with real optical physics, displaying a subtle soft diffuse studio highlight gradient across the surface (zero room interior, no windows, no furniture reflection). Include a visible internal perimeter bevel where the glass meets the inner timber rebate, ensuring crisp optical definition and separation between wood and mirror glass."
             )
             geometry_clone = (
                 "[GEOMETRY & PROTOTYPE FREEZE]: Strictly duplicate the EXACT silhouette, curved corner radii, slim frame depth, and outer border profile from Image 1. Freeze the exact natural orientation (vertical or horizontal) and aspect ratio shown in Image 1 without rotating or stretching. Do NOT add internal steps, deep shadowbox shelves, display ledges, or inner compartment boxes."
@@ -520,7 +520,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
-            existing_mats = "monolithic natural light honey oak (#D5A869) with continuous horizontal grain flow"
+            existing_mats = "monolithic natural light honey oak with continuous horizontal grain flow and warm amber undertones"
 
         # Detección Universal de Perfil de Mueble, Medidas y Óptica
         profile = self._detect_furniture_profile(furn_item, notas_usuario, geom_struct)
@@ -554,7 +554,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         # Descripción de la madera detectada en el mueble original (Casilla 1)
         wood_from_furniture = ma.get("wood_and_finish_analysis", "") or ma.get("wood_details", "") or existing_mats
         if not wood_from_furniture or "original" in wood_from_furniture.lower():
-            wood_from_furniture = "monolithic natural light honey oak (#D5A869) with continuous horizontal grain flow and smooth satin sheen"
+            wood_from_furniture = "natural light honey oak with warm amber undertones, fine continuous horizontal wood grain pores, and oil-rubbed satin sheen"
 
         if has_wood_sample:
             w_name = wa.get("name", "Roble Claro Natural / White Oak Swatch") if wa else "Roble Claro Natural / White Oak Swatch"
@@ -564,7 +564,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 
             if "fallback" in w_name.lower() or "detected" in str(w_color).lower() or not w_color:
                 w_name = "Roble Claro Natural / White Oak Swatch"
-                w_color = "warm light honey natural timber tone (#D5A869) with subtle amber undertones"
+                w_color = "warm light honey natural timber tone with subtle amber undertones"
                 w_texture = "fine continuous horizontal wood grain pores, smooth satin finish"
                 w_light = "matte satin sheen"
 
@@ -572,43 +572,32 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             id_blocks.append(
                 f"- IMAGE 2 (WOOD / FINISH SWATCH) [100% GROUND TRUTH]{wood_label}: Primary source of truth for wood species, continuous grain flow, stain tone, warmth, and surface sheen ('{w_name}': {w_color}, {w_texture}, {w_light})."
             )
-            mat_rules.append(f"""[CRITICAL MATERIAL & WOOD GRAIN LOCK]:
-* 100% UNIFORM MONOLITHIC FINISH: All wooden components ({profile['parts_str']}) MUST be crafted from the EXACT SAME SINGLE BATCH OF WOOD from IMAGE 2 ('{w_name}': {w_color}, {w_texture}).
+            mat_rules.append(f"""CRITICAL MATERIAL & WOOD GRAIN LOCK:
+* 100% UNIFORM MONOLITHIC FINISH: All wooden components ({profile['parts_str']}) MUST sample and match the EXACT wood finish from IMAGE 2 ('{w_name}': {w_color}, {w_texture}).
 * ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to introduce contrasting shades, dark walnut patches, or two-tone mismatches. All surfaces share identical continuous grain flow, color saturation, and satin matte sheen.
 * CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
             ais_image_header = f"""• Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
 • Image 2 (Wood Swatch - Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture})."""
 
-            wood_ais_lock = f"Apply 100% monolithic wood from Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
+            wood_ais_lock = f"Sample and transfer the exact timber stain tone, warmth, and anatomical grain flow directly from the pixels of Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Preserve natural timber saturation and warmth; do not bleach or wash out. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
-            dalle_image_header = f"""- Target Furniture: 3D model and proportions from '{furniture_name}' (Image 1).
-- Wood / Color Sample: Exact wood species, continuous grain flow, and stain tone from wood reference (Image 2: '{w_name}': {w_color}, {w_texture})."""
-
-            dalle_wood_directive = f"""[CRITICAL MONOLITHIC WOOD LOCK]:
-* 100% UNIFORM MONOLITHIC WOOD: All wooden components ({profile['parts_str']}) must share the identical wood finish and grain from the wood swatch (Image 2: '{w_name}').
-* ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes or dark walnut patches."""
-
-            dalle_title_suffix = f". Apply exact wood species, grain flow, and stain tone from the wood sample reference: ('{w_name}': {w_color}, {w_texture})"
+            dalle_wood_summary = f"Image 2: '{w_name}', {w_color}, {w_texture}"
+            dalle_title_suffix = f", with monolithic wood finish transferred from wood sample reference ('{w_name}': {w_color}, {w_texture})"
 
         else:
             # CASILLA 1 SOLA: El mueble ya contiene la madera correcta
-            mat_rules.append(f"""[CRITICAL MATERIAL & WOOD GRAIN LOCK - CASILLA 1 MASTER]:
+            mat_rules.append(f"""CRITICAL MATERIAL & WOOD GRAIN LOCK - CASILLA 1 MASTER:
 * 100% MONOLITHIC REPLICATION FROM IMAGE 1: Replicate 100% exact wood species, continuous grain flow, warmth, and satin stain tone directly from Image 1 ('{furn_item}': {wood_from_furniture}) across all wooden components ({profile['parts_str']}).
 * ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes, dark walnut patches, or mismatched tones. All surfaces share identical continuous grain flow and satin sheen.
 * CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
             ais_image_header = f"""• Image 1 (Target Furniture & Master Wood): 3D model, joinery, and authentic wood finish/grain of '{furn_item}' ({wood_from_furniture})."""
 
-            wood_ais_lock = f"Replicate 100% exact wood species, continuous grain flow, warmth, and satin stain tone directly from Image 1 ({wood_from_furniture}) across all wooden components ({profile['wood_parts_ais']}). Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
+            wood_ais_lock = f"Sample and clone the exact timber stain tone, amber warmth, and continuous grain pores directly from the pixels of Image 1 ({wood_from_furniture}) across all wooden components ({profile['wood_parts_ais']}). Preserve the rich oil-rubbed satin warmth; do not bleach, wash out, or lighten the timber with studio lighting. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
-            dalle_image_header = f"""- Target Furniture & Master Wood: 3D model, proportions, and authentic wood finish/grain from '{furniture_name}' (Image 1: {wood_from_furniture})."""
-
-            dalle_wood_directive = f"""[CRITICAL MONOLITHIC WOOD LOCK - CASILLA 1 MASTER]:
-* 100% UNIFORM MONOLITHIC WOOD: All wooden components ({profile['parts_str']}) must share the identical wood finish, tone, and grain flow cloned directly from Image 1 ({furniture_name}).
-* ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes or dark walnut patches."""
-
-            dalle_title_suffix = f", preserving authentic wood species, continuous grain flow, and stain tone from the original furniture photo (Image 1: {wood_from_furniture})"
+            dalle_wood_summary = f"Image 1: '{furn_item}', {wood_from_furniture}"
+            dalle_title_suffix = f", preserving authentic wood species, continuous grain flow, and warm stain tone directly from original photo (Image 1: {wood_from_furniture})"
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
@@ -618,7 +607,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             id_blocks.append(
                 f"- IMAGE 3 (FABRIC SWATCH REFERENCE): Reference for upholstery textile weave and color ('{f_name}': {f_color}, {f_texture}, {f_light})."
             )
-            mat_rules.append(f"""[UPHOLSTERY FABRIC LOCK]:
+            mat_rules.append(f"""UPHOLSTERY FABRIC LOCK:
 * Apply exact upholstery weave and color from FABRIC SWATCH ('{f_name}'). Micro-texture realism, 0% color shift.""")
 
         if ref_file_str:
@@ -636,6 +625,9 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 
         materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
         image_id_final_block = "[INPUT IMAGE REFERENCES]:\n" + "\n".join(id_blocks)
+
+        mirror_optics_dalle = f"The central glass pane is an authentic high-clarity 4mm silvered reflective mirror with real optical physics, subtle diffuse studio highlight gradient, and a visible perimeter bevel where it joins the inner timber frame rebate." if is_mirror else ""
+        dalle_dimensions = profile["dimensions_rule"].replace("• ", "") if profile["dimensions_rule"] else ""
 
         v11_a = profile["v11_angles"]
         vistas_specs = [
@@ -693,9 +685,6 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 
         individual_results = []
         for v in vistas_specs:
-            extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible front facade" if "cenital" in v["id"] else ""
-            neg_combined = f"two-tone finish, mismatched grain, altered proportions, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{profile['neg_add']}{extra_neg}"
-
             # Prompt individual conciso y ultra-específico para Google AI Studio (Nano Banana 2.1 / Pro)
             prompt_ai_studio = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | COMMERCIAL PHOTOGRAPHY]
 {ais_image_header}
@@ -704,23 +693,22 @@ DIRECTIVES:
 1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock}
 2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
 {ais_extra_block}3. VIEW: {v['label']} - {v['angle_desc']}
-4. STUDIO: {white_bg}, studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
+4. STUDIO & LIGHTING: {white_bg.capitalize()}. Professional commercial lighting at 5400K with soft fill, razor-sharp 8K commercial photo."""
 
-Negative Prompt: {neg_combined}."""
+            # Prompt individual en prosa fotográfica fluida para ChatGPT / OpenAI
+            prompt_dalle = f"""A master commercial catalog photograph of the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
+Camera Perspective: {v['dalle_angle']}
+CRITICAL: Only 1 single furniture object perfectly centered in the frame. Standalone product photograph, no collage, no split view.
 
-            # Prompt individual token-optimizado para ChatGPT / DALL-E 3
-            prompt_dalle = f"""[COMMAND: COMMERCIAL PRODUCT PHOTOGRAPHY | 35MM RAW MEDIUM FORMAT]
-[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
-Photograph ONE single standalone commercial catalog photo of {furn_item} ('{furniture_name}'){dalle_title_suffix}.
-Camera Angle: {v['dalle_angle']}
-CRITICAL: Only 1 single furniture object centered in the image. No multiple angles, no contact sheet, no collage.
-Topological Geometry: {geom_struct}.
-Materials & Monolithic Lock:
-{materials_final_block}
+Material & Wood Fidelity:
+Crafted from authentic solid wood with continuous grain flow. Sample and replicate the exact timber stain tone, warm amber undertones, fine open pores, and satin finish from {dalle_wood_summary}. All wooden components ({profile['parts_str']}) share identical monolithic timber color and saturation without any two-tone mismatch, desaturation, or bleaching. {mirror_optics_dalle}
+
+Topological Geometry & Proportions:
+Strictly preserve the frozen physical prototype proportions, joinery, and natural orientation ({geom_struct}). {dalle_dimensions}
 {user_directives_block if user_notes_clean else ""}
-Environment: {white_bg}
-Camera: {hardware_str}
-Negative Prompt: {neg_combined}."""
+
+Lighting & Commercial Studio Environment:
+Set against a {white_bg}. Illuminated by balanced commercial catalog studio strobe lighting (5400K) with soft diffuse fill, preserving natural self-ambient occlusion in joinery seams and frame crevices to convey tangible weight and tactile physical realism. Captured on 100MP medium format RAW camera, 80mm lens, f/11 aperture for edge-to-edge crystalline sharpness."""
 
             individual_results.append({
                 "id": v["id"],
@@ -738,7 +726,7 @@ Negative Prompt: {neg_combined}."""
 DIRECTIVES:
 1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock}
 2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-{ais_extra_block}3. STUDIO: {white_bg}, studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
+{ais_extra_block}3. STUDIO & LIGHTING: {white_bg.capitalize()}. Professional commercial catalog lighting at 5400K with soft fill, razor-sharp 8K commercial photo.
 
 EXECUTION (TURN-BY-TURN):
 Generate ONE single standalone photo per turn.
@@ -748,22 +736,12 @@ Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar
   2. Vista 2: Lateral Perfil Estricto 90° ({v11_a['vista_2_lateral']}).
   3. Vista 3: Elevación Frontal Directa 0° ({v11_a['vista_3_frente']}).
   4. Vista 4: 3/4 Picada Alta 65° ({v11_a['vista_4_picada']}).
-  5. Vista 5: Cenital Superior Plano 90° ({v11_a['vista_5_cenital']}).
+  5. Vista 5: Cenital Superior Plano 90° ({v11_a['vista_5_cenital']})."""
 
-Negative Prompt: two-tone finish, mismatched grain, altered proportions, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{profile['neg_add']}."""
+        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / OPENAI
+        prompt_maestro_dal = f"""Commercial catalog series: Generate ALL 5 SEPARATE STANDALONE catalog photographs in sequence for the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
 
-        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3
-        prompt_maestro_dal = f"""[COMMAND: MULTI-IMAGE SEQUENTIAL GENERATION FOR COMMERCIAL CATALOG]
-[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography]
-[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
-Generate ALL 5 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){dalle_title_suffix}.
-
-[IMAGE REFERENCES & GROUND TRUTH]:
-{dalle_image_header}
-
-{dalle_wood_directive}
-
-CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage or split canvas.
+Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage, grid, or split canvas.
 
 1. FIRST IMAGE (View 1): 3/4 Isometric Perspective Facing Right (45° angle: {v11_a['vista_1_3_4_derecha']}).
 2. SECOND IMAGE (View 2): Strict Lateral Side Profile (90° orthogonal: {v11_a['vista_2_lateral']}).
@@ -771,12 +749,15 @@ CRITICAL EXECUTION: Execute the image tool separately for EACH view below so the
 4. FOURTH IMAGE (View 4): High-Angle Semi-Top Perspective (60°-70°: {v11_a['vista_4_picada']}).
 5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View ({v11_a['vista_5_cenital']}).
 
-Topological Geometry: {geom_struct}.
-{materials_final_block}
+Material & Wood Fidelity:
+Sample and replicate the exact timber stain tone, warm amber undertones, fine open pores, and satin finish directly from the reference ({dalle_wood_summary}). All wooden components ({profile['parts_str']}) share identical monolithic timber color and warmth without two-tone contrast, dark patches, or color bleaching. {mirror_optics_dalle}
+
+Topological Geometry & Proportions:
+Strictly duplicate the frozen physical prototype silhouette, joinery, and natural orientation ({geom_struct}). {dalle_dimensions}
 {user_directives_block if user_notes_clean else ""}
-Environment: {white_bg}
-Camera: {hardware_str}
-Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon{profile['neg_add']}."""
+
+Lighting & Environment:
+Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambient occlusion in frame crevices to convey authentic 3D physical volume. 100MP medium format RAW photography with edge-to-edge sharpness."""
 
         return {
             "google_ai_studio": prompt_maestro_ais,
@@ -809,7 +790,7 @@ Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
-            existing_mats = "monolithic natural light honey oak (#D5A869) with continuous horizontal grain flow"
+            existing_mats = "monolithic natural light honey oak with continuous horizontal grain flow and warm amber undertones"
 
         # Detección Universal de Perfil de Mueble, Medidas y Óptica
         profile = self._detect_furniture_profile(furn_item, notas_usuario, geom_struct)
@@ -843,7 +824,7 @@ Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid
         # Descripción de la madera detectada en el mueble original (Casilla 1)
         wood_from_furniture = ma.get("wood_and_finish_analysis", "") or ma.get("wood_details", "") or existing_mats
         if not wood_from_furniture or "original" in wood_from_furniture.lower():
-            wood_from_furniture = "monolithic natural light honey oak (#D5A869) with continuous horizontal grain flow and smooth satin sheen"
+            wood_from_furniture = "natural light honey oak with warm amber undertones, fine continuous horizontal wood grain pores, and oil-rubbed satin sheen"
 
         if has_wood_sample:
             w_name = wa.get("name", "Roble Claro Natural / White Oak Swatch") if wa else "Roble Claro Natural / White Oak Swatch"
@@ -853,7 +834,7 @@ Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid
 
             if "fallback" in w_name.lower() or "detected" in str(w_color).lower() or not w_color:
                 w_name = "Roble Claro Natural / White Oak Swatch"
-                w_color = "warm light honey natural timber tone (#D5A869) with subtle amber undertones"
+                w_color = "warm light honey natural timber tone with subtle amber undertones"
                 w_texture = "fine continuous horizontal wood grain pores, smooth satin finish"
                 w_light = "matte satin sheen"
 
@@ -861,43 +842,32 @@ Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid
             id_blocks.append(
                 f"- IMAGE 2 (WOOD / FINISH SWATCH) [100% GROUND TRUTH]{wood_label}: Primary source of truth for wood species, continuous grain flow, stain tone, warmth, and surface sheen ('{w_name}': {w_color}, {w_texture}, {w_light})."
             )
-            mat_rules.append(f"""[CRITICAL MATERIAL & WOOD GRAIN LOCK]:
-* 100% UNIFORM MONOLITHIC FINISH: All wooden components ({profile['parts_str']}) MUST be crafted from the EXACT SAME SINGLE BATCH OF WOOD from IMAGE 2 ('{w_name}': {w_color}, {w_texture}).
+            mat_rules.append(f"""CRITICAL MATERIAL & WOOD GRAIN LOCK:
+* 100% UNIFORM MONOLITHIC FINISH: All wooden components ({profile['parts_str']}) MUST sample and match the EXACT wood finish from IMAGE 2 ('{w_name}': {w_color}, {w_texture}).
 * ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to introduce contrasting shades, dark walnut patches, or two-tone mismatches. All surfaces share identical continuous grain flow, color saturation, and satin matte sheen.
 * CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
             ais_image_header = f"""• Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
 • Image 2 (Wood Swatch - Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture})."""
 
-            wood_ais_lock_21 = f"Apply 100% monolithic wood from Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
+            wood_ais_lock_21 = f"Sample and transfer the exact timber stain tone, warmth, and anatomical grain flow directly from the pixels of Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Preserve natural timber saturation and warmth; do not bleach or wash out. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
-            dalle_image_header = f"""- Target Furniture: 3D model and proportions from '{furniture_name}' (Image 1).
-- Wood / Color Sample: Exact wood species, continuous grain flow, and stain tone from wood reference (Image 2: '{w_name}': {w_color}, {w_texture})."""
-
-            dalle_wood_directive = f"""[CRITICAL MONOLITHIC WOOD LOCK]:
-* 100% UNIFORM MONOLITHIC WOOD: All wooden components ({profile['parts_str']}) must share the identical wood finish and grain from the wood swatch (Image 2: '{w_name}').
-* ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes or dark walnut patches."""
-
-            dalle_title_suffix = f". Apply exact wood species, grain flow, and stain tone from the wood sample reference: ('{w_name}': {w_color}, {w_texture})"
+            dalle_wood_summary = f"Image 2: '{w_name}', {w_color}, {w_texture}"
+            dalle_title_suffix = f", with monolithic wood finish transferred from wood sample reference ('{w_name}': {w_color}, {w_texture})"
 
         else:
             # CASILLA 1 SOLA: El mueble ya contiene la madera correcta
-            mat_rules.append(f"""[CRITICAL MATERIAL & WOOD GRAIN LOCK - CASILLA 1 MASTER]:
+            mat_rules.append(f"""CRITICAL MATERIAL & WOOD GRAIN LOCK - CASILLA 1 MASTER:
 * 100% MONOLITHIC REPLICATION FROM IMAGE 1: Replicate 100% exact wood species, continuous grain flow, warmth, and satin stain tone directly from Image 1 ('{furn_item}': {wood_from_furniture}) across all wooden components ({profile['parts_str']}).
 * ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes, dark walnut patches, or mismatched tones. All surfaces share identical continuous grain flow and satin sheen.
 * CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
             ais_image_header = f"""• Image 1 (Target Furniture & Master Wood): 3D model, joinery, and authentic wood finish/grain of '{furn_item}' ({wood_from_furniture})."""
 
-            wood_ais_lock_21 = f"Replicate 100% exact wood species, continuous grain flow, warmth, and satin stain tone directly from Image 1 ({wood_from_furniture}) across all wooden components ({profile['wood_parts_ais']}). Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
+            wood_ais_lock_21 = f"Sample and clone the exact timber stain tone, amber warmth, and continuous grain pores directly from the pixels of Image 1 ({wood_from_furniture}) across all wooden components ({profile['wood_parts_ais']}). Preserve the rich oil-rubbed satin warmth; do not bleach, wash out, or lighten the timber with studio lighting. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
-            dalle_image_header = f"""- Target Furniture & Master Wood: 3D model, proportions, and authentic wood finish/grain from '{furniture_name}' (Image 1: {wood_from_furniture})."""
-
-            dalle_wood_directive = f"""[CRITICAL MONOLITHIC WOOD LOCK - CASILLA 1 MASTER]:
-* 100% UNIFORM MONOLITHIC WOOD: All wooden components ({profile['parts_str']}) must share the identical wood finish, tone, and grain flow cloned directly from Image 1 ({furniture_name}).
-* ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes or dark walnut patches."""
-
-            dalle_title_suffix = f", preserving authentic wood species, continuous grain flow, and stain tone from the original furniture photo (Image 1: {wood_from_furniture})"
+            dalle_wood_summary = f"Image 1: '{furn_item}', {wood_from_furniture}"
+            dalle_title_suffix = f", preserving authentic wood species, continuous grain flow, and warm stain tone directly from original photo (Image 1: {wood_from_furniture})"
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
@@ -907,7 +877,7 @@ Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid
             id_blocks.append(
                 f"- IMAGE 3 (FABRIC SWATCH REFERENCE): Reference for upholstery textile weave and color ('{f_name}': {f_color}, {f_texture}, {f_light})."
             )
-            mat_rules.append(f"""[UPHOLSTERY FABRIC LOCK]:
+            mat_rules.append(f"""UPHOLSTERY FABRIC LOCK:
 * Apply exact upholstery weave and color from FABRIC SWATCH ('{f_name}'). Micro-texture realism, 0% color shift.""")
 
         if ref_file_str:
@@ -925,6 +895,9 @@ Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid
 
         materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
         image_id_final_block = "[INPUT IMAGE REFERENCES]:\n" + "\n".join(id_blocks)
+
+        mirror_optics_dalle = f"The central glass pane is an authentic high-clarity 4mm silvered reflective mirror with real optical physics, subtle diffuse studio highlight gradient, and a visible perimeter bevel where it joins the inner timber frame rebate." if is_mirror else ""
+        dalle_dimensions = profile["dimensions_rule"].replace("• ", "") if profile["dimensions_rule"] else ""
 
         v21_a = profile["v21_angles"]
         vistas_2_1_specs = [
@@ -982,9 +955,6 @@ Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid
 
         individual_results = []
         for v in vistas_2_1_specs:
-            extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible front facade" if "cenital" in v["id"] else ""
-            neg_combined = f"two-tone finish, mismatched grain, altered proportions, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{profile['neg_add']}{extra_neg}"
-
             # Prompt individual conciso y ultra-específico para Google AI Studio (Nano Banana 2.1 / Pro)
             prompt_ais = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | COMMERCIAL PHOTOGRAPHY]
 {ais_image_header}
@@ -993,23 +963,22 @@ DIRECTIVES:
 1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock_21}
 2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
 {ais_extra_block}3. VIEW: {v['label']} - {v['angle_desc']}
-4. STUDIO: {white_bg}, studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
+4. STUDIO & LIGHTING: {white_bg.capitalize()}. Professional commercial lighting at 5400K with soft fill, razor-sharp 8K commercial photo."""
 
-Negative Prompt: {neg_combined}."""
+            # Prompt individual en prosa fotográfica fluida para ChatGPT / OpenAI
+            prompt_dal = f"""A master commercial catalog photograph of the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
+Camera Perspective: {v['dalle_angle']}
+CRITICAL: Only 1 single furniture object perfectly centered in the frame. Standalone product photograph, no collage, no split view.
 
-            # Prompt individual token-optimizado para ChatGPT / DALL-E 3
-            prompt_dal = f"""[COMMAND: COMMERCIAL PRODUCT PHOTOGRAPHY | 35MM RAW MEDIUM FORMAT]
-[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
-Generate ONE single standalone commercial catalog photo of a {furn_item} ('{furniture_name}'){dalle_title_suffix}.
-Camera Angle: {v['dalle_angle']}
-CRITICAL: Only 1 single furniture object centered in the image. No multiple angles, no contact sheet, no collage.
-Topological Geometry: {geom_struct}.
-Materials & Monolithic Lock:
-{materials_final_block}
+Material & Wood Fidelity:
+Crafted from authentic solid wood with continuous grain flow. Sample and replicate the exact timber stain tone, warm amber undertones, fine open pores, and satin finish from {dalle_wood_summary}. All wooden components ({profile['parts_str']}) share identical monolithic timber color and saturation without any two-tone mismatch, desaturation, or bleaching. {mirror_optics_dalle}
+
+Topological Geometry & Proportions:
+Strictly preserve the frozen physical prototype proportions, joinery, and natural orientation ({geom_struct}). {dalle_dimensions}
 {user_directives_block if user_notes_clean else ""}
-Environment: {white_bg}
-Camera: {hardware_str}
-Negative Prompt: {neg_combined}."""
+
+Lighting & Commercial Studio Environment:
+Set against a {white_bg}. Illuminated by balanced commercial catalog studio strobe lighting (5400K) with soft diffuse fill, preserving natural self-ambient occlusion in joinery seams and frame crevices to convey tangible weight and tactile physical realism. Captured on 100MP medium format RAW camera, 80mm lens, f/11 aperture for edge-to-edge crystalline sharpness."""
 
             individual_results.append({
                 "id": v["id"],
@@ -1027,7 +996,7 @@ Negative Prompt: {neg_combined}."""
 DIRECTIVES:
 1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock_21}
 2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-{ais_extra_block}3. STUDIO: {white_bg}, studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
+{ais_extra_block}3. STUDIO & LIGHTING: {white_bg.capitalize()}. Professional commercial catalog lighting at 5400K with soft fill, razor-sharp 8K commercial photo.
 
 EXECUTION (TURN-BY-TURN):
 Generate ONE single standalone photo per turn.
@@ -1037,40 +1006,33 @@ Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar
   2. Vista 2: 3/4 Perspectiva 45° ({v21_a['vista_2_1_perspectiva']}).
   3. Vista 3: Lateral Perfil Estricto 90° ({v21_a['vista_2_1_lateral']}).
   4. Vista 4: Picada Alta / Semi-Cenital 65° ({v21_a['vista_2_1_picada_frontal']}).
-  5. Vista 5: Superior Cenital Plano 90° ({v21_a['vista_2_1_superior_cenital']}).
+  5. Vista 5: Superior Cenital Plano 90° ({v21_a['vista_2_1_superior_cenital']})."""
 
-Negative Prompt: two-tone finish, mismatched grain, altered proportions, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{profile['neg_add']}."""
+        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / OPENAI
+        prompt_maestro_dal = f"""Commercial catalog series: Generate ALL 5 SEPARATE STANDALONE catalog photographs in sequence for the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
 
-        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3
-        prompt_maestro_dal = f"""[COMMAND: MULTI-IMAGE SEQUENTIAL GENERATION FOR COMMERCIAL CATALOG]
-[ENGINE: Disable CGI, Disable Octane Render, Force 35mm Medium Format RAW Photography]
-[SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
-Generate ALL 5 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){dalle_title_suffix}.
+Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage, grid, or split canvas.
 
-[IMAGE REFERENCES & GROUND TRUTH]:
-{dalle_image_header}
-
-{dalle_wood_directive}
-
-CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage or split canvas.
-
-1. FIRST IMAGE (View 1): Front View (0° flat frontal elevation: {v21_a['vista_2_1_frontal']}).
+1. FIRST IMAGE (View 1): Direct Front View (0° flat frontal elevation: {v21_a['vista_2_1_frontal']}).
 2. SECOND IMAGE (View 2): 3/4 Perspective View (45° angle: {v21_a['vista_2_1_perspectiva']}).
-3. THIRD IMAGE (View 3): Side Profile (90° orthogonal: {v21_a['vista_2_1_lateral']}).
+3. THIRD IMAGE (View 3): Strict Lateral Side Profile (90° orthogonal: {v21_a['vista_2_1_lateral']}).
 4. FOURTH IMAGE (View 4): Elevated High-Angle Semi-Top View (60°-70°: {v21_a['vista_2_1_picada_frontal']}).
 5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View ({v21_a['vista_2_1_superior_cenital']}).
 
-Topological Geometry: {geom_struct}.
-{materials_final_block}
+Material & Wood Fidelity:
+Sample and replicate the exact timber stain tone, warm amber undertones, fine open pores, and satin finish directly from the reference ({dalle_wood_summary}). All wooden components ({profile['parts_str']}) share identical monolithic timber color and warmth without two-tone contrast, dark patches, or color bleaching. {mirror_optics_dalle}
+
+Topological Geometry & Proportions:
+Strictly duplicate the frozen physical prototype silhouette, joinery, and natural orientation ({geom_struct}). {dalle_dimensions}
 {user_directives_block if user_notes_clean else ""}
-Environment: {white_bg}
-Camera: {hardware_str}
-Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon{profile['neg_add']}."""
+
+Lighting & Environment:
+Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambient occlusion in frame crevices to convey authentic 3D physical volume. 100MP medium format RAW photography with edge-to-edge sharpness."""
 
         return {
             "google_ai_studio": prompt_maestro_ais,
             "chatgpt_dalle3": prompt_maestro_dal,
-            "midjourney_v6": f"Commercial catalog 5 separate shots of {furn_item}, {geom_struct}, white background #FFFFFF, {hardware_str} --ar 16:9 --v 6.1 --style raw",
+            "midjourney_v6": f"5 commercial luxury catalog shots of {furn_item}, {geom_struct}, white background #FFFFFF, {hardware_str} --ar 16:9 --v 6.1 --style raw",
             "individual_vistas": individual_results
         }
 
@@ -1129,7 +1091,7 @@ Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid
 
         if "fallback" in w_name.lower() or "detected" in str(w_color).lower() or not w_color:
             w_name = "Roble Claro Natural / White Oak Swatch"
-            w_color = "warm light honey natural timber tone (#D5A869) with subtle amber undertones"
+            w_color = "warm light honey natural timber tone with subtle amber undertones"
             w_texture = "fine continuous horizontal wood grain pores, smooth satin finish"
             w_light = "matte satin sheen"
 
