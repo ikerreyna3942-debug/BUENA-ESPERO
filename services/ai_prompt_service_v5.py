@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -144,13 +145,15 @@ Analyze this material sample ({material_type}) with microscopic precision:
             notes_clean = notas_usuario.strip() if notas_usuario else ""
             inferred_type = "mid-century modern wooden furniture piece"
             lower_notes = notes_clean.lower()
-            if any(w in lower_notes for w in ["buro", "buró", "noche", "mesita", "velador", "cajon", "cajón"]):
+            if any(w in lower_notes for w in ["espejo", "mirror", "luna"]):
+                inferred_type = "minimalist wooden wall mirror with reflective glass and rounded corners"
+            elif any(w in lower_notes for w in ["buro", "buró", "noche", "mesita", "velador", "cajon", "cajón"]):
                 inferred_type = "mid-century modern wooden nightstand / buró with fluted drawer"
             elif "cama" in lower_notes:
                 inferred_type = "minimalist low-profile platform bed frame"
-            elif any(w in lower_notes for w in ["sofa", "sofá", "sillon", "sillón"]):
-                inferred_type = "contemporary modular sofa"
-            elif "mesa" in lower_notes:
+            elif any(w in lower_notes for w in ["sofa", "sofá", "sillon", "sillón", "silla"]):
+                inferred_type = "contemporary upholstered wooden seating"
+            elif any(w in lower_notes for w in ["mesa", "escritorio"]):
                 inferred_type = "architectural wooden table"
 
             return FurnitureAnalysisV5(
@@ -255,13 +258,15 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             notes_clean = notas_usuario.strip() if notas_usuario else ""
             inferred_type = "mid-century modern wooden furniture piece"
             lower_notes = notes_clean.lower()
-            if any(w in lower_notes for w in ["buro", "buró", "noche", "mesita", "velador", "cajon", "cajón"]):
+            if any(w in lower_notes for w in ["espejo", "mirror", "luna"]):
+                inferred_type = "minimalist wooden wall mirror with reflective glass and rounded corners"
+            elif any(w in lower_notes for w in ["buro", "buró", "noche", "mesita", "velador", "cajon", "cajón"]):
                 inferred_type = "mid-century modern wooden nightstand / buró with fluted drawer"
             elif "cama" in lower_notes:
                 inferred_type = "minimalist low-profile platform bed frame"
-            elif any(w in lower_notes for w in ["sofa", "sofá", "sillon", "sillón"]):
-                inferred_type = "contemporary modular sofa"
-            elif "mesa" in lower_notes:
+            elif any(w in lower_notes for w in ["sofa", "sofá", "sillon", "sillón", "silla"]):
+                inferred_type = "contemporary upholstered wooden seating"
+            elif any(w in lower_notes for w in ["mesa", "escritorio"]):
                 inferred_type = "architectural wooden table"
 
             return FurnitureAnalysisV5(
@@ -277,8 +282,216 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
     def _build_photo_hardware_str(self) -> str:
         return "Optics: 100MP medium format RAW, 80mm lens, f/11 aperture, ISO 64, studio strobe lighting with soft diffuse octabox fill. Razor-sharp micro-textures."
 
-    def _build_white_isolation_str(self) -> str:
-        return "Solid pure seamless white background (#FFFFFF), 0% floor shadows, 0% drop shadows, zero reflections. No typography, no watermarks."
+    def _build_white_isolation_str(self, is_mirror: bool = False) -> str:
+        if is_mirror:
+            return "Solid pure seamless white background (#FFFFFF), 0% floor shadows, 0% drop shadows, authentic reflective mirror glass physics. No typography, no watermarks."
+        return "Solid pure seamless white background (#FFFFFF), 0% floor shadows, 0% drop shadows, zero background reflections. No typography, no watermarks."
+
+    def _detect_furniture_profile(self, furn_item: str, user_notes: str, geom_struct: str) -> Dict[str, Any]:
+        text_to_search = f"{furn_item} {user_notes} {geom_struct}".lower()
+        
+        # 1. Detección de Categoría Universal de Mueble
+        category = "general"
+        if any(w in text_to_search for w in ["espejo", "mirror", "luna", "cristal de espejo"]):
+            category = "mirror"
+        elif any(w in text_to_search for w in ["silla", "chair", "sillon", "sillón", "sofa", "sofá", "banca", "bench", "banqueta", "stool", "butaca", "poltrona"]):
+            category = "seating"
+        elif any(w in text_to_search for w in ["mesa", "table", "escritorio", "desk", "comedor", "consola", "arrimo", "bureau"]):
+            category = "table"
+        elif any(w in text_to_search for w in ["cama", "bed", "cabecera", "headboard", "somier"]):
+            category = "bed"
+        elif any(w in text_to_search for w in ["buro", "buró", "noche", "velador", "cajon", "cajón", "comoda", "cómoda", "credenza", "aparador", "librero", "armario", "closet", "buffet", "gabinete", "nightstand", "dresser"]):
+            category = "storage"
+
+        # 2. Extracción de Dimensiones y Proporciones
+        height_cm = None
+        width_cm = None
+        depth_cm = None
+        
+        h_match = re.search(r'(?:alto|altura|height|h)[\s:]*([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?', text_to_search)
+        w_match = re.search(r'(?:ancho|ancho|width|w)[\s:]*([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?', text_to_search)
+        d_match = re.search(r'(?:fondo|profundidad|prof|depth|d)[\s:]*([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?', text_to_search)
+        
+        if h_match:
+            try:
+                val = float(h_match.group(1))
+                height_cm = val * 100 if val < 10 and 'm' in h_match.group(0) else val
+            except Exception:
+                pass
+        if w_match:
+            try:
+                val = float(w_match.group(1))
+                width_cm = val * 100 if val < 10 and 'm' in w_match.group(0) else val
+            except Exception:
+                pass
+        if d_match:
+            try:
+                val = float(d_match.group(1))
+                depth_cm = val * 100 if val < 10 and 'm' in d_match.group(0) else val
+            except Exception:
+                pass
+
+        orientation_rule = ""
+        if width_cm and height_cm and height_cm > 0:
+            ratio = width_cm / height_cm
+            if ratio >= 1.25:
+                orientation_rule = f"• ORIENTATION & PROPORTIONAL LOCK: Wide horizontal landscape format ({int(width_cm)} cm width x {int(height_cm)} cm height, aspect ratio ~{ratio:.1f}:1). Render the furniture piece oriented horizontally across its wide {int(width_cm)} cm span while preserving the exact silhouette curvature, wood profile thickness, and edge joinery from Image 1."
+            elif ratio <= 0.8:
+                orientation_rule = f"• ORIENTATION & PROPORTIONAL LOCK: Tall vertical portrait format ({int(height_cm)} cm height x {int(width_cm)} cm width). Render the furniture piece oriented vertically while strictly preserving the identical proportions and geometry from Image 1."
+
+        # 3. Configuración por Categoría
+        if category == "mirror":
+            parts_str = "perimeter wood frame, curved corner radii, outer border profile, inner bevel, and structural edge joinery"
+            wood_parts_ais = "perimeter wood frame, curved corners, outer borders, inner bevel, and edge joinery"
+            mirror_optics = (
+                "• REFLECTIVE MIRROR OPTICS & GLASS FIDELITY: The central pane must render as an authentic high-clarity reflective silvered glass mirror with a subtle, soft diffuse studio lightbox reflection gradient across the surface. It must visibly function as a real mirror with depth and specular highlights, not flat painted white or grey board, while keeping the background around the exterior wooden frame pure solid white (#FFFFFF)."
+            )
+            geometry_clone = (
+                "[GEOMETRY & FRAME CLONE LOCK]: Strictly duplicate the EXACT silhouette, curved corner radii, slim frame depth, and outer border profile from Image 1. Do NOT add internal steps, deep shadowbox shelves, display ledges, or inner compartment boxes."
+            )
+            neg_add = ", two-tone frame, contrasting border, interior shelf, shadowbox, stepped moldings, internal boxes, drawers, circular handles, legs, distorted glass, opaque glass, milky glass, flat grey glass"
+            
+            v11_angles = {
+                "vista_1_3_4_derecha": "3/4 perspective at a 45-degree angle, slightly elevated 15° to display the slim outer wood frame thickness, corner radius curvature, and soft reflective mirror sheen.",
+                "vista_2_lateral": "Strict 90-degree orthogonal lateral side profile view. Full slim vertical silhouette from front edge to back wall-mount edge with zero perspective vanishing points.",
+                "vista_3_frente": "Direct 0-degree front elevation view. Camera level with mirror center pointing directly dead-on, showcasing the sleek perimeter wood frame, rounded corners, and authentic reflective mirror glass.",
+                "vista_4_picada": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front. Displays upper curved frame joinery, slim top rail, and gentle reflective highlight across the mirror surface.",
+                "vista_5_cenital": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down directly perpendicular to the top edge of the wooden frame (camera pitch: -90 degrees). Shows ONLY the slim top wooden rail and rich continuous horizontal wood grain patterns. Zero front facade visible, no glass surface visible."
+            }
+            v21_angles = {
+                "vista_2_1_frontal": "Direct flat 0-degree front elevation view. Camera level with mirror center pointing directly dead-on, showcasing the sleek perimeter wood frame, rounded corners, and authentic reflective mirror glass.",
+                "vista_2_1_perspectiva": "Commercial 3/4 perspective shot at a 45-degree angle. Displays front frame, slim side profile depth, corner radius curvature, and subtle reflective glass sheen.",
+                "vista_2_1_lateral": "Strict orthogonal 90-degree lateral side profile view. Full slim vertical silhouette from front edge to back wall-mount edge with zero perspective vanishing points.",
+                "vista_2_1_picada_frontal": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front. Displays upper curved frame joinery, slim top rail, and gentle reflective highlight across the mirror surface.",
+                "vista_2_1_superior_cenital": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down directly perpendicular to the top edge of the wooden frame (camera pitch: -90 degrees). Shows ONLY the slim top wooden rail and rich continuous horizontal wood grain patterns. Zero front facade visible, no glass surface visible."
+            }
+
+        elif category == "seating":
+            parts_str = "wooden legs, armrests, backrest frame, seat chassis, and structural joinery"
+            wood_parts_ais = "wooden legs, armrests, backrest structure, seat base, and joints"
+            mirror_optics = ""
+            geometry_clone = (
+                f"[GEOMETRY & PROPORTIONS LOCK]: Strictly duplicate the exact chair/sofa silhouette, seat angle, cushion thickness, and leg angles ({geom_struct}) from Image 1. Proportions strictly locked 1:1."
+            )
+            neg_add = ", drawers, circular handles, contrasting legs, two-tone wood"
+            v11_angles = {
+                "vista_1_3_4_derecha": "3/4 isometric perspective at a 45-degree angle facing right. Elevated 15° to display depth, armrest curvature, seat planes, and leg construction clearly.",
+                "vista_2_lateral": "Strict 90-degree orthogonal lateral side profile view showing backrest incline, seat rake angle, and front-to-back leg stance.",
+                "vista_3_frente": "Direct 0-degree front elevation view at eye-level center, showcasing front legs, seat cushion width, and backrest symmetry.",
+                "vista_4_picada": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front, emphasizing seat cushion surface, backrest contour, and upper joinery.",
+                "vista_5_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking directly down onto the seat cushion plane and top backrest edge."
+            }
+            v21_angles = {
+                "vista_2_1_frontal": "Direct 0-degree front elevation view at eye-level center, showcasing front legs, seat cushion width, and backrest symmetry.",
+                "vista_2_1_perspectiva": "Commercial 3/4 perspective shot at a 45-degree angle, displaying front, side profile depth, armrest curvature, and leg splay in three-dimensional clarity.",
+                "vista_2_1_lateral": "Strict orthogonal 90-degree lateral side profile view showing backrest incline, seat rake angle, and front-to-back leg stance.",
+                "vista_2_1_picada_frontal": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front, emphasizing seat cushion surface, backrest contour, and upper joinery.",
+                "vista_2_1_superior_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking directly down onto the seat cushion plane and top backrest edge."
+            }
+
+        elif category == "table":
+            parts_str = "tabletop surface, perimeter beveled edges, apron under-structure, and legs or pedestal base"
+            wood_parts_ais = "tabletop surface, edge bevels, apron, and legs / base"
+            mirror_optics = ""
+            geometry_clone = (
+                f"[GEOMETRY & PROPORTIONS LOCK]: Strictly duplicate the exact tabletop silhouette, edge profile, and base joinery ({geom_struct}) from Image 1. Proportions strictly locked 1:1."
+            )
+            neg_add = ", contrasting tabletop, mismatched legs, two-tone wood"
+            v11_angles = {
+                "vista_1_3_4_derecha": "3/4 isometric perspective at a 45-degree angle facing right. Elevated 15° to display tabletop surface, edge bevel, and leg stance.",
+                "vista_2_lateral": "Strict orthogonal 90-degree lateral side profile view showing tabletop end profile, apron clearance, and side leg silhouette.",
+                "vista_3_frente": "Direct 0-degree front elevation view at eye-level center, showcasing tabletop edge thickness, apron joinery, and leg stance.",
+                "vista_4_picada": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the tabletop, emphasizing full continuous wood grain surface and perimeter joinery.",
+                "vista_5_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the tabletop surface, showcasing the continuous horizontal wood grain patterns and perimeter bevel."
+            }
+            v21_angles = {
+                "vista_2_1_frontal": "Direct 0-degree front elevation view at eye-level center, showcasing tabletop edge thickness, apron joinery, and leg stance.",
+                "vista_2_1_perspectiva": "Commercial 3/4 perspective shot at a 45-degree angle, displaying expansive tabletop surface, side depth, and three-dimensional leg architecture.",
+                "vista_2_1_lateral": "Strict orthogonal 90-degree lateral side profile view showing tabletop end profile, apron clearance, and side leg silhouette.",
+                "vista_2_1_picada_frontal": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the tabletop, emphasizing full continuous wood grain surface and perimeter joinery.",
+                "vista_2_1_superior_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the tabletop surface, showcasing the continuous horizontal wood grain patterns and perimeter bevel."
+            }
+
+        elif category == "bed":
+            parts_str = "headboard panel, perimeter bed frame rails, platform base, legs, and joinery"
+            wood_parts_ais = "headboard panel, side rails, footboard, platform frame, and legs"
+            mirror_optics = ""
+            geometry_clone = (
+                f"[GEOMETRY & PROPORTIONS LOCK]: Strictly duplicate the exact bed frame silhouette, headboard height, and platform joinery ({geom_struct}) from Image 1. Proportions strictly locked 1:1."
+            )
+            neg_add = ", two-tone rails, mismatched headboard, contrasting wood"
+            v11_angles = {
+                "vista_1_3_4_derecha": "3/4 isometric perspective at a 45-degree angle facing right. Elevated 15° to display headboard depth, full side rail length, mattress platform, and legs.",
+                "vista_2_lateral": "Strict orthogonal 90-degree lateral side profile view showing full side rail silhouette, headboard vertical angle, and low-profile platform clearance.",
+                "vista_3_frente": "Direct 0-degree front elevation view from the foot of the bed at eye-level, showing platform base, headboard elevation, and side rails.",
+                "vista_4_picada": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the bed, displaying headboard face, platform deck, and perimeter joinery.",
+                "vista_5_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the platform bed frame."
+            }
+            v21_angles = {
+                "vista_2_1_frontal": "Direct 0-degree front elevation view from the foot of the bed at eye-level, showing platform base, headboard elevation, and side rails.",
+                "vista_2_1_perspectiva": "Commercial 3/4 perspective shot at a 45-degree angle, displaying headboard depth, full side rail length, mattress platform, and legs in three-dimensional clarity.",
+                "vista_2_1_lateral": "Strict orthogonal 90-degree lateral side profile view showing full side rail silhouette, headboard vertical angle, and low-profile platform clearance.",
+                "vista_2_1_picada_frontal": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the bed, displaying headboard face, platform deck, and perimeter joinery.",
+                "vista_2_1_superior_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the platform bed frame."
+            }
+
+        elif category == "storage":
+            parts_str = "front drawer and door faces, circular handles or pull grooves, outer chassis, side panels, top surface, and legs"
+            wood_parts_ais = "front drawer faces, circular handles, outer chassis, side panels, top surface, and legs"
+            mirror_optics = ""
+            geometry_clone = (
+                f"[GEOMETRY & PROPORTIONS LOCK]: Strictly duplicate the exact chassis dimensions, drawer stack heights, circular handle diameter, and leg construction ({geom_struct}) from Image 1. Proportions strictly locked 1:1. Zero distortion, zero leg stretching."
+            )
+            neg_add = ", two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles"
+            v11_angles = {
+                "vista_1_3_4_derecha": "3/4 isometric perspective at a 45-degree angle, with the furniture facing toward the right. Elevated 15 degrees to display depth, front-right profile, drawer faces, and leg construction clearly.",
+                "vista_2_lateral": "Strict 90-degree orthogonal lateral side profile view. Full silhouette from front edge to back edge with zero perspective vanishing points.",
+                "vista_3_frente": "Direct 0-degree front elevation view. Camera level with furniture center pointing directly dead-on, showcasing facade, drawer proportions, circular handles, and bottom symmetry.",
+                "vista_4_picada": "High-angle elevated 3/4 semi-top perspective shot at 60-70 degrees looking down at the front. Emphasizes top surface textures, drawer depth, and upper contours.",
+                "vista_5_cenital": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top wooden surface (camera pitch: -90 degrees). The rectangular top wooden surface fills the frame, showcasing the rich continuous horizontal wood grain patterns and edge joins. Zero camera tilt: do NOT angle the camera, do NOT show the front facade, and do NOT show the drawer faces. Pure flat overhead view."
+            }
+            v21_angles = {
+                "vista_2_1_frontal": "Direct flat 0-degree front elevation view. Camera level with furniture center at eye-line pointing directly dead-on at front facade, displaying drawer faces, circular handles, clean joinery, and lower structure.",
+                "vista_2_1_perspectiva": "Commercial 3/4 perspective shot at a 45-degree angle. Displays front facade, side depth, cantilevered architecture, and top surface edge in three-dimensional clarity.",
+                "vista_2_1_lateral": "Strict orthogonal 90-degree lateral side profile view. Full silhouette from front edge to back edge with zero perspective vanishing points, showcasing vertical silhouette, panel thickness, and structure.",
+                "vista_2_1_picada_frontal": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front. The top wooden surface AND front facade with drawers and circular handles are clearly visible with three-dimensional depth and rich wood grain.",
+                "vista_2_1_superior_cenital": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top wooden surface (camera pitch: -90 degrees). The rectangular top wooden surface fills the frame, showcasing the rich continuous horizontal wood grain patterns and edge joins. Zero camera tilt: do NOT angle the camera, do NOT show the front facade, and do NOT show the drawer faces. Pure flat overhead view."
+            }
+
+        else:
+            parts_str = "all exposed wooden surfaces, outer chassis, side panels, structural frame, and joinery"
+            wood_parts_ais = "all exposed wooden surfaces, structural chassis, panels, and joinery"
+            mirror_optics = ""
+            geometry_clone = (
+                f"[GEOMETRY & PROPORTIONS LOCK]: Strictly duplicate the exact 3D geometry, silhouette, and proportional dimensions ({geom_struct}) from Image 1. Proportions strictly locked 1:1."
+            )
+            neg_add = ", two-tone finish, contrasting panels, mismatched grain, altered proportions"
+            v11_angles = {
+                "vista_1_3_4_derecha": "3/4 isometric perspective at a 45-degree angle facing right. Elevated 15° to display depth, front-right profile, and structural joinery clearly.",
+                "vista_2_lateral": "Strict 90-degree orthogonal lateral side profile view. Full silhouette from front edge to back edge with zero perspective vanishing points.",
+                "vista_3_frente": "Direct 0-degree front elevation view. Camera level with furniture center pointing directly dead-on, showcasing facade and joinery.",
+                "vista_4_picada": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front, emphasizing top surface and front depth.",
+                "vista_5_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking directly down onto the top surface, showcasing continuous wood grain patterns."
+            }
+            v21_angles = {
+                "vista_2_1_frontal": "Direct flat 0-degree front elevation view. Camera level with furniture center at eye-line pointing directly dead-on at front facade and joinery.",
+                "vista_2_1_perspectiva": "Commercial 3/4 perspective shot at a 45-degree angle, displaying front facade, side depth, and three-dimensional joinery.",
+                "vista_2_1_lateral": "Strict orthogonal 90-degree lateral side profile view showing full silhouette from front edge to back edge.",
+                "vista_2_1_picada_frontal": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front, displaying top surface and front structure in depth.",
+                "vista_2_1_superior_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the top surface, showcasing the continuous horizontal wood grain patterns."
+            }
+
+        return {
+            "category": category,
+            "parts_str": parts_str,
+            "wood_parts_ais": wood_parts_ais,
+            "mirror_optics": mirror_optics,
+            "geometry_clone": geometry_clone,
+            "orientation_rule": orientation_rule,
+            "neg_add": neg_add,
+            "v11_angles": v11_angles,
+            "v21_angles": v21_angles
+        }
 
     def generate_vistas_1_1_prompts(
         self,
@@ -307,8 +520,12 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         existing_mats = ma.get("existing_materials", "original materials")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
             existing_mats = "monolithic natural light honey oak (#D5A869) with continuous horizontal grain flow"
+
+        # Detección Universal de Perfil de Mueble, Medidas y Óptica
+        profile = self._detect_furniture_profile(furn_item, notas_usuario, geom_struct)
+        is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
-        white_bg = self._build_white_isolation_str()
+        white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
 
         user_notes_clean = notas_usuario.strip() if notas_usuario else ""
         if user_notes_clean:
@@ -349,9 +566,9 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
                 f"- IMAGE 2 (WOOD / FINISH SWATCH) [100% GROUND TRUTH]{wood_label}: Primary source of truth for wood species, continuous grain flow, stain tone, warmth, and surface sheen ('{w_name}': {w_color}, {w_texture}, {w_light})."
             )
             mat_rules.append(f"""[CRITICAL MATERIAL & WOOD GRAIN LOCK]:
-* 100% UNIFORM MONOLITHIC FINISH: The entire furniture piece—front drawer faces, circular handles, outer casing, side panels, top surface, and legs—MUST be crafted from the EXACT SAME SINGLE BATCH OF WOOD from IMAGE 2.
-* ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to render drawer faces in dark walnut, black, or contrasting wood. All surfaces share identical grain flow, color saturation, and satin matte sheen.
-* CONTINUOUS GRAIN FLOW: Natural horizontal grain continuity across drawer faces and top surface.""")
+* 100% UNIFORM MONOLITHIC FINISH: All wooden components ({profile['parts_str']}) MUST be crafted from the EXACT SAME SINGLE BATCH OF WOOD from IMAGE 2 ('{w_name}': {w_color}, {w_texture}).
+* ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to introduce contrasting shades, dark walnut patches, or two-tone mismatches. All surfaces share identical continuous grain flow, color saturation, and satin matte sheen.
+* CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
@@ -372,76 +589,77 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         if not mat_rules:
             mat_rules.append(f"[MATERIAL PRESERVATION LOCK]:\n* Lock 100% authentic original materials, finishes, and wood grain from TARGET FURNITURE: [{materials_with_notes}].")
 
-        # Candado de medidas y proporciones 3D
-        proportions_lock = f"""[3D TURNTABLE SCALE & PROPORTIONAL LOCK]:
-* Rotate the exact same frozen physical prototype ({geom_struct}). Proportions, drawer heights, and circular handle diameter are strictly locked 1:1. Zero distortion, zero leg stretching."""
+        # Candado de medidas y proporciones 3D dinámico por categoría
+        lock_parts = [profile["geometry_clone"]]
+        if profile["orientation_rule"]:
+            lock_parts.append(profile["orientation_rule"])
+        if profile["mirror_optics"]:
+            lock_parts.append(profile["mirror_optics"])
+        proportions_lock = "\n".join(lock_parts)
 
         materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
         image_id_final_block = "[INPUT IMAGE REFERENCES]:\n" + "\n".join(id_blocks)
 
+        v11_a = profile["v11_angles"]
         vistas_specs = [
             {
                 "id": "vista_1_3_4_derecha",
                 "label": "Vista 1: 3/4 Isométrica (Mirando a la Derecha)",
                 "short_name": "3/4 Isométrica Derecha",
                 "icon": "📐",
-                "angle_desc": "3/4 isometric perspective at a 45-degree angle, with the furniture facing toward the right. Elevated 15 degrees to display depth, front-right profile, seat/top contours, and leg construction clearly.",
-                "dalle_angle": "3/4 isometric angle looking towards the right side at 45 degrees, slightly elevated."
+                "angle_desc": v11_a["vista_1_3_4_derecha"],
+                "dalle_angle": f"3/4 isometric angle looking towards the right side at 45 degrees, slightly elevated. {v11_a['vista_1_3_4_derecha']}"
             },
             {
                 "id": "vista_2_lateral",
                 "label": "Vista 2: Perfil Lateral Estricto (90°)",
                 "short_name": "Lateral 90°",
                 "icon": "➡️",
-                "angle_desc": "Strict 90-degree orthogonal lateral side profile view. Full silhouette from front edge to back edge with zero perspective vanishing points.",
-                "dalle_angle": "Pure 90-degree side profile orthogonal view, perfectly flat side elevation."
+                "angle_desc": v11_a["vista_2_lateral"],
+                "dalle_angle": f"Pure 90-degree orthogonal side profile elevation. {v11_a['vista_2_lateral']}"
             },
             {
                 "id": "vista_3_frente",
                 "label": "Vista 3: Elevación Frontal Directa (0°)",
                 "short_name": "Frontal 0°",
                 "icon": "🖼️",
-                "angle_desc": "Direct 0-degree front elevation view. Camera level with furniture center pointing directly dead-on, showcasing facade, drawer/cushion proportions, and bottom symmetry.",
-                "dalle_angle": "Direct flat 0-degree frontal view, eye-level lens, centered horizon."
+                "angle_desc": v11_a["vista_3_frente"],
+                "dalle_angle": f"Direct flat 0-degree frontal view, eye-level lens, centered horizon. {v11_a['vista_3_frente']}"
             },
             {
                 "id": "vista_4_picada",
                 "label": "Vista 4: 3/4 Picada Alta / Semi-Arriba (60°-70°)",
                 "short_name": "3/4 Picada Alta",
                 "icon": "↗️",
-                "angle_desc": "High-angle elevated 3/4 semi-top perspective shot at 60-70 degrees looking down at the front. Emphasizes top surface textures, seat cushion planes, and upper contours.",
-                "dalle_angle": "Elevated 3/4 high-angle shot from above at 65 degrees looking down at the front."
+                "angle_desc": v11_a["vista_4_picada"],
+                "dalle_angle": f"Elevated 3/4 high-angle shot from above at 65 degrees looking down at the front. {v11_a['vista_4_picada']}"
             },
             {
                 "id": "vista_5_cenital",
                 "label": "Vista 5: Cenital Superior Plano Directo (90° desde arriba)",
                 "short_name": "Cenital 90°",
                 "icon": "🔝",
-                "angle_desc": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top wooden surface (camera pitch: -90 degrees). The rectangular top wooden surface fills the frame, showcasing the rich continuous horizontal wood grain patterns and edge joins. Zero camera tilt: do NOT angle the camera, do NOT show the front facade, and do NOT show the drawer faces. Pure flat overhead view.",
-                "dalle_angle": "Pure 90-degree orthogonal flat overhead top-down view looking straight down at the top surface, flat rectangular wood grain plan view, zero front facade visible, no drawers visible."
+                "angle_desc": v11_a["vista_5_cenital"],
+                "dalle_angle": f"Pure 90-degree orthogonal flat overhead top-down view looking straight down. {v11_a['vista_5_cenital']}"
             }
         ]
 
-        if has_wood_sample:
-            gen_directive_ais = f"""[MANDATORY GENERATION DIRECTIVE - MATERIAL TRANSFER]:
-Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master commercial catalog photograph with strict material replacement:
-* 100% UNIFORM MONOLITHIC WOOD LOCK: Transform all wooden components (front drawer faces, circular handles, outer casing, side panels, top surface, legs) using the exact timber species, continuous grain flow, and stain tone from IMAGE 2 ('{w_name}': {w_color}, {w_texture}). Zero two-tone mismatch, zero walnut contrast.
-* PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
-* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
-        else:
-            gen_directive_ais = f"""[MANDATORY GENERATION DIRECTIVE]:
-Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master commercial catalog photograph:
-* MATERIALS & TEXTURES: Preserve 100% exact original wood grain, timber species, stain tone, and textures ({materials_with_notes}).
-* PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
-* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
-
         user_notes_ais = f"\n* DIRECTIVA OBLIGATORIA: {user_notes_clean}" if user_notes_clean else ""
-        wood_ais_lock = f"Apply 100% monolithic wood from Image 2 ('{w_name}': {w_color}, {w_texture}) across all parts (drawers, circular handles, chassis, top, sides, legs). Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut drawers." if has_wood_sample else f"Preserve 100% original authentic wood materials and finishes ({materials_with_notes})."
+        wood_ais_lock = f"Apply 100% monolithic wood from Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Continuous horizontal grain flow. ZERO two-tone contrast." if has_wood_sample else f"Preserve 100% original authentic wood materials and finishes ({materials_with_notes})."
+
+        # Líneas adicionales de perfil para Google AI Studio
+        ais_extra_directives = []
+        if profile["orientation_rule"]:
+            ais_extra_directives.append(profile["orientation_rule"])
+        if profile["mirror_optics"]:
+            ais_extra_directives.append(profile["mirror_optics"])
+        ais_extra_block = "\n".join(ais_extra_directives) + "\n" if ais_extra_directives else ""
 
         individual_results = []
         for v in vistas_specs:
-            extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
-            
+            extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible front facade" if "cenital" in v["id"] else ""
+            neg_combined = f"two-tone finish, mismatched grain, altered proportions, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{profile['neg_add']}{extra_neg}"
+
             # Prompt individual conciso y ultra-específico para Google AI Studio (Nano Banana 2.1 / Pro)
             prompt_ai_studio = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | COMMERCIAL PHOTOGRAPHY]
 • Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
@@ -450,10 +668,10 @@ Generate and photograph the {furn_item} ('{furniture_name}') isolated as a maste
 DIRECTIVES:
 1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock}
 2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-3. VIEW: {v['label']} - {v['angle_desc']}
-4. STUDIO: Pure seamless solid white background (#FFFFFF), studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
+{ais_extra_block}3. VIEW: {v['label']} - {v['angle_desc']}
+4. STUDIO: {white_bg}, studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
 
-Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{extra_neg}."""
+Negative Prompt: {neg_combined}."""
 
             # Prompt individual token-optimizado para ChatGPT / DALL-E 3
             prompt_dalle = f"""[COMMAND: COMMERCIAL PRODUCT PHOTOGRAPHY | 35MM RAW MEDIUM FORMAT]
@@ -465,9 +683,9 @@ Topological Geometry: {geom_struct}.
 Materials & Monolithic Lock:
 {materials_final_block}
 {user_directives_block if user_notes_clean else ""}
-Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Environment: {white_bg}
 Camera: {hardware_str}
-Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon{extra_neg}."""
+Negative Prompt: {neg_combined}."""
 
             individual_results.append({
                 "id": v["id"],
@@ -486,19 +704,19 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
 DIRECTIVES:
 1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock}
 2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-3. STUDIO: Pure seamless solid white background (#FFFFFF), studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
+{ais_extra_block}3. STUDIO: {white_bg}, studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
 
 EXECUTION (TURN-BY-TURN):
 Generate ONE single standalone photo per turn.
-- CURRENT TURN: Generate ONLY Vista 1 (3/4 Isométrica Derecha 45°: elevated 15° showing front-right depth, contour, and legs).
+- CURRENT TURN: Generate ONLY Vista 1 (3/4 Isométrica Derecha 45°: {v11_a['vista_1_3_4_derecha']}).
 Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (Perfil Lateral 90°)."
 - Subsequent views (triggered ONLY by typing 'foto'):
-  2. Vista 2: Lateral Perfil Estricto 90° (orthogonal side profile).
-  3. Vista 3: Elevación Frontal Directa 0° (flat eye-level front view).
-  4. Vista 4: 3/4 Picada Alta 65° (high angle showing top surface textures and front depth).
-  5. Vista 5: Cenital Superior Plano 90° (strict perpendicular overhead view, top wood surface only, zero front drawers visible).
+  2. Vista 2: Lateral Perfil Estricto 90° ({v11_a['vista_2_lateral']}).
+  3. Vista 3: Elevación Frontal Directa 0° ({v11_a['vista_3_frente']}).
+  4. Vista 4: 3/4 Picada Alta 65° ({v11_a['vista_4_picada']}).
+  5. Vista 5: Cenital Superior Plano 90° ({v11_a['vista_5_cenital']}).
 
-Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark."""
+Negative Prompt: two-tone finish, mismatched grain, altered proportions, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{profile['neg_add']}."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3
         wood_dal_maestro = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
@@ -508,26 +726,27 @@ Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces
 Generate ALL 5 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){wood_dal_maestro}.
 
 [IMAGE REFERENCES & GROUND TRUTH]:
-- Target Furniture: 3D model and facade proportions from '{furniture_name}'.
+- Target Furniture: 3D model and proportions from '{furniture_name}'.
 - Wood / Color Sample: Exact wood species, continuous grain flow, and stain tone from wood reference ('{w_name}': {w_color}, {w_texture}).
 
 [CRITICAL MONOLITHIC WOOD LOCK]:
-* 100% UNIFORM MONOLITHIC WOOD: Entire unit (front drawer faces, circular handles, chassis, side panels, top surface, legs) must share the identical wood finish and grain from the wood swatch.
-* ZERO TWO-TONE FINISH: Do NOT make drawer faces dark walnut or contrasting color.
+* 100% UNIFORM MONOLITHIC WOOD: All wooden components ({profile['parts_str']}) must share the identical wood finish and grain from the wood swatch.
+* ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes or dark walnut patches.
 
 CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage or split canvas.
 
-1. FIRST IMAGE (View 1): 3/4 Isometric Perspective Facing Right (45° angle, elevated 15° to reveal front-right silhouette and depth).
-2. SECOND IMAGE (View 2): Strict Lateral Side Profile (90° orthogonal side view from edge to edge).
-3. THIRD IMAGE (View 3): Direct Front View (0° flat frontal elevation at eye-level center).
-4. FOURTH IMAGE (View 4): High-Angle Semi-Top Perspective (60°-70° elevated front view showing seat cushion and top surface).
-5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View (camera perpendicular looking straight down at the top wooden surface, plan view, zero front facade visible, no drawers visible).
+1. FIRST IMAGE (View 1): 3/4 Isometric Perspective Facing Right (45° angle: {v11_a['vista_1_3_4_derecha']}).
+2. SECOND IMAGE (View 2): Strict Lateral Side Profile (90° orthogonal: {v11_a['vista_2_lateral']}).
+3. THIRD IMAGE (View 3): Direct Front View (0° flat frontal elevation: {v11_a['vista_3_frente']}).
+4. FOURTH IMAGE (View 4): High-Angle Semi-Top Perspective (60°-70°: {v11_a['vista_4_picada']}).
+5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View ({v11_a['vista_5_cenital']}).
 
 Topological Geometry: {geom_struct}.
+{materials_final_block}
 {user_directives_block if user_notes_clean else ""}
-Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Environment: {white_bg}
 Camera: {hardware_str}
-Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon."""
+Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon{profile['neg_add']}."""
 
         return {
             "google_ai_studio": prompt_maestro_ais,
@@ -561,8 +780,12 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
         existing_mats = ma.get("existing_materials", "original materials")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
             existing_mats = "monolithic natural light honey oak (#D5A869) with continuous horizontal grain flow"
+
+        # Detección Universal de Perfil de Mueble, Medidas y Óptica
+        profile = self._detect_furniture_profile(furn_item, notas_usuario, geom_struct)
+        is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
-        white_bg = self._build_white_isolation_str()
+        white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
 
         user_notes_clean = notas_usuario.strip() if notas_usuario else ""
         if user_notes_clean:
@@ -603,9 +826,9 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
                 f"- IMAGE 2 (WOOD / FINISH SWATCH) [100% GROUND TRUTH]{wood_label}: Primary source of truth for wood species, continuous grain flow, stain tone, warmth, and surface sheen ('{w_name}': {w_color}, {w_texture}, {w_light})."
             )
             mat_rules.append(f"""[CRITICAL MATERIAL & WOOD GRAIN LOCK]:
-* 100% UNIFORM MONOLITHIC FINISH: The entire furniture piece—front drawer faces, circular handles, outer casing, side panels, top surface, and legs—MUST be crafted from the EXACT SAME SINGLE BATCH OF WOOD from IMAGE 2.
-* ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to render drawer faces in dark walnut, black, or contrasting wood. All surfaces share identical grain flow, color saturation, and satin matte sheen.
-* CONTINUOUS GRAIN FLOW: Natural horizontal grain continuity across drawer faces and top surface.""")
+* 100% UNIFORM MONOLITHIC FINISH: All wooden components ({profile['parts_str']}) MUST be crafted from the EXACT SAME SINGLE BATCH OF WOOD from IMAGE 2 ('{w_name}': {w_color}, {w_texture}).
+* ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to introduce contrasting shades, dark walnut patches, or two-tone mismatches. All surfaces share identical continuous grain flow, color saturation, and satin matte sheen.
+* CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
@@ -626,76 +849,77 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
         if not mat_rules:
             mat_rules.append(f"[MATERIAL PRESERVATION LOCK]:\n* Lock 100% authentic original materials, finishes, and wood grain from TARGET FURNITURE: [{materials_with_notes}].")
 
-        # Candado de medidas y proporciones 3D
-        proportions_lock = f"""[3D TURNTABLE SCALE & PROPORTIONAL LOCK]:
-* Rotate the exact same frozen physical prototype ({geom_struct}). Proportions, drawer heights, and circular handle diameter are strictly locked 1:1. Zero distortion, zero leg stretching."""
+        # Candado de medidas y proporciones 3D dinámico por categoría
+        lock_parts = [profile["geometry_clone"]]
+        if profile["orientation_rule"]:
+            lock_parts.append(profile["orientation_rule"])
+        if profile["mirror_optics"]:
+            lock_parts.append(profile["mirror_optics"])
+        proportions_lock = "\n".join(lock_parts)
 
         materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
         image_id_final_block = "[INPUT IMAGE REFERENCES]:\n" + "\n".join(id_blocks)
 
+        v21_a = profile["v21_angles"]
         vistas_2_1_specs = [
             {
                 "id": "vista_2_1_frontal",
                 "label": "Vista 1: Frontal Directa (0°)",
                 "short_name": "Frontal 0°",
                 "icon": "🖼️",
-                "angle_desc": "Direct flat 0-degree front elevation view. Camera level with furniture center at eye-line pointing directly dead-on at front facade, displaying drawer faces, circular handles, clean joinery, and lower structure.",
-                "dalle_angle": "Direct flat 0-degree frontal view, eye-level lens, centered horizon showing facade and joinery."
+                "angle_desc": v21_a["vista_2_1_frontal"],
+                "dalle_angle": f"Direct flat 0-degree frontal view, eye-level lens, centered horizon. {v21_a['vista_2_1_frontal']}"
             },
             {
                 "id": "vista_2_1_perspectiva",
                 "label": "Vista 2: 3/4 Perspectiva (45°)",
                 "short_name": "3/4 Perspectiva 45°",
                 "icon": "📐",
-                "angle_desc": "Commercial 3/4 perspective shot at a 45-degree angle. Displays front facade, side depth, cantilevered architecture, and top surface edge in three-dimensional clarity.",
-                "dalle_angle": "3/4 commercial perspective angle looking at front and side depth at 45 degrees."
+                "angle_desc": v21_a["vista_2_1_perspectiva"],
+                "dalle_angle": f"3/4 commercial perspective angle looking at front and side depth at 45 degrees. {v21_a['vista_2_1_perspectiva']}"
             },
             {
                 "id": "vista_2_1_lateral",
                 "label": "Vista 3: Lateral Perfil Estricto (90°)",
                 "short_name": "Lateral 90°",
                 "icon": "➡️",
-                "angle_desc": "Strict orthogonal 90-degree lateral side profile view. Full silhouette from front edge to back edge with zero perspective vanishing points, showcasing vertical silhouette, panel thickness, and structure.",
-                "dalle_angle": "Strict 90-degree side profile orthogonal view, perfectly flat lateral elevation."
+                "angle_desc": v21_a["vista_2_1_lateral"],
+                "dalle_angle": f"Strict orthogonal 90-degree lateral side profile elevation. {v21_a['vista_2_1_lateral']}"
             },
             {
                 "id": "vista_2_1_picada_frontal",
                 "label": "Vista 4: Picada Alta / Semi-Cenital Frontal (60°-70°)",
                 "short_name": "Picada Alta 65°",
                 "icon": "↗️",
-                "angle_desc": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the front. The top wooden surface AND front facade with drawers and circular handles are clearly visible with three-dimensional depth and rich wood grain.",
-                "dalle_angle": "Elevated high-angle shot from above at 65 degrees looking down at the front, showing both the top wooden surface and front drawers in depth."
+                "angle_desc": v21_a["vista_2_1_picada_frontal"],
+                "dalle_angle": f"Elevated high-angle shot from above at 65 degrees looking down at the front. {v21_a['vista_2_1_picada_frontal']}"
             },
             {
                 "id": "vista_2_1_superior_cenital",
                 "label": "Vista 5: Superior Cenital Plano Directo (90° Desde Arriba)",
                 "short_name": "Superior Cenital 90°",
                 "icon": "🔝",
-                "angle_desc": "Strict 90-degree orthogonal overhead flat top-down view (plan view). The camera points vertically straight down from the ceiling directly perpendicular to the flat top wooden surface (camera pitch: -90 degrees). The rectangular top wooden surface fills the frame, showcasing the rich continuous horizontal wood grain patterns and edge joins. Zero camera tilt: do NOT angle the camera, do NOT show the front facade, and do NOT show the drawer faces. Pure flat overhead view.",
-                "dalle_angle": "Pure 90-degree orthogonal flat overhead top-down view looking straight down at the top surface, flat rectangular wood grain plan view, zero front facade visible, no drawers visible."
+                "angle_desc": v21_a["vista_2_1_superior_cenital"],
+                "dalle_angle": f"Pure 90-degree orthogonal flat overhead top-down view looking straight down. {v21_a['vista_2_1_superior_cenital']}"
             }
         ]
 
-        if has_wood_sample:
-            gen_directive_ais = f"""[MANDATORY GENERATION DIRECTIVE - MATERIAL TRANSFER]:
-Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master commercial catalog photograph with strict material replacement:
-* 100% UNIFORM MONOLITHIC WOOD LOCK: Transform all wooden components (front drawer faces, circular handles, outer casing, side panels, top surface, legs) using the exact timber species, continuous grain flow, and stain tone from IMAGE 2 ('{w_name}': {w_color}, {w_texture}). Zero two-tone mismatch, zero walnut contrast.
-* PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
-* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
-        else:
-            gen_directive_ais = f"""[MANDATORY GENERATION DIRECTIVE]:
-Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master commercial catalog photograph:
-* MATERIALS & TEXTURES: Preserve 100% exact original wood grain, timber species, stain tone, and textures ({materials_with_notes}).
-* PROPORTIONS & JOINERY: Preserve 100% exact 3D geometry and dimensions ({geom_struct}) from IMAGE 1.
-* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary."""
-
         user_notes_ais = f"\n* DIRECTIVA OBLIGATORIA: {user_notes_clean}" if user_notes_clean else ""
-        wood_ais_lock_21 = f"Apply 100% monolithic wood from Image 2 ('{w_name}': {w_color}, {w_texture}) across all parts (drawers, circular handles, chassis, top, sides, legs). Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut drawers." if has_wood_sample else f"Preserve 100% original authentic wood materials and finishes ({materials_with_notes})."
+        wood_ais_lock_21 = f"Apply 100% monolithic wood from Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Continuous horizontal grain flow. ZERO two-tone contrast." if has_wood_sample else f"Preserve 100% original authentic wood materials and finishes ({materials_with_notes})."
+
+        # Líneas adicionales de perfil para Google AI Studio
+        ais_extra_directives = []
+        if profile["orientation_rule"]:
+            ais_extra_directives.append(profile["orientation_rule"])
+        if profile["mirror_optics"]:
+            ais_extra_directives.append(profile["mirror_optics"])
+        ais_extra_block = "\n".join(ais_extra_directives) + "\n" if ais_extra_directives else ""
 
         individual_results = []
         for v in vistas_2_1_specs:
-            extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible drawer faces, visible front facade" if "cenital" in v["id"] else ""
-            
+            extra_neg = ", tilted camera, downward perspective, 3/4 high angle, visible front facade" if "cenital" in v["id"] else ""
+            neg_combined = f"two-tone finish, mismatched grain, altered proportions, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{profile['neg_add']}{extra_neg}"
+
             # Prompt individual conciso y ultra-específico para Google AI Studio (Nano Banana 2.1 / Pro)
             prompt_ais = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | COMMERCIAL PHOTOGRAPHY]
 • Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
@@ -704,10 +928,10 @@ Generate and photograph the {furn_item} ('{furniture_name}') isolated as a maste
 DIRECTIVES:
 1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock_21}
 2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-3. VIEW: {v['label']} - {v['angle_desc']}
-4. STUDIO: Pure seamless solid white background (#FFFFFF), studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
+{ais_extra_block}3. VIEW: {v['label']} - {v['angle_desc']}
+4. STUDIO: {white_bg}, studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
 
-Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{extra_neg}."""
+Negative Prompt: {neg_combined}."""
 
             # Prompt individual token-optimizado para ChatGPT / DALL-E 3
             prompt_dal = f"""[COMMAND: COMMERCIAL PRODUCT PHOTOGRAPHY | 35MM RAW MEDIUM FORMAT]
@@ -719,9 +943,9 @@ Topological Geometry: {geom_struct}.
 Materials & Monolithic Lock:
 {materials_final_block}
 {user_directives_block if user_notes_clean else ""}
-Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Environment: {white_bg}
 Camera: {hardware_str}
-Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon{extra_neg}."""
+Negative Prompt: {neg_combined}."""
 
             individual_results.append({
                 "id": v["id"],
@@ -740,19 +964,19 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
 DIRECTIVES:
 1. 100% MONOLITHIC WOOD LOCK: {wood_ais_lock_21}
 2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-3. STUDIO: Pure seamless solid white background (#FFFFFF), studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
+{ais_extra_block}3. STUDIO: {white_bg}, studio softbox lighting, 0% ground shadows, razor-sharp 8K commercial photo.
 
 EXECUTION (TURN-BY-TURN):
 Generate ONE single standalone photo per turn.
-- CURRENT TURN: Generate ONLY Vista 1 (Frontal Directa 0°: flat eye-level elevation showing facade, drawers, circular handles, and joinery).
+- CURRENT TURN: Generate ONLY Vista 1 (Frontal Directa 0°: {v21_a['vista_2_1_frontal']}).
 Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva 45°)."
 - Subsequent views (triggered ONLY by typing 'foto'):
-  2. Vista 2: 3/4 Perspectiva 45° (front facade, side depth).
-  3. Vista 3: Lateral Perfil Estricto 90° (flat side elevation).
-  4. Vista 4: Picada Alta / Semi-Cenital 65° (high angle showing top surface AND front drawers/handles in depth).
-  5. Vista 5: Superior Cenital Plano 90° (strict perpendicular overhead view, top wood surface only, zero front drawers visible).
+  2. Vista 2: 3/4 Perspectiva 45° ({v21_a['vista_2_1_perspectiva']}).
+  3. Vista 3: Lateral Perfil Estricto 90° ({v21_a['vista_2_1_lateral']}).
+  4. Vista 4: Picada Alta / Semi-Cenital 65° ({v21_a['vista_2_1_picada_frontal']}).
+  5. Vista 5: Superior Cenital Plano 90° ({v21_a['vista_2_1_superior_cenital']}).
 
-Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces, wrong wood color, mismatched grain, altered proportions, resized handles, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark."""
+Negative Prompt: two-tone finish, mismatched grain, altered proportions, collage, grid, multi-image strip, CGI, render, shadows, backdrop, watermark{profile['neg_add']}."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / DALL-E 3
         wood_dal_maestro_21 = f" Apply exact wood species, grain flow, and stain tone from the wood sample reference: ({materials_with_notes})." if has_wood_sample else f", materials: ({materials_with_notes})"
@@ -762,26 +986,27 @@ Negative Prompt: two-tone drawers, contrasting dark drawers, walnut drawer faces
 Generate ALL 5 SEPARATE STANDALONE commercial catalog photos in sequence for a {furn_item} ('{furniture_name}'){wood_dal_maestro_21}.
 
 [IMAGE REFERENCES & GROUND TRUTH]:
-- Target Furniture: 3D model and facade proportions from '{furniture_name}'.
+- Target Furniture: 3D model and proportions from '{furniture_name}'.
 - Wood / Color Sample: Exact wood species, continuous grain flow, and stain tone from wood reference ('{w_name}': {w_color}, {w_texture}).
 
 [CRITICAL MONOLITHIC WOOD LOCK]:
-* 100% UNIFORM MONOLITHIC WOOD: Entire unit (front drawer faces, circular handles, chassis, side panels, top surface, legs) must share the identical wood finish and grain from the wood swatch.
-* ZERO TWO-TONE FINISH: Do NOT make drawer faces dark walnut or contrasting color.
+* 100% UNIFORM MONOLITHIC WOOD: All wooden components ({profile['parts_str']}) must share the identical wood finish and grain from the wood swatch.
+* ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes or dark walnut patches.
 
 CRITICAL EXECUTION: Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage or split canvas.
 
-1. FIRST IMAGE (View 1): Front View (0° flat eye-level elevation showing facade and joinery).
-2. SECOND IMAGE (View 2): 3/4 Perspective View (45° angle showing front and side depth).
-3. THIRD IMAGE (View 3): Side Profile (90° orthogonal flat lateral elevation).
-4. FOURTH IMAGE (View 4): Elevated High-Angle Semi-Top View (65° shot showing top surface AND front drawers in depth).
-5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View (camera perpendicular looking straight down at the top wooden surface, plan view, zero front facade visible, no drawers visible).
+1. FIRST IMAGE (View 1): Front View (0° flat frontal elevation: {v21_a['vista_2_1_frontal']}).
+2. SECOND IMAGE (View 2): 3/4 Perspective View (45° angle: {v21_a['vista_2_1_perspectiva']}).
+3. THIRD IMAGE (View 3): Side Profile (90° orthogonal: {v21_a['vista_2_1_lateral']}).
+4. FOURTH IMAGE (View 4): Elevated High-Angle Semi-Top View (60°-70°: {v21_a['vista_2_1_picada_frontal']}).
+5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View ({v21_a['vista_2_1_superior_cenital']}).
 
 Topological Geometry: {geom_struct}.
+{materials_final_block}
 {user_directives_block if user_notes_clean else ""}
-Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Environment: {white_bg}
 Camera: {hardware_str}
-Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon."""
+Negative Prompt: two-tone finish, misaligned grain, collage, contact sheet, grid, split view, 3d render, cartoon{profile['neg_add']}."""
 
         return {
             "google_ai_studio": prompt_maestro_ais,
@@ -819,8 +1044,10 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials")
         camera_angle = ma.get("camera_angle", "0-degree frontal and 3/4 perspective")
+        profile = self._detect_furniture_profile(furn_item, notas_usuario, geom_struct)
+        is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
-        white_bg = self._build_white_isolation_str()
+        white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
 
         user_notes_clean = notas_usuario.strip() if notas_usuario else ""
         if user_notes_clean:
@@ -866,8 +1093,8 @@ Negative Prompt: two-tone drawers, contrasting drawer wood, dark walnut drawers,
 [MANDATORY GENERATION COMMAND]:
 Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with strict material replacement:
 * UPHOLSTERY FABRIC LOCK: Accurately replace all upholstery fabric with the exact textile weave pattern and chromatic hue from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}, {f_light}). Scale down weave pattern for macroscopic realism without solid flat washes.
-* 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components (legs, frame, casing, drawers) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}). Natural continuous anatomical grain flow. Zero two-tone mismatch.
-* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), cushions, armrests, seams, and proportions from TARGET FURNITURE. Zero distortion, zero leg stretching.
+* 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components ({profile['parts_str']}) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}). Natural continuous grain flow. Zero two-tone mismatch.
+* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, and proportions from TARGET FURNITURE. Zero distortion.
 * EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
 
 {user_directives_block if user_notes_clean else ""}
@@ -876,19 +1103,19 @@ Generate and photograph the {furn_item} ('{furniture_name}') isolated as a maste
 - {white_bg}
 - {hardware_str}
 
-Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone drawers, wrong wood color, dark drawers, mismatched grain, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark."""
+Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone finish, wrong wood color, mismatched grain, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark{profile['neg_add']}."""
 
             prompt_dalle = f"""[COMMAND: ULTRA-HD RAW COMMERCIAL PHOTOGRAPHY]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
 Generate a photorealistic, ultra-high-definition e-commerce catalog image of a {furn_item} ('{furniture_name}').
 Crucial Structure: {geom_struct}.
-Material Design: The upholstery must be a highly detailed {f_name} ({f_texture}) in {f_color}. The wooden components (legs, frame, casing) must be 100% monolithic {w_name} ({w_texture}) with {w_color} and {w_light}. Zero two-tone drawers.
+Material Design: The upholstery must be a highly detailed {f_name} ({f_texture}) in {f_color}. The wooden components ({profile['parts_str']}) must be 100% monolithic {w_name} ({w_texture}) with {w_color} and {w_light}. Zero two-tone finish.
 {user_directives_block if user_notes_clean else ""}
-Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Environment: {white_bg}
 Camera: {hardware_str}
-Negative Prompt: CGI, 3D render, shadows, room, two-tone drawers, dark walnut drawers, text, watermark."""
+Negative Prompt: CGI, 3D render, shadows, room, two-tone finish, text, watermark{profile['neg_add']}."""
 
-            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_color} {f_texture}, {w_name} wooden legs and frame ({w_color}, {w_texture}). {hardware_str} --no shadows, room, CGI, text --ar 1:1 --v 6.1 --style raw"
+            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_color} {f_texture}, {w_name} wooden components ({profile['parts_str']}) ({w_color}, {w_texture}). {hardware_str} --no shadows, room, CGI, text --ar 1:1 --v 6.1 --style raw"
 
         elif mode == "fabric_only":
             fab_label = f" [File: {fab_file_str}]" if fab_file_str else ""
@@ -902,8 +1129,8 @@ Negative Prompt: CGI, 3D render, shadows, room, two-tone drawers, dark walnut dr
 [MANDATORY GENERATION COMMAND]:
 Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with strict material replacement:
 * UPHOLSTERY FABRIC LOCK: Accurately replace all upholstery fabric with the exact textile weave pattern and chromatic hue from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}, {f_light}). Scale down weave pattern for macroscopic realism without solid flat washes.
-* WOOD PRESERVATION LOCK: Strictly preserve the original wooden components (legs, frame) from TARGET FURNITURE without altering their original grain or finish.
-* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), cushions, armrests, seams, and proportions from TARGET FURNITURE. Zero distortion, zero leg stretching.
+* WOOD PRESERVATION LOCK: Strictly preserve the original wooden components from TARGET FURNITURE without altering their original grain or finish.
+* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, and proportions from TARGET FURNITURE. Zero distortion.
 * EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
 
 {user_directives_block if user_notes_clean else ""}
@@ -912,7 +1139,7 @@ Generate and photograph the {furn_item} ('{furniture_name}') isolated as a maste
 - {white_bg}
 - {hardware_str}
 
-Negative Prompt: CGI, 3D render, cartoon, plastic, altered wood, changed legs, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark."""
+Negative Prompt: CGI, 3D render, cartoon, plastic, altered wood, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark{profile['neg_add']}."""
 
             prompt_dalle = f"""[COMMAND: ULTRA-HD RAW COMMERCIAL PHOTOGRAPHY]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
@@ -920,11 +1147,11 @@ Generate a photorealistic catalog image of a {furn_item} ('{furniture_name}').
 Structure: {geom_struct}. Original wooden parts strictly preserved.
 Material: Upholstery meticulously crafted from {f_name} ({f_texture}, {f_color}).
 {user_directives_block if user_notes_clean else ""}
-Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Environment: {white_bg}
 Camera: {hardware_str}
-Negative Prompt: CGI, 3D render, shadows, room, altered wood, text, watermark."""
+Negative Prompt: CGI, 3D render, shadows, room, altered wood, text, watermark{profile['neg_add']}."""
 
-            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_name} ({f_color}, {f_texture}), original wooden legs preserved. {hardware_str} --no shadows, room, CGI, text --ar 1:1 --v 6.1 --style raw"
+            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_name} ({f_color}, {f_texture}), original wooden parts preserved. {hardware_str} --no shadows, room, CGI, text --ar 1:1 --v 6.1 --style raw"
 
         else: # wood_only
             wood_label = f" [File: {wood_file_str}]" if wood_file_str else ""
@@ -937,9 +1164,9 @@ Negative Prompt: CGI, 3D render, shadows, room, altered wood, text, watermark.""
 
 [MANDATORY GENERATION COMMAND]:
 Generate and photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with strict material replacement:
-* 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components (front drawer faces, circular handles, outer casing, side panels, top surface, legs) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}). Natural continuous horizontal grain flow. Zero two-tone mismatch, zero dark walnut contrast.
+* 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components ({profile['parts_str']}) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_light}). Natural continuous horizontal grain flow. Zero two-tone mismatch.
 * FABRIC PRESERVATION LOCK: Strictly preserve the original upholstery fabric, color, and weave from TARGET FURNITURE without altering cushions or textile parts.
-* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, seams, and proportions from TARGET FURNITURE. Zero distortion, zero leg stretching.
+* TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, and proportions from TARGET FURNITURE. Zero distortion.
 * EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
 
 {user_directives_block if user_notes_clean else ""}
@@ -948,19 +1175,19 @@ Generate and photograph the {furn_item} ('{furniture_name}') isolated as a maste
 - {white_bg}
 - {hardware_str}
 
-Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone drawers, wrong wood color, dark drawers, walnut drawer faces, mismatched grain, altered fabric, changed upholstery, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark."""
+Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone finish, wrong wood color, mismatched grain, altered fabric, changed upholstery, altered geometry, perspective distortion, floor shadows, drop shadows, grey backdrop, room, text, labels, watermark{profile['neg_add']}."""
 
             prompt_dalle = f"""[COMMAND: ULTRA-HD RAW COMMERCIAL PHOTOGRAPHY]
 [SHADOWS: 0% ground shadows, 0% drop shadows, pure #FFFFFF digital cutout]
 Generate a photorealistic catalog image of a {furn_item} ('{furniture_name}').
 Structure: {geom_struct}. Original upholstery strictly preserved.
-Wood Material: Wooden components (legs, frame, casing, drawer faces, top) crafted 100% monolithically from {w_name} ({w_texture}, {w_color}, {w_light}). Zero two-tone finish, zero dark walnut drawer contrast.
+Wood Material: Wooden components ({profile['parts_str']}) crafted 100% monolithically from {w_name} ({w_texture}, {w_color}, {w_light}). Zero two-tone finish.
 {user_directives_block if user_notes_clean else ""}
-Environment: Pure seamless solid white background (#FFFFFF) with zero shadows.
+Environment: {white_bg}
 Camera: {hardware_str}
-Negative Prompt: CGI, 3D render, shadows, room, two-tone drawers, dark walnut drawers, altered fabric, text, watermark."""
+Negative Prompt: CGI, 3D render, shadows, room, two-tone finish, altered fabric, text, watermark{profile['neg_add']}."""
 
-            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, original upholstery preserved, wooden components replaced with {w_name} ({w_color}, {w_texture}, {w_light}). {hardware_str} --no shadows, room, CGI, altered fabric, two-tone drawers, text --ar 1:1 --v 6.1 --style raw"
+            prompt_mj = f"Commercial product photography, {furn_item} isolated on pure solid white background #FFFFFF, {geom_struct}, original upholstery preserved, wooden components replaced with {w_name} ({w_color}, {w_texture}, {w_light}). {hardware_str} --no shadows, room, CGI, altered fabric, two-tone finish, text --ar 1:1 --v 6.1 --style raw"
 
         return {
             "google_ai_studio": prompt_ais,

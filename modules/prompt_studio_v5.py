@@ -16,9 +16,10 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
             background-color: #2563EB;
             color: #FFFFFF;
             border: none;
-            padding: 8px 14px;
-            font-size: 13px;
-            font-weight: 600;
+            padding: 8px 8px;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
             border-radius: 6px;
             cursor: pointer;
             transition: all 0.2s;
@@ -155,7 +156,7 @@ def render_prompt_studio_v5():
     <span class="studio-badge-v5">Nano Banana & ChatGPT Pro</span>
 </div>
         """, unsafe_allow_html=True)
-        col_comp_btn, col_comp_info = st.columns([1, 2])
+        col_comp_btn, col_comp_info = st.columns([1.3, 2.7])
         with col_comp_btn:
             sys_prompt = (
                 "Eres un Director de Arte de talla mundial, experto en Fotografía de Producto Comercial, "
@@ -218,15 +219,8 @@ def render_prompt_studio_v5():
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
         st.markdown('<div class="studio-card-title">🎯 1. Configuración de Vistas y Materiales</div>', unsafe_allow_html=True)
         
-        st.markdown("""
-        <div style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#E9D5FF; line-height:1.5;">
-            <b>🎯 Vistas (1.1):</b> 5 vistas canónicas (3/4 Derecha, Lateral 90°, Frente 0°, 3/4 Picada Alta, Cenital 90°).<br>
-            <b>⚡ Vistas (2.1):</b> 5 vistas de catálogo (Frontal 0°, 3/4 Perspectiva, Lateral 90°, Picada Alta 65°, Superior Cenital 90°).
-        </div>
-        """, unsafe_allow_html=True)
-
-        # CASILLA 1: Foto(s) Actual(es) del Mueble
-        st.markdown("##### 📸 Casilla 1: Foto(s) del Mueble (Modelo y Proporciones)")
+        # CASILLA 1: Foto(s) del Mueble
+        st.markdown("##### 📸 Casilla 1: Foto(s) del Mueble")
         mueble_actual_up = st.file_uploader(
             "Arrastra aquí la foto o fotos del mueble:",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
@@ -237,8 +231,8 @@ def render_prompt_studio_v5():
 
         st.markdown("---")
 
-        # CASILLA 2: Foto(s) de Muestra de Madera / Color / Acabado
-        st.markdown("##### 🪵 Casilla 2: Foto(s) de Madera, Color o Acabado (Muestra Real)")
+        # CASILLA 2: Foto(s) Madera
+        st.markdown("##### 🪵 Casilla 2: Foto(s) Madera")
         mueble_madera_up = st.file_uploader(
             "Arrastra aquí la foto de la madera o muestras de color:",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
@@ -249,8 +243,8 @@ def render_prompt_studio_v5():
 
         st.markdown("---")
 
-        # CASILLA 3: Fotos de Referencia del Mueble (Opcional)
-        st.markdown("##### 📐 Casilla 3: Fotos de Referencia (Opcional - Déjalo vacío para usar SOLO Mueble y Madera)")
+        # CASILLA 3: Fotos de Referencia
+        st.markdown("##### 📐 Casilla 3: Fotos de Referencia")
         mueble_ref_up = st.file_uploader(
             "Arrastra aquí fotos de referencia (opcional):",
             type=['png', 'jpg', 'jpeg', 'webp', 'bmp', 'heic', 'tiff'],
@@ -261,8 +255,8 @@ def render_prompt_studio_v5():
 
         st.markdown("---")
 
-        # CASILLA 4: Notas e instrucciones obligatorias
-        st.markdown("##### 📝 Casilla 4: Notas / Directivas Obligatorias para la IA")
+        # CASILLA 4: Notas
+        st.markdown("##### 📝 Casilla 4: Notas")
         notas_usuario = st.text_area(
             "Escribe tus notas obligatorias para la IA:",
             placeholder="Ej: Madera de roble claro acabado mate sedoso, respetar proporciones exactas, sin gavetas oscuras de dos tonos...",
@@ -406,28 +400,28 @@ def render_prompt_studio_v5():
         
         # Miniaturas de Casilla 1: Fotos del Mueble
         if mueble_actual_up:
-            st.markdown("<b>📸 Foto(s) del Mueble (Casilla 1):</b>", unsafe_allow_html=True)
+            st.markdown("<b>📸 Foto(s) del Mueble:</b>", unsafe_allow_html=True)
             for f in (mueble_actual_up if isinstance(mueble_actual_up, list) else [mueble_actual_up]):
                 f_name = getattr(f, "name", "Foto Mueble")
                 render_preview_image(f, caption=f"Mueble: {f_name}")
 
         # Miniaturas de Casilla 2: Muestra de Madera / Color
         if mueble_madera_up:
-            st.markdown("<b>🪵 Muestra de Madera / Color (Casilla 2):</b>", unsafe_allow_html=True)
+            st.markdown("<b>🪵 Foto(s) Madera:</b>", unsafe_allow_html=True)
             for f in (mueble_madera_up if isinstance(mueble_madera_up, list) else [mueble_madera_up]):
                 f_name = getattr(f, "name", "Muestra Madera")
                 render_preview_image(f, caption=f"Madera/Color: {f_name}")
 
         # Miniaturas de Casilla 3: Fotos de Referencia
         if mueble_ref_up:
-            st.markdown("<b>📐 Fotos de Referencia (Casilla 3):</b>", unsafe_allow_html=True)
+            st.markdown("<b>📐 Fotos de Referencia:</b>", unsafe_allow_html=True)
             for f in (mueble_ref_up if isinstance(mueble_ref_up, list) else [mueble_ref_up]):
                 f_name = getattr(f, "name", "Referencia")
                 render_preview_image(f, caption=f"Ref: {f_name}")
 
         # Notas registradas (Casilla 4)
         if notas_usuario and notas_usuario.strip():
-            st.markdown("<b>📝 Notas Registradas (Casilla 4):</b>", unsafe_allow_html=True)
+            st.markdown("<b>📝 Notas:</b>", unsafe_allow_html=True)
             st.info(notas_usuario.strip())
 
         if not mueble_actual_up and not mueble_madera_up and not mueble_ref_up and not (notas_usuario and notas_usuario.strip()):
@@ -553,65 +547,4 @@ def render_prompt_studio_v5():
                     st.markdown(f"**📐 Ángulo Detectado:** `{ma.get('camera_angle', 'N/A')}`")
                     st.markdown(f"**🧱 Materiales y Color:** `{ma.get('existing_materials', 'N/A')}`")
                     st.markdown(f"**🏗️ Topología 3D:** `{ma.get('geometric_structure', 'N/A')}`")
-        else:
-            st.info("👈 Sube la foto del mueble en la **Casilla 1**, la muestra de madera/color en la **Casilla 2**, referencias en la **Casilla 3**, notas en la **Casilla 4** y presiona **🎯 Vistas (1.1)** o **⚡ Vistas (2.1)**.")
-
         st.markdown('</div>', unsafe_allow_html=True)
-
-    # SECCIÓN: SEPARADOR AUTOMÁTICO DE VISTAS (DIVIDE TIRAS DE CATÁLOGO EN FOTOS SEPARADAS)
-    st.markdown("<br>", unsafe_allow_html=True)
-    with st.container():
-        st.markdown("""
-        <div style="background-color: #283548; border: 1px solid #475569; border-radius: 12px; padding: 18px 20px; margin-bottom: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-            <div style="font-size: 16px; font-weight: 800; color: #38BDF8; margin-bottom: 6px; display: flex; align-items: center; gap: 8px;">
-                <span>✂️ Separador Automático de Vistas (Corta tu tira de catálogo en fotos 100% separadas)</span>
-            </div>
-            <div style="font-size: 13px; color: #CBD5E1; line-height: 1.5;">
-                💡 <b>La Solución Definitiva a la Inconsistencia de Betas, Color y Tamaño:</b><br>
-                Cuando generas las vistas en <b>1 sola imagen panorámica de catálogo</b>, la IA congela el mueble y te da la <b>misma veta, el mismo color y las mismas medidas exactas</b>. Arrastra esa imagen aquí abajo para que la App la recorte automáticamente en fotos individuales en alta resolución con fondo blanco puro y las descargue en ZIP.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        c_spl1, c_spl2 = st.columns([1.2, 2.8])
-        with c_spl1:
-            strip_up = st.file_uploader(
-                "Arrastra aquí tu tira o cuadrícula de vistas generada:",
-                type=['png', 'jpg', 'jpeg', 'webp'],
-                key=f"st_strip_splitter_{st.session_state.clear_key_v5}"
-            )
-        
-        with c_spl2:
-            if strip_up:
-                from services.image_splitter_service import split_catalog_strip, create_zip_from_cropped
-                crops = split_catalog_strip(strip_up.getvalue())
-                if crops:
-                    st.success(f"✅ ¡Detectadas y recortadas exitosamente **{len(crops)} vistas individuales**!")
-                    
-                    # Botón para descargar el ZIP completo
-                    zip_data = create_zip_from_cropped(crops, base_name=strip_up.name.split('.')[0])
-                    st.download_button(
-                        label=f"📦 Descargar Todas las Vistas ({len(crops)} fotos) en ZIP",
-                        data=zip_data,
-                        file_name=f"vistas_separadas_{strip_up.name.split('.')[0]}.zip",
-                        mime="application/zip",
-                        key="btn_dl_all_crops_zip"
-                    )
-                    
-                    # Mostrar cuadrícula de fotos separadas
-                    cols_crops = st.columns(min(len(crops), 5))
-                    for idx, c in enumerate(crops):
-                        col_idx = idx % len(cols_crops)
-                        with cols_crops[col_idx]:
-                            st.image(c["bytes"], caption=f"Vista {c['index']}", use_container_width=True)
-                            st.download_button(
-                                label=f"⬇️ Vista {c['index']}",
-                                data=c["bytes"],
-                                file_name=f"vista_{c['index']}_{strip_up.name.split('.')[0]}.png",
-                                mime="image/png",
-                                key=f"btn_dl_crop_{idx}"
-                            )
-                else:
-                    st.warning("⚠️ No se detectaron objetos aislados con suficiente separación sobre fondo blanco en esta imagen.")
-            else:
-                st.info("👈 Arrastra una imagen panorámica de catálogo para recortar cada ángulo automáticamente en alta resolución.")
