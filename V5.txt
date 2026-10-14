@@ -1,0 +1,24 @@
+Para tenerlo 100% alineado:
+
+El objetivo de la Versión 5 es ser el Estudio Definitivo de Generación de Vistas Comerciales de Catálogo con Transferencia de Materiales:
+
+Transferencia de Madera Idéntica (Wood Transfer): 
+-Tomar cualquier mueble que ya tiene el color de la madera (Casilla 1)
+-Tomar como referencia de la muestra de madera real y tomar exactamente la especie, veta (Casilla 2)
+-Tomar como referencia las fotos /a qui normalmente van las fotos de las vistas del mismo mueble y solo se tomara como ayuda para saber como es el mueble/ (casilla 3)
+-Tomar todas las anotaciones si incluye medidas hacerlo proporcionamente a la medida que hay y todos los comentarios incluirlos en el promprt final (casilla 4)
+
+Garantizando un acabado monolítico (sin partes de otro color ni frentes oscuros).
+
+Control de Escala y Proporciones: Mantener el modelo congelado del mueble original y rotarlo en el espacio para catálogo.
+
+5 Vistas Comerciales Estandarizadas:
+Vista 1: Frontal (0°)
+Vista 2: 3/4 Perspectiva (45°)
+Vista 3: Lateral Perfil (90°)
+Vista 4: Picada Alta (65°) – cubierta superior + frente simultáneo
+Vista 5: Cenital Superior (90°) – vista técnica desde arriba
+
+Calidad de Catálogo Puro: Fondo blanco recortado digitalmente #FFFFFF, iluminación difusa de estudio fotográfico profesional y sin sombras sucias en el piso, tratando de no modificar el modelo y hacerlo lo mas real que se pueda
+
+Compatibilidad Nativa Multi-Modelo: Generar prompts optimizados tanto para Google AI Studio (Gemini Nano Banana 2.1 / Pro) como para ChatGPT (DALL-E 3) y Midjourney v6.1.
