@@ -57,8 +57,9 @@ class AIPromptServiceV5:
             return None
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini priorizando modelos oficiales rápidos existentes sin fallos 404."""
+        """Llama a Gemini priorizando el modelo de razonamiento profundo Argon 4 con fallbacks rápidos."""
         models_to_try = [
+            "gemini-4-argon",
             "gemini-2.0-flash",
             "gemini-1.5-flash",
             "gemini-2.0-flash-lite",
@@ -577,8 +578,8 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 * ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to introduce contrasting shades, dark walnut patches, or two-tone mismatches. All surfaces share identical continuous grain flow, color saturation, and satin matte sheen.
 * CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
-            ais_image_header = f"""• Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
-• Image 2 (Wood Swatch - Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture})."""
+            ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
+• Image 2 (Attached Photo - Wood Swatch Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture})."""
 
             wood_ais_lock = f"Sample and transfer the exact timber stain tone, warmth, and anatomical grain flow directly from the pixels of Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Preserve natural timber saturation and warmth; do not bleach or wash out. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
@@ -592,7 +593,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 * ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes, dark walnut patches, or mismatched tones. All surfaces share identical continuous grain flow and satin sheen.
 * CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
-            ais_image_header = f"""• Image 1 (Target Furniture & Master Wood): 3D model, joinery, and authentic wood finish/grain of '{furn_item}' ({wood_from_furniture})."""
+            ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture & Master Wood): 3D model, joinery, and authentic wood finish/grain of '{furn_item}' ({wood_from_furniture})."""
 
             wood_ais_lock = f"Sample and clone the exact timber stain tone, amber warmth, and continuous grain pores directly from the pixels of Image 1 ({wood_from_furniture}) across all wooden components ({profile['wood_parts_ais']}). Preserve the rich oil-rubbed satin warmth; do not bleach, wash out, or lighten the timber with studio lighting. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
@@ -685,8 +686,8 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 
         individual_results = []
         for v in vistas_specs:
-            # Prompt individual conciso y ultra-específico para Google AI Studio (Nano Banana 2.1 / Pro)
-            prompt_ai_studio = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | COMMERCIAL PHOTOGRAPHY]
+            # Prompt individual conciso y ultra-específico para Google AI Studio / Gemini Web (Argon 4 / Pro)
+            prompt_ai_studio = f"""[MODEL: GEMINI 4 ARGON / GEMINI PRO | COMMERCIAL PHOTOGRAPHY]
 {ais_image_header}
 
 DIRECTIVES:
@@ -719,8 +720,8 @@ Set against a {white_bg}. Illuminated by balanced commercial catalog studio stro
                 "chatgpt_dalle3": prompt_dalle
             })
 
-        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO (Nano Banana 2.1 / Pro)
-        prompt_maestro_ais = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | 5-VIEW COMMERCIAL CATALOG]
+        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO / GEMINI WEB (Argon 4 / Pro)
+        prompt_maestro_ais = f"""[MODEL: GEMINI 4 ARGON / GEMINI PRO | 5-VIEW COMMERCIAL CATALOG]
 {ais_image_header}
 
 DIRECTIVES:
@@ -847,8 +848,8 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
 * ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to introduce contrasting shades, dark walnut patches, or two-tone mismatches. All surfaces share identical continuous grain flow, color saturation, and satin matte sheen.
 * CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
-            ais_image_header = f"""• Image 1 (Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
-• Image 2 (Wood Swatch - Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture})."""
+            ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
+• Image 2 (Attached Photo - Wood Swatch Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture})."""
 
             wood_ais_lock_21 = f"Sample and transfer the exact timber stain tone, warmth, and anatomical grain flow directly from the pixels of Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Preserve natural timber saturation and warmth; do not bleach or wash out. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
@@ -862,7 +863,7 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
 * ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes, dark walnut patches, or mismatched tones. All surfaces share identical continuous grain flow and satin sheen.
 * CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
 
-            ais_image_header = f"""• Image 1 (Target Furniture & Master Wood): 3D model, joinery, and authentic wood finish/grain of '{furn_item}' ({wood_from_furniture})."""
+            ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture & Master Wood): 3D model, joinery, and authentic wood finish/grain of '{furn_item}' ({wood_from_furniture})."""
 
             wood_ais_lock_21 = f"Sample and clone the exact timber stain tone, amber warmth, and continuous grain pores directly from the pixels of Image 1 ({wood_from_furniture}) across all wooden components ({profile['wood_parts_ais']}). Preserve the rich oil-rubbed satin warmth; do not bleach, wash out, or lighten the timber with studio lighting. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
@@ -955,8 +956,8 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
 
         individual_results = []
         for v in vistas_2_1_specs:
-            # Prompt individual conciso y ultra-específico para Google AI Studio (Nano Banana 2.1 / Pro)
-            prompt_ais = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | COMMERCIAL PHOTOGRAPHY]
+            # Prompt individual conciso y ultra-específico para Google AI Studio / Gemini Web (Argon 4 / Pro)
+            prompt_ais = f"""[MODEL: GEMINI 4 ARGON / GEMINI PRO | COMMERCIAL PHOTOGRAPHY]
 {ais_image_header}
 
 DIRECTIVES:
