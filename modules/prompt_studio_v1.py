@@ -19,58 +19,76 @@ FOLDER_MADERAS_DRIVE_ID = "1Jq2u1A6-xKi1YigUYSIzLauUww_RJ5Lx"
 
 
 @st.cache_data(ttl=300)
-
 def cargar_telas_menu():
-
+    from services.photo_service import PATH_FINAL_FOTOS
     from services.sheets_service import sheets_service
 
-    return sheets_service.get_drive_folder_files(FOLDER_TELAS_DRIVE_ID, recursive=True)
+    app_dir = Path(__file__).resolve().parent.parent
+    telas_dirs = [
+        PATH_FINAL_FOTOS / "FOTOS TELAS" / "TELAS",
+        app_dir / "muestras_tela"
+    ]
+    local_telas = []
+    for t_dir in telas_dirs:
+        if t_dir.exists():
+            for ext in ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.JPG", "*.PNG", "*.JPEG"]:
+                for f in sorted(t_dir.glob(ext)):
+                    clean_name = f.stem.replace("_", " ").strip()
+                    if not any(t["name"].upper() == clean_name.upper() for t in local_telas):
+                        local_telas.append({
+                            "id": f.name,
+                            "name": clean_name,
+                            "filename": f.name,
+                            "link": "",
+                            "local_path": str(f)
+                        })
 
+    drive_telas = []
+    if sheets_service.connection_ok:
+        try:
+            drive_telas = sheets_service.get_drive_folder_files(FOLDER_TELAS_DRIVE_ID, recursive=True)
+        except Exception:
+            drive_telas = []
+
+    combined = local_telas + [t for t in drive_telas if not any(l["name"].upper() == t["name"].upper() for l in local_telas)]
+    return sorted(combined, key=lambda x: x["name"].upper())
 
 
 @st.cache_data(ttl=300)
-
 def cargar_maderas_menu():
-
+    from services.photo_service import PATH_FINAL_FOTOS
     from services.sheets_service import sheets_service
 
-    drive_maderas = sheets_service.get_drive_folder_files(FOLDER_MADERAS_DRIVE_ID, recursive=True)
-
-    
-
     app_dir = Path(__file__).resolve().parent.parent
-
-    maderas_dir = app_dir / "muestras_madera"
-
+    maderas_dirs = [
+        PATH_FINAL_FOTOS / "FOTOS TELAS" / "MADERAS",
+        app_dir / "muestras_madera"
+    ]
     local_maderas = []
+    for m_dir in maderas_dirs:
+        if m_dir.exists():
+            for ext in ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.JPG", "*.PNG", "*.JPEG"]:
+                for f in sorted(m_dir.glob(ext)):
+                    clean_name = f.stem.replace("_", " ").strip()
+                    if not any(m["name"].upper() == clean_name.upper() for m in local_maderas):
+                        local_maderas.append({
+                            "id": f.name,
+                            "name": clean_name,
+                            "filename": f.name,
+                            "link": "",
+                            "local_path": str(f)
+                        })
 
-    if maderas_dir.exists():
-
-        for f in sorted(maderas_dir.glob("*.jpg")):
-
-            clean_name = f.stem.replace("_", " ")
-
-            local_maderas.append({
-
-                "id": f.name,
-
-                "name": clean_name,
-
-                "filename": f.name,
-
-                "link": "",
-
-                "local_path": str(f)
-
-            })
-
-    
+    drive_maderas = []
+    if sheets_service.connection_ok:
+        try:
+            drive_maderas = sheets_service.get_drive_folder_files(FOLDER_MADERAS_DRIVE_ID, recursive=True)
+        except Exception:
+            drive_maderas = []
 
     # Combinar ambas listas
-
     combined = local_maderas + [m for m in drive_maderas if not any(l["name"].upper() == m["name"].upper() for l in local_maderas)]
-
-    return combined
+    return sorted(combined, key=lambda x: x["name"].upper())
 
 
 
@@ -558,12 +576,12 @@ def render_prompt_studio():
                 if sel_t_nombre:
 
                     obj_t = map_telas.get(sel_t_nombre.upper())
-
-                    if obj_t and obj_t.get("id"):
-
+                    if obj_t:
                         tela_name = sel_t_nombre
-
-                        tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
+                        if obj_t.get("local_path") and os.path.exists(obj_t["local_path"]):
+                            tela_bytes = Path(obj_t["local_path"]).read_bytes()
+                        elif obj_t.get("id"):
+                            tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
 
             else:
 
