@@ -990,8 +990,8 @@ Set against a {white_bg}. Illuminated by balanced commercial catalog studio stro
                 "chatgpt_dalle3": prompt_dal
             })
 
-        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO (Nano Banana 2.1 / Pro)
-        prompt_maestro_ais = f"""[MODEL: GEMINI NANO BANANA 2.1 / PRO | 5-VIEW COMMERCIAL CATALOG]
+        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO / GEMINI WEB (Argon 4 / Pro)
+        prompt_maestro_ais = f"""[MODEL: GEMINI 4 ARGON / GEMINI PRO | 5-VIEW COMMERCIAL CATALOG]
 {ais_image_header}
 
 DIRECTIVES:
