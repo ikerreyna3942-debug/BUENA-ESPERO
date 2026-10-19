@@ -53,7 +53,7 @@ class SheetsService:
         return self.service is not None and self.drive_service is not None
 
     def _init_service(self):
-        # 1. Cargar Service Account para Sheets y Drive (100% estable, no vence)
+        # 1. Cargar Service Account de respaldo
         sa_creds = None
         env_creds = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
         if not env_creds:
@@ -72,28 +72,24 @@ class SheetsService:
                 self.service = build("sheets", "v4", credentials=sa_creds)
                 self.drive_service = build("drive", "v3", credentials=sa_creds)
                 self.connection_status = f"Conectado SA ({self.client_email})"
-                print(f"[SheetsService] Sheets y Drive conectados con Service Account: {self.client_email}")
             except Exception as e:
                 self.sa_error = str(e)
-                print(f"[SheetsService] Error Service Account Env: {e}")
+                print(f"[SheetsService] Error Service Account: {e}")
 
-        if not sa_creds:
-            try:
-                import base64, json
-                fallback_str = base64.b64decode("ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAiYW50aWdyYXZpdHktaW50ZWdyYWNpb24iLAogICJwcml2YXRlX2tleV9pZCI6ICIzZjk2ODBmYTA5NzdmNTc3M2QwOTk2YmY1ZjEwYTlhYmY3NmJmMGMyIiwKICAicHJpdmF0ZV9rZXkiOiAiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tXG5NSUlFdmdJQkFEQU5CZ2txaGtpRzl3MEJBUUVGQUFTQ0JLZ3dnZ1NrQWdFQUFvSUJBUUR5Zmp1ZW9aQVRpa3BLXG5xRHJyYy9lTkdXckFmallEQmJiMGNtc3lGTmJzbDZtMDRidUx4ZTJnSWlBOHR2R1dZN3d4cWRyQVZLNldsT0lHXG54Vkd4RTc4S213eFhVT1lLelpUVkZkb1I3dStaK2RiK01DSHNGNy9oMXc5aEpFRWRWQzEvZDNKdm1nU1VsbC9DXG5pOFhmVUk4SElPRTRmaEtjczlRKzBGNm9HZWxDQU9Ed2NzUnZYMkZjcVFqRVN6RTZKL2hLZ00ySENXSWgvV2g5XG5XbCtKc2w4dlZrdjlRNkNWWkk5Q1czaCs2anVuT2Z3TU9KZGRPODFtN1ltUlc2OEN5M1E2RGFub2drRU9KUHF6XG54NXFzSGU4TkNLaG9PL1RIMmJORU9NU2FVSjBzSUEvWG5yaGRPQU5hVEY4RFo2eDlFa3QzcEVpbWhhcWhnRWorXG44d2hyM0I1dkFnTUJBQUVDZ2dFQUFiak1MRXNkaWR1eUt6Vm1kU0g2VUtuMkNnVnlReW83UzJwWTNGN1I4TG4rXG5ya2lnVnN1R3lPM3kwYWI2QzhDd2k4Uk54OWV5RjZ2SEhJV2dCYWp3dkI3bXVlTzJHTDdUck1yUWtxb3JVUE01XG5iR0EySHBob1NuZTkwMjM0K1QvN3NtL3d3OTMyTGFaKzE3aE5wU3pMNkZleGYyMW9tdHBrVTMvYmF4RW9DTW5jXG5qand2a1kxUlp6SGF4L0w5T3dyckNkdjZpVlpkMlo3SVJ0S0JHYzdwalpaU0lidFcvNlpzaWhES1g5TVhYc2tXXG5yU3JRR2xGdnlUSmpHVVV0NXMzU3Z5czlvNHRGc1FnWHo0RFpVRkgrSmlWdy9raHMwY3dFOEtRN3pma1R1NVB5XG5rVTh6NnRUSkNqWVdkL0x6d05jTmJVWFFlYmR1OXFnc0k1K2RHekdkZVFLQmdRRDlIRVFYdU9YTk9xd3poNFRPXG5JbzRSQWdhK1lZQytwdVlFYjRzZ1cxN1dsRUhTemJRbHhyVkhjYTcrdElVYjQ1dmhzTmVsR1hoZWpVVUE5NndYXG5Zb2JTUDdVOGZISmsvcUNXSDI5cEExcWRVV0pNMVRyKzdKTWIxZDYyeW1yQ1ZVM1QrN292ZHh5NGxBYnF3aGxSXG5vSUJkNUpkSFhMUk1xeTBpOUVlNzJSZVU5d0tCZ1FEMVF1L2ZnY1A4bTd4VFhHcERBc1dyNmg5akJjSk1MVXVOXG5JeHdIdVBLMkI2UFFxaGcydDIwTGJSUWdmYUl5a3pyb0hjK2JVRkRWZmJ1MElVc2tIRzVmejYzWEg1RDN3THZFXG5LdjBEeWVwazh5bG5vY2lzcGM2SlBHNTZKbFMvUDRUYzBxQzA0NjFDNnViUVlROVZnNWo0MUgvcjBSNGdmdjR3XG5mUDVIaUIxOFNRS0JnR25FZUFmWnNkMnkyT2FuaUsyQzd3N1lZKzBHWFlCTnlleXNsOXlya2RQbEhDUjA1UVNzXG5KbkIyWndQMGQzTVNCNytsNEZjVGI2TkRNVVNZT29lREdvZWRLNlRjOUFpVUJwTDFDOTg4RVkrUHhKNEt0SjUyXG5TWHJtUWl6c0pQU1VKUE9pUzBrdVl3Z1dnMVZ5U3BZN2xhaW1yemlZMnBiM0tPTmtaTjF3ZUZROUFvR0JBSXk0XG5KUzBXSlQ3d2svTTRXUGV0eFlESHljNWs1WUFUbFArYm4xK0c3Q3NvNHdLOE5UeGZyYjhhakt1L3FhcGU4ek51XG50MGtqb2QxOFVKQWZjaDk3K0pBY2RsK3hpdG03eVgvYU1tVlVHcHBsTWVKMTNzL0FLbXB2TSt2OXhpNGM0YnhaXG5WVCswU2hyVThDMnJJc01yeUQ4c25XRE9FUDBRSUFQdUUyOHpWOGVSQW9HQkFMaTdDNWlaejFpUDFKbzVpZ0RpXG44bHAvRDNGM01LN2JneS9QZUpkN1JBLzg4WGxaMHRSUmFRdDNFdVdkdFRlbVlyOEV1Q1lRYnBOOFRCd28yQms0XG50bE5xUkVZY1lXSG9ob1p2ZHVqZjdlSTVucyt6UTlsb0JpNFc1SGdZLzE5RkNqZGFtcUljUWphVmY2b04wZU5SXG4xdnQvUWp6RFk0YUdqV2RBRllpN294V3Rcbi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS1cbiIsCiAgImNsaWVudF9lbWFpbCI6ICJwcm95ZWN0by0xQGFudGlncmF2aXR5LWludGVncmFjaW9uLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAiY2xpZW50X2lkIjogIjEwMTE2MjUwNjA0MzM3OTc2OTgyNiIsCiAgImF1dGhfdXJpIjogImh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwKICAidG9rZW5fdXJpIjogImh0dHBzOi8vb2F1dGgyLmdvb2dsZWFwaXMuY29tL3Rva2VuIiwKICAiYXV0aF9wcm92aWRlcl94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL29hdXRoMi92MS9jZXJ0cyIsCiAgImNsaWVudF94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3JvYm90L3YxL21ldGFkYXRhL3g1MDkvcHJveWVjdG8tMSU0MGFudGlncmF2aXR5LWludGVncmFjaW9uLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAidW5pdmVyc2VfZG9tYWluIjogImdvb2dsZWFwaXMuY29tIgp9Cg==").decode('utf-8')
-                cred_dict = json.loads(fallback_str)
-                self.client_email = cred_dict.get("client_email", "")
-                sa_creds = service_account.Credentials.from_service_account_info(
-                    cred_dict, scopes=self.scopes
-                )
-                self.service = build("sheets", "v4", credentials=sa_creds)
-                self.drive_service = build("drive", "v3", credentials=sa_creds)
-                self.connection_status = f"Conectado SA Fallback ({self.client_email})"
-            except Exception as e:
-                print(f"[SheetsService] Error Service Account Fallback: {e}")
-
-        # 2. OAuth opcional solo si es valido y no esta revocado
+        # 2. Cargar OAuth de kevin.reyna@grupoanipa.com (Principal para Drive y Sheets)
         oauth_json = os.environ.get("GOOGLE_OAUTH_CREDENTIALS_JSON", "").strip()
+        if not oauth_json:
+            local_oauth = Path(__file__).resolve().parent.parent / "GOOGLE_OAUTH_CREDENTIALS.json"
+            if local_oauth.exists():
+                try:
+                    with open(local_oauth, "r", encoding="utf-8") as f:
+                        oauth_json = f.read().strip()
+                except Exception:
+                    pass
+        if not oauth_json:
+            import base64
+            oauth_json = base64.b64decode("eyJ0b2tlbiI6ICJ5YTI5LmEwQVgwN0Ntdm0zRVNMb25wZHMxRWNkSHZsb285eWZZWHJvZnNxREpRUWs3Sy1BcEp0UHpqNl82cHZxYkhzZ2JjTXJyakItZ1huNUVTdURJYWRKdnFBeWlIRDVPeXRCMUpJdE1qSElLNlJfdm94SFBYQmJQcG9JSHpVN2EwNUlXemRvbDdJYjkzcWhwZ3VqOXFkaVNvZTQxZEJyUjV6Q0xLcGRhVDgxVzdUMXFtV3hwbjBxdmFfOUMwemx1dEE1YTlvSmtMaG9YNGFDZ1lLQVpZU0FSVVNGUUhHWDJNaXpacTdyZmxHSm9tN1dLbnhIYWlsaUEwMjA2IiwgInJlZnJlc2hfdG9rZW4iOiAiMS8vMDVCQl8wbXNWNmlqcUNnWUlBUkFBR0FVU053Ri1MOUlyNEd2R3Z5UmU1TDY0NndWMFJwdVdwQWwwV0xmUmk2MUR1TU5IZE9wMlhGMjJ6QlZmR1ctS2xXd1RXeG9ZcnlCMjNubyIsICJ0b2tlbl91cmkiOiAiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCAiY2xpZW50X2lkIjogIjIxMDExMTE2MDk1Mi05NGVwM2FkaHJjazVkaTk4MW1tcWtsZzkxdm9hdGNwbi5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsICJjbGllbnRfc2VjcmV0IjogIkdPQ1NQWC1wMlZFdjNka0R0dTB5SDlHQmxpZy1UMGp3R05BIiwgInNjb3BlcyI6IFsiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9zcHJlYWRzaGVldHMiLCAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9kcml2ZSJdLCAidW5pdmVyc2VfZG9tYWluIjogImdvb2dsZWFwaXMuY29tIiwgImFjY291bnQiOiAiIiwgImV4cGlyeSI6ICIyMDI2LTEwLTE5VDE2OjUxOjE1WiJ9").decode('utf-8')
+
         if oauth_json:
             try:
                 import json
@@ -105,10 +101,10 @@ class SheetsService:
                 user_creds.refresh(GoogleAuthRequest())
                 self.drive_service = build("drive", "v3", credentials=user_creds)
                 self.service = build("sheets", "v4", credentials=user_creds)
-                self.connection_status = "Conectado OAuth (Sheets y Drive)"
-                print("[SheetsService] OAuth validado y activo.")
+                self.connection_status = "Conectado OAuth (kevin.reyna@grupoanipa.com)"
+                print("[SheetsService] Conectado exitosamente con OAuth de kevin.reyna@grupoanipa.com")
             except Exception as e:
-                print(f"[SheetsService] OAuth ignorado (usando Service Account): {e}")
+                print(f"[SheetsService] OAuth fallo, manteniendo respaldo SA: {e}")
 
     def clear_memory_cache(self):
         """Limpia los catálogos en memoria y nombres de pestañas para forzar sincronización fresca."""
