@@ -714,18 +714,24 @@ Output ONLY the prompt text."""
         f_color = fa.get("color_description")
         f_texture = fa.get("texture_detail")
         
-        furn_item = ma.get("furniture_item", furniture_name)
-        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
-            furn_item = f"{tipo_mueble_usuario.strip()} ({furn_item})"
+        # Identificación precisa del mueble para que NUNCA sea confundido con un banco/stool
+        tipo_clean = tipo_mueble_usuario.strip() if tipo_mueble_usuario else ""
+        raw_item = ma.get("furniture_item", furniture_name)
+        if tipo_clean:
+            furn_item = tipo_clean
+        elif raw_item and "stool" not in raw_item.lower():
+            furn_item = raw_item
+        else:
+            furn_item = furniture_name
             
         geom_struct = ma.get("geometric_structure", "original geometric structure")
         camera_angle = ma.get("camera_angle", "original perspective")
         existing_materials = ma.get("existing_materials", "original materials and color")
 
         if not f_name:
-            f_name = "its original upholstery material"
+            f_name = "its original material"
         if not f_color:
-            f_color = "its authentic original color"
+            f_color = "its authentic rich wood/material color"
         if not f_texture:
             f_texture = existing_materials
 
@@ -734,55 +740,85 @@ Output ONLY the prompt text."""
         
         lightings = [
             "soft morning daylight streaming in through sheer floor-to-ceiling linen drapes",
-            "golden hour warm sunlight casting delicate linear shadows",
-            "soft diffused overcast architectural light with even, flattering illumination",
-            "gentle indirect afternoon light accentuating textures without harsh specular glare"
+            "golden hour warm sunlight casting delicate linear architectural shadows",
+            "soft diffused overcast architectural light with even, flattering illumination across the entire space",
+            "gentle indirect afternoon daylight accentuating natural wood textures without harsh specular glare"
         ]
-        architectures = [
-            "an open-concept Japandi living space with warm oak slatted accents and polished light microcement floor",
-            "a high-end minimalist Scandinavian interior with chalky limestone walls and herringbone natural wood flooring",
-            "a luxury contemporary Mediterranean residence with soft textured plaster walls and a subtle arched entryway",
-            "an architectural minimalist salon with organic curved walls and neutral sand tones"
-        ]
-        props = [
-            "a large minimalist sculptural ceramic vase with dry botanical branches in the background",
-            "a curated low travertine coffee table and subtle architectural olive tree in a matte pot",
-            "a sleek minimalist brass arc floor lamp and architectural design monograph",
-            "a textured abstract neutral wall canvas and soft woven wool area rug"
-        ]
-        
-        chosen_arch = random.choice(architectures)
         chosen_light = random.choice(lightings)
-        chosen_prop = random.choice(props)
-        random_style = f"{chosen_arch}, illuminated by {chosen_light}. Complementary styling: {chosen_prop}."
+
+        # Reglas de ubicación e integración en casa de cliente real según tipo de mueble
+        t_lower = (tipo_clean or furn_item).lower()
+        if any(k in t_lower for k in ["lateral", "noche", "side", "end table", "auxiliar", "esquin"]):
+            furniture_placement = (
+                f"ORGANIC LIVING ROOM INTEGRATION: The {furn_item} is functionally and organically positioned directly beside the armrest of an elegant contemporary sofa or designer lounge armchair in an authentic luxury client residence. "
+                "It is styled naturally as a lived-in high-end space: a curated design art book or delicate minimalist ceramic vessel rests casually on its tabletop. "
+                "The room is a fully furnished, complete architectural living room containing a primary comfortable sofa, a low complementary coffee table, a woven wool area rug, an architectural floor lamp, and indoor botanical foliage (such as an architectural potted olive tree) in the ambient space."
+            )
+        elif any(k in t_lower for k in ["centro", "coffee", "ratona"]):
+            furniture_placement = (
+                f"ORGANIC LIVING ROOM INTEGRATION: The {furn_item} is centered on a textural designer area rug in front of a luxury contemporary sofa and flanking lounge chairs. "
+                "Styled with curated art books and a sculptural vessel, showing a complete, authentic residential client living room with ambient lighting and architectural plants."
+            )
+        elif any(k in t_lower for k in ["comedor", "dining"]):
+            furniture_placement = (
+                f"ORGANIC DINING ROOM INTEGRATION: The {furn_item} is centered in a bright luxury dining salon, surrounded by complementary contemporary dining chairs, "
+                "an elegant low credenza along the wall, and minimalist architectural pendant lighting above."
+            )
+        elif any(k in t_lower for k in ["silla", "sofa", "sofa", "sillon", "poltrona", "armchair", "chaise"]):
+            furniture_placement = (
+                f"ORGANIC RESIDENTIAL INTEGRATION: Position the seating piece comfortably within a fully realized luxury client salon, flanked by a sculptural side table, "
+                "designer floor lighting, and a soft architectural area rug."
+            )
+        else:
+            furniture_placement = (
+                f"ORGANIC RESIDENTIAL INTEGRATION: Seamlessly integrate the {furn_item} into an authentic, fully furnished luxury client home, accompanied by contemporary designer furniture "
+                "(sofa, coffee table, ambient architectural lighting, and woven rug) so the space feels complete, inhabited, and architecturally cohesive."
+            )
+
+        camera_directive = (
+            "CAMERA, PERSPECTIVE & DEPTH OF FIELD: Wide architectural interior catalog photograph captured from a distant, eye-level perspective showing the full living space. "
+            "DEEP ARCHITECTURAL FOCUS (f/8 - f/11): Both the target furniture and the surrounding furnished room (sofa, coffee table, background architecture) must remain sharp, crisp, "
+            "and clearly defined throughout the entire frame. Absolutely NO tight macro close-ups, NO aggressive f/2.8 lens blur, and NO solitary furniture isolated on an empty floor."
+        )
+
+        contrast_directive = (
+            f"PALETTE & CONTRAST: The walls, ceiling, rug, and accompanying sofa fabrics must feature a neutral, complementary architectural palette (warm limestone, soft greige, textured sand, light oatmeal linen) "
+            f"that deliberately contrasts with and accentuates the {f_color} tone and natural grain of the {furn_item}, preventing it from blending into the background."
+        )
 
         room_context = lugar_casa_usuario.strip() if lugar_casa_usuario and lugar_casa_usuario.strip() else "a luxurious, high-end living area appropriate for this piece"
         proportions = medidas_usuario.strip() if medidas_usuario and medidas_usuario.strip() else "exact true-to-scale real-world proportions"
+        
         ctx_block = self._build_unified_context_block(
             furniture_name=furniture_name,
-            tipo_mueble=tipo_mueble_usuario,
+            tipo_mueble=tipo_clean,
             medidas=medidas_usuario,
             notas_usuario=notas_usuario,
             foto_refs=foto_refs
         )
-        ctx_part = f"\n{ctx_block}\n" if ctx_block else ""
-        notes_part = ctx_part
+        ctx_part = ("\n" + ctx_block + "\n") if ctx_block else ""
 
-        local_prompt = f"""SYSTEM: You are a World-Class Interior Designer and Architectural Photographer.
-TASK: Place the furniture piece from Image 1 into a breathtaking architectural lifestyle environment.
-TARGET FURNITURE: {furn_item}.
-PRESERVATION MANDATE:
-- Maintain EXACT geometry, shape, proportions ({proportions}), and structure: {geom_struct}.
-- Preserve the EXACT upholstery color ({f_color}) and texture ({f_texture}) with ZERO color alteration.
-- Preserve all wooden/metal frames and legs.
-SETTING & STYLING:
-- Location: {room_context}.
-- Atmosphere: {random_style}.
-- Lighting: {chosen_light}.
-- Composition: Wide-angle interior catalog shot, furniture perfectly grounded on the floor, 40% soft background bokeh (f/2.8 lens).
-HARDWARE: {hardware_str}{notes_part}
+        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        if user_notes_clean:
+            user_override_section = f"""
+[MANDATORY CLIENT OVERRIDES - TOP PRIORITY]:
+* {user_notes_clean}
+* Strict instruction: The user directives above (e.g. distant perspective, furnished client home, integrated arrangement, contrasting palette) take 100% precedence over any default preset."""
+        else:
+            user_override_section = ""
 
-Negative Prompt: altered furniture color, changed upholstery tone, deformed furniture, fake CGI look, floating furniture, cluttered room, neon lighting, oversaturated colors, text, watermark."""
+        local_prompt = f"""SYSTEM: You are a Master Commercial Product Photographer and Interior Art Director.
+TASK: Place the furniture into a luxury architectural client residence.
+
+A wide architectural interior shot capturing an authentic, beautifully furnished {room_context} from a distant perspective. The room is complete with a comfortable contemporary sofa in soft neutral linen, a low designer coffee table, an architectural indoor tree, and a textural area rug. 
+
+{furniture_placement}
+
+The furniture maintains exact geometric and dimensional fidelity ({proportions}) to the reference: {geom_struct}. Its material is 100% faithful—authentic {f_color} with {f_texture}, grounded with natural ambient contact shadows on the floor.
+
+{contrast_directive} {chosen_light}.
+
+{camera_directive}{ctx_part}"""
 
         if not key:
             return {
@@ -797,22 +833,22 @@ Negative Prompt: altered furniture color, changed upholstery tone, deformed furn
             
             client = genai.Client(api_key=key)
             
-            sys_prompt = f"""You are a Master Prompt Engineer specializing in Generative AI for luxury interior design and furniture photography.
-Your task is to write a highly-detailed text prompt to generate an architectural interior image containing the {furn_item} seen in {target_imgs}.
+            sys_prompt = f"""You are a Master Prompt Engineer specializing in Generative AI for luxury interior design and commercial architectural photography.
+Your task is to write a highly-detailed text prompt to generate an architectural interior image featuring the {furn_item} seen in {target_imgs}.
 
 CRITICAL CONSTRAINTS:
-1. GEOMETRY & IDENTITY: Maintain EXACTLY the {geom_struct} and {camera_angle} from the reference images. DO NOT alter the shape, dimensions, or design of the furniture.
-2. MATERIAL & COLOR FIDELITY: The upholstery/material MUST be {f_name} ({f_color}, {f_texture}). Do NOT modify the color or texture (0% hue drift).
-3. PERSPECTIVE: Wide architectural shot, grounded realistically on the floor with natural ambient contact shadows.
-4. ENVIRONMENT: Hyper-realistic luxury minimalist interior:
+1. GEOMETRY & IDENTITY: The piece is strictly a {tipo_clean or furn_item} (NOT a stool or chair). Maintain EXACTLY its {geom_struct} and real-world proportions ({proportions}).
+2. MATERIAL & FINISH FIDELITY: The piece must be 100% faithful to its authentic finish ({f_color}, {f_texture}). Do NOT alter its color or wood grain.
+3. RESIDENTIAL LIVING ENVIRONMENT (CLIENT'S HOME):
+   - {furniture_placement}
    - Setting: {room_context}
-   - Style: {random_style}
-   - Proportions: {proportions}
-   - Neutral complementary palette that highlights the furniture without clashing.
-5. LIGHTING: {chosen_light}.
-6. DEPTH OF FIELD: Soft background blur (f/2.8 lens effect), furniture razor sharp in focus.{notes_part}
+   - {contrast_directive}
+   - Lighting: {chosen_light}
+4. CAMERA & PERSPECTIVE:
+   - {camera_directive}
+{user_override_section}
 
-Output ONLY the clean prompt text for Google AI Studio / Gemini."""
+Output ONLY the final, highly-detailed prompt text for Google AI Studio / Gemini, ready to generate the photorealistic image."""
 
             res = self._call_gemini(
                 client=client,
@@ -823,7 +859,10 @@ Output ONLY the clean prompt text for Google AI Studio / Gemini."""
             generated_prompt = res.text.strip()
             
             return {
-                "google_ai_studio": f"SYSTEM: You are a Master Commercial Product Photographer and Interior Art Director.\nTASK: Place the furniture into a luxury architectural space.\n\n" + generated_prompt,
+                "google_ai_studio": f"""SYSTEM: You are a Master Commercial Product Photographer and Interior Art Director.
+TASK: Place the furniture into a luxury architectural client residence.
+
+""" + generated_prompt,
                 "chatgpt_dalle3": generated_prompt,
                 "midjourney_v6": generated_prompt + " --ar 16:9 --v 6.1 --style raw"
             }
