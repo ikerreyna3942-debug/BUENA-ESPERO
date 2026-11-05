@@ -703,7 +703,9 @@ Output ONLY the prompt text."""
         medidas_usuario: str = "",
         lugar_casa_usuario: str = "",
         notas_usuario: str = "",
-        api_key: Optional[str] = None
+        foto_refs: Optional[Dict[str, str]] = None,
+        api_key: Optional[str] = None,
+        **kwargs
     ) -> Dict[str, str]:
         key = self.get_api_key(api_key)
         fa = fabric_analysis or {}
@@ -756,7 +758,15 @@ Output ONLY the prompt text."""
 
         room_context = lugar_casa_usuario.strip() if lugar_casa_usuario and lugar_casa_usuario.strip() else "a luxurious, high-end living area appropriate for this piece"
         proportions = medidas_usuario.strip() if medidas_usuario and medidas_usuario.strip() else "exact true-to-scale real-world proportions"
-        notes_part = f"\nSPECIAL USER INSTRUCTIONS: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
+        ctx_block = self._build_unified_context_block(
+            furniture_name=furniture_name,
+            tipo_mueble=tipo_mueble_usuario,
+            medidas=medidas_usuario,
+            notas_usuario=notas_usuario,
+            foto_refs=foto_refs
+        )
+        ctx_part = f"\n{ctx_block}\n" if ctx_block else ""
+        notes_part = ctx_part
 
         local_prompt = f"""SYSTEM: You are a World-Class Interior Designer and Architectural Photographer.
 TASK: Place the furniture piece from Image 1 into a breathtaking architectural lifestyle environment.

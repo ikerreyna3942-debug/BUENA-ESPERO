@@ -441,29 +441,22 @@ altered fabric, changed upholstery, color shift, flat colors, changed geometry, 
 
 
     def generate_multi_perspective_prompts(
-
         self,
-
         mode: str,
-
         furniture_name: str,
-
         fabric_name: str = "",
-
         fabric_analysis: Optional[Dict[str, Any]] = None,
-
         wood_name: str = "",
-
         wood_analysis: Optional[Dict[str, Any]] = None,
-
         furniture_analysis: Optional[Dict[str, Any]] = None,
-
         analysis: Optional[Dict[str, Any]] = None,
-
         fondo_blanco_sin_sombras: bool = True,
-
-        num_furniture_images: int = 1
-
+        num_furniture_images: int = 1,
+        notas_usuario: str = "",
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        **kwargs
     ) -> Dict[str, Dict[str, str]]:
 
         

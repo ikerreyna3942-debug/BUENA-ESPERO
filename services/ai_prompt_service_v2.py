@@ -402,7 +402,11 @@ Environment: {white_bg}{notes_part}"""
         wood_analysis: Optional[Dict[str, Any]] = None,
         furniture_analysis: Optional[Dict[str, Any]] = None,
         num_furniture_images: int = 1,
-        notas_usuario: str = ""
+        notas_usuario: str = "",
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        **kwargs
     ) -> Dict[str, Dict[str, str]]:
         fa = fabric_analysis or {}
         ma = furniture_analysis or {}
