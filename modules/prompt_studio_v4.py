@@ -99,12 +99,7 @@ def render_prompt_studio_v4():
     c_head_left, c_head_right = st.columns([2, 2])
 
     with c_head_left:
-        st.markdown("""
-<div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-    <span style="font-size:22px; font-weight:800; color:#F59E0B;">⚡ Estudio V4 (Ultra-Precisión)</span>
-    <span class="studio-badge">Fidelidad Cromática 100%</span>
-</div>
-        """, unsafe_allow_html=True)
+        st.markdown('<div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;"><span style="font-size:22px; font-weight:800; color:#F59E0B;">⚡ Estudio V4 (Ultra-Precisión)</span><span class="studio-badge">Fidelidad Cromática 100%</span></div>', unsafe_allow_html=True)
         col_comp_btn, col_comp_info = st.columns([1, 2])
         with col_comp_btn:
             sys_prompt = (

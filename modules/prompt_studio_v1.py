@@ -398,12 +398,7 @@ def render_prompt_studio():
     c_head_left, c_head_right = st.columns([2, 2])
 
     with c_head_left:
-        st.markdown("""
-<div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-    <span style="font-size:22px; font-weight:800; color:#F59E0B;">⚡ Estudio Prompts Exitosos</span>
-    <span class="studio-badge">IA Multi-Modo</span>
-</div>
-        """, unsafe_allow_html=True)
+        st.markdown('<div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;"><span style="font-size:22px; font-weight:800; color:#F59E0B;">⚡ Estudio Prompts Exitosos</span><span class="studio-badge">IA Multi-Modo</span></div>', unsafe_allow_html=True)
 
     with c_head_right:
         btn_col1, btn_col2 = st.columns(2)

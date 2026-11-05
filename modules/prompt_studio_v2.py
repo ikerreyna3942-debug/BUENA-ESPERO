@@ -100,12 +100,7 @@ def render_prompt_studio_v2():
     c_head_left, c_head_right = st.columns([2, 2])
 
     with c_head_left:
-        st.markdown("""
-<div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-    <span style="font-size:22px; font-weight:800; color:#10B981;">⚡ Estudio V2 (Estructurado)</span>
-    <span class="studio-badge">Producción Limpia</span>
-</div>
-        """, unsafe_allow_html=True)
+        st.markdown('<div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;"><span style="font-size:22px; font-weight:800; color:#10B981;">⚡ Estudio V2 (Estructurado)</span><span class="studio-badge">Producción Limpia</span></div>', unsafe_allow_html=True)
 
     with c_head_right:
         btn_col1, btn_col2 = st.columns([1, 1])
