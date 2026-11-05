@@ -24,7 +24,6 @@ class FurnitureAnalysis(BaseModel):
 class AIPromptServiceV2:
     def __init__(self):
         self.default_api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        self._clients: Dict[str, Any] = {}
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -37,28 +36,15 @@ class AIPromptServiceV2:
             pass
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
-    def get_client(self, api_key: Optional[str] = None):
-        """Reutiliza el cliente con conexión Keep-Alive para evitar renegociación SSL en cada llamada."""
-        key = self.get_api_key(api_key)
-        if not key:
-            return None
-        if key in self._clients:
-            return self._clients[key]
-        try:
-            from google import genai
-            client = genai.Client(api_key=key)
-            self._clients[key] = client
-            return client
-        except Exception as e:
-            print(f"[AIPromptServiceV2] Error instanciando cliente: {e}")
-            return None
-
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos priorizando los más rápidos."""
+        """Llama a Gemini con lista de modelos activos y fallback automático."""
         models_to_try = [
+            "gemini-flash-latest",
+            "gemini-2.5-flash",
+            "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
             "gemini-2.0-flash",
             "gemini-1.5-flash",
-            "gemini-2.0-flash-lite",
         ]
         last_err = None
         for m in models_to_try:
@@ -69,15 +55,12 @@ class AIPromptServiceV2:
                 continue
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
-    def _prepare_image(self, img_bytes: bytes, max_dim: int = 768) -> Image.Image:
-        """Optimiza y comprime en memoria imágenes para envío ultra-rápido a Gemini."""
+    def _prepare_image(self, img_bytes: bytes, max_dim: int = 1024) -> Image.Image:
+        """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=82, optimize=True)
-        buf.seek(0)
-        return Image.open(buf)
+        return img
 
     def analyze_material(self, sample_bytes: bytes, api_key: Optional[str] = None, material_type: str = "auto") -> Dict[str, Any]:
         """Analiza una muestra de material usando Structured Outputs (Pydantic)."""
@@ -173,14 +156,68 @@ class AIPromptServiceV2:
     def _build_white_background_enforcement(self) -> str:
         return "ENVIRONMENT CONSTRAINT: Extract ONLY the furniture piece. Preserve its exact color, texture, and geometry (wood and fabric intact). Place it perfectly CENTERED on a pure seamless solid white background (#FFFFFF), completely eliminate shadows and studio reflections. CRITICAL: DO NOT include any text, numbers, color names, or color palettes."
 
-    def generate_extraction_prompt(self, furniture_name: str, analysis: Optional[Dict[str, Any]] = None, notas_usuario: str = "") -> Dict[str, str]:
+    def _build_unified_context_block(
+        self,
+        furniture_name: str,
+        tipo_mueble: str = "",
+        medidas: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        notas_usuario: str = ""
+    ) -> str:
+        parts = []
+        target_label = tipo_mueble.strip() if tipo_mueble and tipo_mueble.strip() else "Furniture Piece"
+        if furniture_name and furniture_name.strip() and furniture_name.strip() != target_label:
+            parts.append(f"TARGET ITEM: {target_label} ('{furniture_name.strip()}')")
+        else:
+            parts.append(f"TARGET ITEM: {target_label}")
+
+        if medidas and medidas.strip():
+            parts.append(f"EXACT 1:1 REAL-WORLD SCALE & DIMENSIONS: {medidas.strip()}. Maintain strict physical scale, leg-to-body ratios, cushion thickness, and true structural geometry without any stretching or deformation.")
+
+        if foto_refs and isinstance(foto_refs, dict):
+            ref_lines = []
+            if foto_refs.get("mueble"):
+                ref_lines.append(f"  • Primary Furniture Asset: \"{foto_refs['mueble']}\" (Silhouette & structural reference)")
+            if foto_refs.get("tela"):
+                ref_lines.append(f"  • Fabric / Upholstery Asset: \"{foto_refs['tela']}\" (Color fidelity & textile weave)")
+            if foto_refs.get("madera"):
+                ref_lines.append(f"  • Wood / Finish Asset: \"{foto_refs['madera']}\" (Woodgrain pattern & surface sheen)")
+            if foto_refs.get("swatch"):
+                ref_lines.append(f"  • Swatch / Detail Asset: \"{foto_refs['swatch']}\"")
+            if foto_refs.get("vistas"):
+                ref_lines.append(f"  • Perspective View Asset: \"{foto_refs['vistas']}\"")
+            if ref_lines:
+                parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):\n" + "\n".join(ref_lines))
+
+        if notas_usuario and notas_usuario.strip():
+            parts.append(f"USER SPECIAL DIRECTIVES & CUSTOM STYLING:\n{notas_usuario.strip()}")
+
+        return "\n".join(parts)
+
+    def generate_extraction_prompt(
+        self,
+        furniture_name: str,
+        analysis: Optional[Dict[str, Any]] = None,
+        notas_usuario: str = "",
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None
+    ) -> Dict[str, str]:
         ma = analysis or {}
         furn_item = ma.get("furniture_item", furniture_name)
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         camera_angle = ma.get("camera_angle", "original perspective")
         mats = ma.get("existing_materials", "original materials")
         white_bg = self._build_white_background_enforcement()
-        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
+        ctx_block = self._build_unified_context_block(
+            furniture_name=furniture_name,
+            tipo_mueble=tipo_mueble_usuario,
+            medidas=medidas_usuario,
+            foto_refs=foto_refs,
+            notas_usuario=notas_usuario
+        )
+        ctx_part = f"\n{ctx_block}\n" if ctx_block else ""
+        notes_part = ctx_part
 
         prompt_ai = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer and AI image editor.
 TASK: Cleanly extract the furniture piece ({furn_item}) from Image 1.
@@ -208,49 +245,56 @@ Environment: {white_bg}{notes_part}"""
         wood_analysis: Optional[Dict[str, Any]] = None,
         furniture_analysis: Optional[Dict[str, Any]] = None,
         num_furniture_images: int = 1,
-        notas_usuario: str = ""
+        notas_usuario: str = "",
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None
     ) -> Dict[str, str]:
         
         fa = fabric_analysis or {}
         wa = wood_analysis or {}
         ma = furniture_analysis or {}
         
-        f_name = fa.get("name", "Fabric Sample")
-        f_color = fa.get("color_description") or "authentic textile chromatic tone from sample"
-        f_texture = fa.get("texture_detail") or "dense textured loops and yarn weave micro-structure"
+        f_name = fa.get("name", "Fabric")
+        f_color = fa.get("color_description", "")
+        f_texture = fa.get("texture_detail", "")
         
-        w_name = wa.get("name", "Wood Sample")
-        w_color = wa.get("color_description") or "warm natural wood tone (#D5A869) with subtle amber undertones"
-        w_texture = wa.get("texture_detail") or "fine continuous anatomical wood grain flow, smooth satin finish"
-        w_finish = wa.get("finish_type") or "satin matte sheen"
+        w_name = wa.get("name", "Wood")
+        w_color = wa.get("color_description", "")
+        w_texture = wa.get("texture_detail", "")
+        w_finish = wa.get("finish_type", "")
 
         furn_item = ma.get("furniture_item", furniture_name)
-        camera_angle = ma.get("camera_angle", "the exact same eye-level commercial perspective")
-        geom_struct = ma.get("geometric_structure", "original structural geometry and joinery")
+        camera_angle = ma.get("camera_angle", "original perspective")
+        geom_struct = ma.get("geometric_structure", "original structural geometry")
 
         white_bg = self._build_white_background_enforcement()
         bg_neg = "shadows, drop shadows, dark background, black background, grey background, original background, room environment, floor reflection, text, numbers"
-        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
+        ctx_block = self._build_unified_context_block(
+            furniture_name=furniture_name,
+            tipo_mueble=tipo_mueble_usuario,
+            medidas=medidas_usuario,
+            foto_refs=foto_refs,
+            notas_usuario=notas_usuario
+        )
+        ctx_part = f"\n{ctx_block}\n" if ctx_block else ""
+        notes_part = ctx_part
 
         if mode == "dual":
-            prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
-[INPUT IMAGE REFERENCES]:
-- TARGET FURNITURE: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
-- FABRIC SWATCH: Reference for upholstery textile weave, yarn density, and hue ('{f_name}': {f_color}, {f_texture}).
-- WOOD SAMPLE: Reference for wood species, continuous anatomical grain flow, warmth, and stain tone ('{w_name}': {w_color}, {w_texture}, {w_finish}).
+            prompt_ai_studio = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer and AI image editor.
+IMAGE IDENTIFICATION (Order-Independent):
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+- FABRIC SWATCH: Locate the image containing the fabric swatch ('{f_name}').
+- WOOD SAMPLE: Locate the image containing the wood texture sample ('{w_name}').
 
-[MANDATORY GENERATION DIRECTIVE - MATERIAL REPLACEMENT]:
-Photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with the following strict material replacements:
-1. UPHOLSTERY FABRIC LOCK: Accurately replace all upholstery fabric with the exact textile weave pattern and chromatic hue from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}). Scale down weave pattern for macroscopic realism without solid flat washes.
-2. 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components (legs, frame, casing, drawers) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_finish}). Natural anatomical grain flow. Zero two-tone mismatch.
-3. TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, seams, and camera angle ({camera_angle}) from TARGET FURNITURE. Zero distortion, zero leg stretching.{notes_part}
-* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
+TASK: Accurately replace BOTH the fabric upholstery AND the wooden components on the TARGET FURNITURE using the macro textures provided.
+TARGET ITEM: {furn_item}.
+GEOMETRY PRESERVATION: Strictly preserve the exact shape, structural geometry ({geom_struct}), and contours. Camera must be locked to {camera_angle}.
+{white_bg}
+FABRIC APPLICATION: Apply the precise weave pattern and thread colors from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}). Scale down texture dramatically (97% reduction) for macroscopic realism. Lock exact hue.
+WOOD APPLICATION: Apply the precise wood grain flow, pores, and color from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_finish}) to all legs and frames. Ensure grain follows natural anatomical direction.{notes_part}
 
-[ENVIRONMENT & HARDWARE]:
-- {white_bg}
-- Optics: 100MP medium format RAW, 80mm lens, f/11 aperture, ISO 64, studio strobe lighting with soft diffuse octabox fill. Razor-sharp micro-textures.
-
-Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone drawers, wrong wood color, dark drawers, mismatched grain, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, {bg_neg}"""
+Negative Prompt: generic fabric, solid color, loss of weave pattern, suede, velvet, leather, flat wood colors, color shift, altered geometry, perspective distortion, {bg_neg}"""
 
             prompt_dalle = f"""Generate a photorealistic, ultra-high-definition e-commerce catalog image of a {furn_item} ('{furniture_name}'). 
 Crucial Structure: The furniture features {geom_struct} viewed from a {camera_angle}. 
@@ -260,23 +304,18 @@ Environment: {white_bg}{notes_part}"""
             prompt_mj = f"""Commercial product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_color} {f_texture}, {w_name} wooden legs and frame with {w_finish} finish. Shot from {camera_angle}, studio lighting, highly detailed macro texture, 8k resolution, photorealistic, catalog style{notes_part} --no {bg_neg}, suede, velvet, leather, shadows, text --ar 1:1 --v 6.1 --style raw"""
 
         elif mode == "fabric_only":
-            prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
-[INPUT IMAGE REFERENCES]:
-- TARGET FURNITURE: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
-- FABRIC SWATCH: Reference for upholstery textile weave, yarn density, and hue ('{f_name}': {f_color}, {f_texture}).
+            prompt_ai_studio = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer and AI image editor.
+IMAGE IDENTIFICATION (Order-Independent):
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+- FABRIC SWATCH: Locate the image containing the fabric swatch ('{f_name}').
 
-[MANDATORY GENERATION DIRECTIVE - FABRIC REPLACEMENT]:
-Photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with the following strict material replacements:
-1. UPHOLSTERY FABRIC LOCK: Accurately replace all upholstery fabric with the exact textile weave pattern and chromatic hue from FABRIC SWATCH ('{f_name}': {f_color}, {f_texture}). Scale down weave pattern for macroscopic realism without solid flat washes.
-2. WOOD PRESERVATION LOCK: Strictly preserve the original wooden components (legs, frame) from TARGET FURNITURE without altering their original grain or finish.
-3. TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), cushions, armrests, seams, and camera angle ({camera_angle}) from TARGET FURNITURE.{notes_part}
-* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
+TASK: Accurately replace the fabric upholstery on the TARGET FURNITURE using the FABRIC SWATCH.
+TARGET ITEM: {furn_item}.
+GEOMETRY PRESERVATION: Strictly preserve the exact shape, structural geometry ({geom_struct}), and contours of the wooden parts and cushions. Camera must be locked to {camera_angle}.
+{white_bg}
+MATERIAL APPLICATION: Apply the precise weave pattern ({f_texture}) and thread colors ({f_color}) from FABRIC SWATCH ('{f_name}'). Scale down texture dramatically (97% reduction). Retain micro-thread details without turning into a flat color. Lock exact hue.{notes_part}
 
-[ENVIRONMENT & HARDWARE]:
-- {white_bg}
-- Optics: 100MP medium format RAW, 80mm lens, f/11 aperture, ISO 64, studio strobe lighting with soft diffuse octabox fill. Razor-sharp micro-textures.
-
-Negative Prompt: CGI, 3D render, cartoon, plastic, altered wood, changed legs, wrong fabric color, generic fabric, loss of weave, faded texture, altered geometry, perspective distortion, {bg_neg}"""
+Negative Prompt: generic fabric, solid color, flat texture, loss of weave pattern, suede, velvet, leather, color shift, altered geometry, perspective distortion, {bg_neg}"""
 
             prompt_dalle = f"""Generate a photorealistic catalog image of a {furn_item} ('{furniture_name}').
 Structure: {geom_struct} at {camera_angle}.
@@ -286,23 +325,18 @@ Environment: {white_bg}{notes_part}"""
             prompt_mj = f"""Commercial product photography, {furn_item} isolated on a pure solid white background #FFFFFF, {geom_struct}, upholstered in {f_name} ({f_color}, {f_texture}), original wooden legs preserved. Shot from {camera_angle}, studio lighting, 8k resolution{notes_part} --no {bg_neg}, suede, velvet, leather, shadows, text --ar 1:1 --v 6.1 --style raw"""
 
         else: # wood_only
-            prompt_ai_studio = f"""[TASK: COMMERCIAL PRODUCT PHOTOGRAPHY | 8K RAW | STUDIO ISOLATION]
-[INPUT IMAGE REFERENCES]:
-- TARGET FURNITURE: Reference for 3D model, contours, joinery, and proportions ('{furn_item}').
-- WOOD SAMPLE: Reference for wood species, continuous anatomical grain flow, warmth, and stain tone ('{w_name}': {w_color}, {w_texture}, {w_finish}).
+            prompt_ai_studio = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer and AI image editor.
+IMAGE IDENTIFICATION (Order-Independent):
+- TARGET FURNITURE: Locate the image containing the furniture piece ('{furniture_name}').
+- WOOD SAMPLE: Locate the image containing the wood texture sample ('{w_name}').
 
-[MANDATORY GENERATION DIRECTIVE - WOOD REPLACEMENT]:
-Photograph the {furn_item} ('{furniture_name}') isolated as a master e-commerce commercial catalog photograph with the following strict material replacements:
-1. 100% UNIFORM MONOLITHIC WOOD LOCK: Replace all wooden components (legs, frame, casing, drawers) using the exact timber species, grain pattern, and stain tone from WOOD SAMPLE ('{w_name}': {w_color}, {w_texture}, {w_finish}). Natural anatomical grain flow. Zero two-tone mismatch.
-2. FABRIC PRESERVATION LOCK: Strictly preserve the original upholstery fabric, color, and weave from TARGET FURNITURE without altering cushions or textile parts.
-3. TOPOLOGICAL & GEOMETRIC LOCK: Strictly preserve the exact 3D geometry ({geom_struct}), contours, seams, and camera angle ({camera_angle}) from TARGET FURNITURE.{notes_part}
-* EXECUTION DIRECTIVE: Immediately render and output the photographic image. Do not output text-only descriptions or commentary.
+TASK: Accurately replace ONLY the wooden components (legs, frame, base) on the TARGET FURNITURE using the WOOD SAMPLE.
+TARGET ITEM: {furn_item}.
+GEOMETRY PRESERVATION: Strictly preserve the exact shape, structural geometry ({geom_struct}), contours, and original fabric upholstery. Camera locked to {camera_angle}.
+{white_bg}
+MATERIAL APPLICATION: Apply the precise wood grain flow, pores, and color ({w_color}) from WOOD SAMPLE ('{w_name}': {w_texture}, {w_finish}). Ensure grain follows natural anatomical direction.{notes_part}
 
-[ENVIRONMENT & HARDWARE]:
-- {white_bg}
-- Optics: 100MP medium format RAW, 80mm lens, f/11 aperture, ISO 64, studio strobe lighting with soft diffuse octabox fill. Razor-sharp micro-textures.
-
-Negative Prompt: CGI, 3D render, cartoon, plastic, two-tone drawers, wrong wood color, dark drawers, mismatched grain, altered fabric, changed upholstery, altered geometry, perspective distortion, {bg_neg}"""
+Negative Prompt: altered fabric, changed upholstery, color shift, flat colors, changed geometry, {bg_neg}"""
 
             prompt_dalle = f"""Generate a photorealistic catalog image of a {furn_item} ('{furniture_name}').
 Structure: {geom_struct} at {camera_angle}. Original fabric upholstery preserved.
@@ -317,12 +351,28 @@ Environment: {white_bg}{notes_part}"""
             "midjourney_v6": prompt_mj
         }
 
-    def generate_enhance_prompt(self, furniture_name: str, analysis: Dict[str, Any], notas_usuario: str = "") -> Dict[str, str]:
+    def generate_enhance_prompt(
+        self,
+        furniture_name: str,
+        analysis: Dict[str, Any],
+        notas_usuario: str = "",
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None
+    ) -> Dict[str, str]:
         furn_item = analysis.get("furniture_item", furniture_name)
         geom_struct = analysis.get("geometric_structure", "original structural geometry")
         mats = analysis.get("existing_materials", "original materials")
         white_bg = self._build_white_background_enforcement()
-        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
+        ctx_block = self._build_unified_context_block(
+            furniture_name=furniture_name,
+            tipo_mueble=tipo_mueble_usuario,
+            medidas=medidas_usuario,
+            foto_refs=foto_refs,
+            notas_usuario=notas_usuario
+        )
+        ctx_part = f"\n{ctx_block}\n" if ctx_block else ""
+        notes_part = ctx_part
         
         prompt_ai_studio = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer and AI image editor specializing in non-destructive super-resolution.
 TASK: Analyze the provided image ('{furniture_name}') very carefully. Perform an ultra-faithful super-resolution upscale.
@@ -364,7 +414,15 @@ Environment: {white_bg}{notes_part}"""
         
         mat_instruction = f"Perfectly replicate the original materials ({f_texture}). Maintain the exact original color palette ({f_color}) with absolutely NO color shift. Explicitly retain the specific weave, grain, and textile texture."
         white_bg = self._build_white_background_enforcement()
-        notes_part = f"\nSPECIAL USER DIRECTIVES: {notas_usuario}" if notas_usuario and notas_usuario.strip() else ""
+        ctx_block = self._build_unified_context_block(
+            furniture_name=furniture_name,
+            tipo_mueble=tipo_mueble_usuario,
+            medidas=medidas_usuario,
+            foto_refs=foto_refs,
+            notas_usuario=notas_usuario
+        )
+        ctx_part = f"\n{ctx_block}\n" if ctx_block else ""
+        notes_part = ctx_part
         
         base_prompt = f"""SYSTEM INSTRUCTION: You are an expert e-commerce product photographer.
 TARGET ITEM: {furn_item}.

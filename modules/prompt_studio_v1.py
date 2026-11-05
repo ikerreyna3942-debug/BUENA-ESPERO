@@ -1,3 +1,4 @@
+from modules.sku_banner import render_sku_autofill_bar
 import os
 
 import io
@@ -497,6 +498,12 @@ def render_prompt_studio():
 
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
 
+        sku_info = render_sku_autofill_bar("v1")
+        tipo_mueble_usuario = sku_info["tipo_mueble"]
+        medidas_usuario = sku_info["medidas"]
+        notas_usuario = sku_info["notas_usuario"]
+        loaded_data = sku_info["data_loaded"]
+
         st.markdown('<div class="studio-card-title">🎯 1. ¿Qué deseas hacer?</div>', unsafe_allow_html=True)
 
 
@@ -699,13 +706,19 @@ def render_prompt_studio():
 
                     num_imgs = 1 if usar_prompts_clasicos else len(mueble_up)
 
+                    foto_refs = {
+                        "mueble": (mueble_up[0].name if isinstance(mueble_up, list) else mueble_up.name) if mueble_up else (loaded_data.get("foto_mueble_nom", "") if loaded_data else ""),
+                        "tela": (tela_name if tela_name else (loaded_data.get("foto_tela_nom", "") if loaded_data else "")),
+                        "madera": (madera_name if madera_name else (loaded_data.get("foto_madera_nom", "") if loaded_data else ""))
+                    }
+
 
 
                     if modo_sel == "Aumento HD":
 
                         ana = ai_prompt_service.analyze_furniture_for_enhancement(m_bytes)
 
-                        prompts = ai_prompt_service.generate_enhance_prompt(m_name, ana)
+                        prompts = ai_prompt_service.generate_enhance_prompt(m_name, ana, notas_usuario=notas_usuario, tipo_mueble_usuario=tipo_mueble_usuario, medidas_usuario=medidas_usuario, foto_refs=foto_refs)
 
                         st.session_state["last_studio_result"] = {
 
@@ -729,7 +742,11 @@ def render_prompt_studio():
 
                             "fabric_only", m_name, analysis=ana,
 
-                            num_furniture_images=num_imgs
+                            num_furniture_images=num_imgs,
+                            notas_usuario=notas_usuario,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            foto_refs=foto_refs
 
                         )
 
@@ -785,7 +802,7 @@ def render_prompt_studio():
                     elif modo_sel == "Extraer Mueble (Fondo Blanco)":
 
                         m_ana = ai_prompt_service.analyze_furniture_for_enhancement(m_bytes)
-                        prompts = ai_prompt_service.generate_extraction_prompt(m_name, m_ana)
+                        prompts = ai_prompt_service.generate_extraction_prompt(m_name, m_ana, notas_usuario=notas_usuario, tipo_mueble_usuario=tipo_mueble_usuario, medidas_usuario=medidas_usuario, foto_refs=foto_refs)
 
                         st.session_state["last_studio_result"] = {
                             "modo": modo_sel,
@@ -815,8 +832,11 @@ def render_prompt_studio():
 
                             fondo_blanco_sin_sombras=fondo_blanco,
 
-                            furniture_analysis=m_ana
-
+                            furniture_analysis=m_ana,
+                            notas_usuario=notas_usuario,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            foto_refs=foto_refs
                         )
 
                         st.session_state["last_studio_result"] = {
@@ -859,8 +879,11 @@ def render_prompt_studio():
 
                             fondo_blanco_sin_sombras=fondo_blanco,
 
-                            furniture_analysis=m_ana
-
+                            furniture_analysis=m_ana,
+                            notas_usuario=notas_usuario,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            foto_refs=foto_refs
                         )
 
                         st.session_state["last_studio_result"] = {
@@ -909,8 +932,11 @@ def render_prompt_studio():
 
                             fondo_blanco_sin_sombras=fondo_blanco,
 
-                            furniture_analysis=m_ana
-
+                            furniture_analysis=m_ana,
+                            notas_usuario=notas_usuario,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            foto_refs=foto_refs
                         )
 
                         st.session_state["last_studio_result"] = {

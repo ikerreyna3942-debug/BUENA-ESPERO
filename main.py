@@ -31,12 +31,13 @@ def main():
     version = st.sidebar.radio(
         "📌 Versión del estudio:",
         [
-            "V5 Multi-Vistas Pro (1 Solo Prompt)",
+            "V5 Nano Banana Pro (Vistas y Maderas)",
             "V4 Ultimate (Nuevas Casillas)",
             "V3 Nivel Dios (Recomendado)",
             "V2 Optimizado",
             "V1 Clásica original"
-        ]
+        ],
+        index=1  # Default to V4 Ultimate
     )
     st.sidebar.markdown("---")
     
@@ -52,7 +53,7 @@ def main():
     """)
     st.sidebar.markdown("---")
     
-    if version == "V5 Multi-Vistas Pro (1 Solo Prompt)":
+    if version == "V5 Nano Banana Pro (Vistas y Maderas)":
         render_v5()
     elif version == "V4 Ultimate (Nuevas Casillas)":
         render_v4()

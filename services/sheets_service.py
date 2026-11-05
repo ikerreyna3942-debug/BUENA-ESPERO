@@ -45,6 +45,7 @@ class SheetsService:
         self._drive_folder_tree_cache: Dict[str, tuple] = {}
         self._sheet_name_datos_general: Optional[str] = None
         self._sheet_name_fotos_norm: Optional[str] = None
+        self._sku_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._init_service()
 
     @property
@@ -115,6 +116,7 @@ class SheetsService:
         self._drive_folder_tree_cache.clear()
         self._sheet_name_datos_general = None
         self._sheet_name_fotos_norm = None
+        self._sku_catalog_cache = None
 
     def get_datos_general_tab_name(self) -> str:
         """Determina dinámicamente el nombre real de la pestaña (ej. 'DATOS GENERAL' o 'DATOS GENERALES')."""
@@ -929,6 +931,143 @@ class SheetsService:
                 return False
 
 
+
+
+    def get_furniture_by_sku(self, sku: str) -> Optional[Dict[str, Any]]:
+        """
+        Busca un producto por SKU en 'DATOS GENERAL' (100% SOLO LECTURA).
+        Extrae estrictamente:
+        - tipo_mueble (Columna Y, fallback Columna P)
+        - medidas (Frente, Fondo, Alto, Diámetro, Piso-Asiento de Columnas C a G)
+        - nombre (para referencia visual)
+        - fotos_referencia (nombres de fotos en Col AA, AD, AG, AJ si existen)
+        """
+        if not sku or not str(sku).strip():
+            return None
+        sku_clean = str(sku).strip().upper()
+
+        if not hasattr(self, "_sku_catalog_cache") or self._sku_catalog_cache is None:
+            self._load_sku_catalog_cache()
+
+        if self._sku_catalog_cache and sku_clean in self._sku_catalog_cache:
+            return self._sku_catalog_cache[sku_clean]
+
+        # Búsqueda parcial o flexible
+        if self._sku_catalog_cache:
+            for k, v in self._sku_catalog_cache.items():
+                if sku_clean == k or sku_clean in k or k in sku_clean:
+                    return v
+
+        return None
+
+    def _load_sku_catalog_cache(self):
+        """Carga en memoria el diccionario de SKUs de DATOS GENERAL de forma 100% segura y SOLO LECTURA."""
+        self._sku_catalog_cache = {}
+        disk_cache = Path(__file__).resolve().parent.parent / "sku_catalog_cache.json"
+        if disk_cache.exists():
+            try:
+                import json
+                with open(disk_cache, "r", encoding="utf-8") as cf:
+                    loaded = json.load(cf)
+                    if loaded and isinstance(loaded, dict):
+                        self._sku_catalog_cache = loaded
+                        return
+            except Exception:
+                pass
+        if not self.service:
+            cache_file = Path(__file__).resolve().parent.parent / "datos_general_cache.json"
+            if cache_file.exists():
+                try:
+                    with open(cache_file, "r", encoding="utf-8") as cf:
+                        prods = json.load(cf)
+                        for p in prods:
+                            s = str(p.get("sku", "")).strip().upper()
+                            if s:
+                                se = p.get("sin_empaque", {})
+                                fr = str(se.get("frente", "")).strip()
+                                fo = str(se.get("fondo", "")).strip()
+                                al = str(se.get("alto", "")).strip()
+                                di = str(se.get("diametro", "")).strip()
+                                pi = str(se.get("piso_asiento", "")).strip()
+                                
+                                m_parts = []
+                                if di and di.upper() not in ["N/A", "NONE", "0", "N/D", "-"]:
+                                    m_parts.append(f"D. {di} cm")
+                                else:
+                                    if fr: m_parts.append(f"{fr} cm frente")
+                                    if fo: m_parts.append(f"{fo} cm fondo")
+                                if al: m_parts.append(f"{al} cm alto")
+                                if pi and pi.upper() not in ["N/A", "NONE", "0", "-"]:
+                                    m_parts.append(f"{pi} cm piso al asiento")
+                                m_str = " x ".join(m_parts) if m_parts else ""
+                                
+                                fts = p.get("fotos", {})
+                                self._sku_catalog_cache[s] = {
+                                    "sku": p.get("sku", ""),
+                                    "nombre": p.get("nombre_viejo", "") or p.get("nombre_nuevo", ""),
+                                    "tipo_mueble": p.get("tipo_mueble", "") or p.get("categoria", ""),
+                                    "medidas": m_str,
+                                    "foto_mueble_nom": fts.get("mueble_nombre", ""),
+                                    "foto_tela_nom": fts.get("tela_nombre", ""),
+                                    "foto_madera_nom": fts.get("madera_nombre", ""),
+                                    "foto_swatch_nom": fts.get("swatch_nombre", "")
+                                }
+                except Exception:
+                    pass
+            return
+
+        try:
+            tab_dg = self.get_datos_general_tab_name()
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{tab_dg}'!A4:AJ",
+                valueRenderOption="FORMATTED_VALUE"
+            ).execute()
+            rows = res.get("values", [])
+            for r in rows:
+                row_sku = str(r[0]).strip() if len(r) > 0 and r[0] else ""
+                if not row_sku:
+                    continue
+                row_sku_upper = row_sku.upper()
+                nombre = str(r[1]).strip() if len(r) > 1 and r[1] else ""
+                frente = str(r[2]).strip() if len(r) > 2 and r[2] else ""
+                fondo = str(r[3]).strip() if len(r) > 3 and r[3] else ""
+                alto = str(r[4]).strip() if len(r) > 4 and r[4] else ""
+                diam = str(r[5]).strip() if len(r) > 5 and r[5] else ""
+                piso = str(r[6]).strip() if len(r) > 6 and r[6] else ""
+                cat = str(r[15]).strip() if len(r) > 15 and r[15] else ""
+                tipo = str(r[24]).strip() if len(r) > 24 and r[24] else ""
+
+                tipo_final = tipo if tipo else cat
+
+                medidas_parts = []
+                if diam and diam.upper() not in ["N/A", "NONE", "0", "N/D", "-"]:
+                    medidas_parts.append(f"D. {diam} cm")
+                else:
+                    if frente: medidas_parts.append(f"{frente} cm frente")
+                    if fondo: medidas_parts.append(f"{fondo} cm fondo")
+                if alto: medidas_parts.append(f"{alto} cm alto")
+                if piso and piso.upper() not in ["N/A", "NONE", "0", "-"]:
+                    medidas_parts.append(f"{piso} cm piso al asiento")
+                medidas_str = " x ".join(medidas_parts) if medidas_parts else ""
+
+                foto_mueble = str(r[26]).strip() if len(r) > 26 and r[26] else ""
+                foto_tela = str(r[29]).strip() if len(r) > 29 and r[29] else ""
+                foto_madera = str(r[32]).strip() if len(r) > 32 and r[32] else ""
+                foto_swatch = str(r[35]).strip() if len(r) > 35 and r[35] else ""
+
+                self._sku_catalog_cache[row_sku_upper] = {
+                    "sku": row_sku,
+                    "nombre": nombre,
+                    "tipo_mueble": tipo_final,
+                    "medidas": medidas_str,
+                    "foto_mueble_nom": foto_mueble,
+                    "foto_tela_nom": foto_tela,
+                    "foto_madera_nom": foto_madera,
+                    "foto_swatch_nom": foto_swatch
+                }
+        except Exception as e:
+            print(f"[SheetsService] Error cargando catálogo de SKUs: {e}")
 
     def get_pending_products(self) -> List[Dict[str, Any]]:
         """Obtiene la lista de productos de DATOS GENERAL, clasificando los que no tienen fotos."""

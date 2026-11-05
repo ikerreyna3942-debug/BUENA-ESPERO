@@ -1,3 +1,4 @@
+from modules.sku_banner import render_sku_autofill_bar
 import os
 import io
 import zipfile
@@ -217,6 +218,11 @@ def render_prompt_studio_v5():
 
     with col1:
         st.markdown('<div class="studio-card">', unsafe_allow_html=True)
+        sku_info = render_sku_autofill_bar("v5")
+        tipo_mueble_usuario = sku_info["tipo_mueble"]
+        medidas_usuario = sku_info["medidas"]
+        notas_usuario_sku = sku_info["notas_usuario"]
+        loaded_data = sku_info["data_loaded"]
         st.markdown('<div class="studio-card-title">🎯 1. Configuración de Vistas y Materiales</div>', unsafe_allow_html=True)
         
         # CASILLA 1: Foto(s) del Mueble
