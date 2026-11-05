@@ -5,7 +5,15 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from PIL import Image
-from pydantic import BaseModel, Field
+try:
+    from pydantic import BaseModel, Field
+except ImportError:
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    def Field(*args, **kwargs):
+        return None
 
 # Modelos Pydantic para Structured Outputs Avanzados
 class MaterialAnalysisV5(BaseModel):

@@ -203,7 +203,7 @@ def render_prompt_studio_v5():
                 )
         with col_clr:
             if st.button("🗑️ Limpiar Todo", key="btn_clear_studio_v5", use_container_width=True):
-                keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith("last_studio_result") or k.startswith("st_") or k.startswith("sb_") or k.startswith("txt_")]
+                keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith(("last_studio_result", "st_", "sb_", "txt_", "sku_", "field_", "rad_", "studio_", "render_", "cp_"))]
                 for k in keys_to_del:
                     del st.session_state[k]
                 st.session_state.clear_key_v5 = st.session_state.get("clear_key_v5", 0) + 1
