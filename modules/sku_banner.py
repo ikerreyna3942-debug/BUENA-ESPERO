@@ -13,15 +13,12 @@ def render_sku_autofill_bar(version_key: str):
     k_sku = f"sku_input_{version_key}"
     k_tipo = f"tipo_mueble_{version_key}"
     k_medidas = f"medidas_{version_key}"
-    k_notas = f"notas_{version_key}"
     k_loaded = f"sku_loaded_data_{version_key}"
 
     if k_tipo not in st.session_state:
         st.session_state[k_tipo] = ""
     if k_medidas not in st.session_state:
         st.session_state[k_medidas] = ""
-    if k_notas not in st.session_state:
-        st.session_state[k_notas] = ""
 
     st.markdown("""
     <div style="background: linear-gradient(135deg, #1E293B, #283548); border: 1px solid #3B82F6; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);">
@@ -84,18 +81,9 @@ def render_sku_autofill_bar(version_key: str):
             key=f"field_medidas_{version_key}"
         )
 
-    st.session_state[k_notas] = st.text_area(
-        "💬 Mis Comentarios e Instrucciones Especiales para el Prompt:",
-        value=st.session_state[k_notas],
-        placeholder="Escribe aquí cualquier indicación para el prompt (ej. ángulo de cámara picado, luz suave de mañana, terraza moderna, madera teca mate sin reflejos, fondo blanco de estudio puro...)",
-        key=f"field_notas_{version_key}",
-        help="Estas notas se inyectarán con alta prioridad en el prompt generado."
-    )
-
     return {
         "sku": sku_val.strip() if sku_val else "",
         "tipo_mueble": st.session_state[k_tipo].strip(),
         "medidas": st.session_state[k_medidas].strip(),
-        "notas_usuario": st.session_state[k_notas].strip(),
         "data_loaded": data_loaded
     }
