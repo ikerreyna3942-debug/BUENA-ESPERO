@@ -169,10 +169,10 @@ Analyze this material sample ({material_type}) with microscopic precision:
                 furniture_item=inferred_type,
                 camera_angle="0-degree frontal and 3/4 perspective",
                 lighting_direction="soft studio lighting with subtle fill",
-                geometric_structure="clean geometric joinery and exact proportional dimensions as specified by user",
-                wood_and_finish_analysis="warm natural honey oak with continuous horizontal grain flow and satin finish",
-                upholstery_analysis="none (100% solid wood construction)",
-                existing_materials="monolithic natural light oak wood with continuous horizontal grain"
+                geometric_structure="authentic 3D structural geometry, physical proportions, and base architecture directly from reference photos",
+                wood_and_finish_analysis="authentic materials, surface textures, and finishes directly from reference photos",
+                upholstery_analysis="as shown in reference photos",
+                existing_materials="authentic materials and finishes directly from reference photos"
             ).model_dump()
             
         try:
@@ -282,10 +282,10 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
                 furniture_item=inferred_type,
                 camera_angle="0-degree frontal and 3/4 perspective",
                 lighting_direction="soft studio lighting with subtle fill",
-                geometric_structure="clean geometric joinery and exact proportional dimensions as specified by user",
-                wood_and_finish_analysis="warm natural honey oak with continuous horizontal grain flow and satin finish",
-                upholstery_analysis="none (100% solid wood construction)",
-                existing_materials="monolithic natural light oak wood with continuous horizontal grain"
+                geometric_structure="authentic 3D structural geometry, physical proportions, and base architecture directly from reference photos",
+                wood_and_finish_analysis="authentic materials, surface textures, and finishes directly from reference photos",
+                upholstery_analysis="as shown in reference photos",
+                existing_materials="authentic materials and finishes directly from reference photos"
             ).model_dump()
 
     def _build_photo_hardware_str(self) -> str:
@@ -400,26 +400,26 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             }
 
         elif category == "table":
-            parts_str = "tabletop surface, perimeter beveled edges, apron under-structure, and legs or pedestal base"
-            wood_parts_ais = "tabletop surface, edge bevels, apron, and legs / base"
+            parts_str = "tabletop surface, perimeter edges, under-structure, and legs/pedestal/sculptural base"
+            wood_parts_ais = "tabletop surface, perimeter edges, and base / legs"
             mirror_optics = ""
             geometry_clone = (
-                f"[GEOMETRY & PROTOTYPE FREEZE]: Strictly duplicate the exact tabletop silhouette, edge profile, and base joinery ({geom_struct}) from Image 1. Proportions strictly locked 1:1. Freeze the exact natural orientation from Image 1."
+                f"[GEOMETRY & PROTOTYPE FREEZE]: Strictly duplicate the exact tabletop silhouette, edge profile, and authentic base architecture ({geom_struct}) from Image 1. Proportions strictly locked 1:1. Freeze the exact natural orientation from Image 1."
             )
-            neg_add = ", contrasting tabletop, mismatched legs, two-tone wood"
+            neg_add = ", altered tabletop, redesigned base, altered leg architecture, cabinet doors, drawers, unwanted wooden apron"
             v11_angles = {
-                "vista_1_3_4_derecha": "3/4 isometric perspective at a 45-degree angle facing right. Elevated 15° to display tabletop surface, edge bevel, and leg stance.",
-                "vista_2_lateral": "Strict orthogonal 90-degree lateral side profile view showing tabletop end profile, apron clearance, and side leg silhouette.",
-                "vista_3_frente": "Direct 0-degree front elevation view at eye-level center, showcasing tabletop edge thickness, apron joinery, and leg stance.",
-                "vista_4_picada": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the tabletop, emphasizing full continuous wood grain surface and perimeter joinery.",
-                "vista_5_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the tabletop surface, showcasing the continuous horizontal wood grain patterns and perimeter bevel."
+                "vista_1_3_4_derecha": "3/4 isometric perspective at a 45-degree angle facing right. Elevated 15° to display tabletop surface, edge contour, and full base/leg stance.",
+                "vista_2_lateral": "Strict orthogonal 90-degree lateral side profile view showing tabletop end profile, clearance, and side silhouette.",
+                "vista_3_frente": "Direct 0-degree front elevation view at eye-level center, showcasing tabletop edge thickness, full architectural silhouette, and authentic base/leg stance directly from Image 1.",
+                "vista_4_picada": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the tabletop, emphasizing full surface texture, perimeter contours, and base architecture.",
+                "vista_5_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the tabletop surface, showcasing authentic surface texture, material pattern, and tabletop perimeter contour."
             }
             v21_angles = {
-                "vista_2_1_frontal": "Direct 0-degree front elevation view at eye-level center, showcasing tabletop edge thickness, apron joinery, and leg stance.",
-                "vista_2_1_perspectiva": "Commercial 3/4 perspective shot at a 45-degree angle, displaying expansive tabletop surface, side depth, and three-dimensional leg architecture.",
-                "vista_2_1_lateral": "Strict orthogonal 90-degree lateral side profile view showing tabletop end profile, apron clearance, and side leg silhouette.",
-                "vista_2_1_picada_frontal": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the tabletop, emphasizing full continuous wood grain surface and perimeter joinery.",
-                "vista_2_1_superior_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the tabletop surface, showcasing the continuous horizontal wood grain patterns and perimeter bevel."
+                "vista_2_1_frontal": "Direct 0-degree front elevation view at eye-level center, showcasing tabletop edge thickness, full architectural silhouette, and authentic base/leg architecture directly from Image 1.",
+                "vista_2_1_perspectiva": "Commercial 3/4 perspective shot at a 45-degree angle, displaying expansive tabletop surface, side depth, and three-dimensional base/leg architecture.",
+                "vista_2_1_lateral": "Strict orthogonal 90-degree lateral side profile view showing tabletop end profile, clearance, and side silhouette.",
+                "vista_2_1_picada_frontal": "High-angle elevated 3/4 semi-top perspective shot at 60°-70° looking down at the tabletop, emphasizing tabletop surface texture, perimeter contours, and base architecture.",
+                "vista_2_1_superior_cenital": "Strict 90-degree orthogonal overhead flat top-down view looking straight down at the tabletop surface, showcasing authentic surface texture, material pattern, and tabletop perimeter contour."
             }
 
         elif category == "bed":
