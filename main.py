@@ -39,7 +39,7 @@ def main():
             "V2 Optimizado",
             "V1 Clásica original"
         ],
-        index=0  # Default: V6 Unificado
+        index=1  # Default: V5 Nano Banana Pro (Vistas y Maderas)
     )
     st.sidebar.markdown("---")
     
