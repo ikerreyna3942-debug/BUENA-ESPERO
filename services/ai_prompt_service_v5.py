@@ -503,7 +503,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             "v21_angles": v21_angles
         }
 
-    def generate_vistas_1_1_prompts(
+    def generate_vistas_prompts(
         self,
         furniture_name: str,
         furniture_analysis: Optional[Dict[str, Any]] = None,
@@ -519,7 +519,10 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Genera el set 'Vistas (1.1)' con las 5 vistas canónicas completas con arquitectura de Alta Densidad de Tokens.
+        Genera el set oficial unificado de 5 vistas canónicas de catálogo comercial en 8K.
+        Garantiza 100% consistencia de identidad física (mismo mueble, color, textura y geometría)
+        sobre fondo blanco puro #FFFFFF con 0% sombras de piso, optimizado para todos los modelos
+        de Gemini / Nano Banana en Google AI Studio y ChatGPT / DALL-E 3.
         """
         ma = furniture_analysis or {}
         fa = fabric_analysis or {}
@@ -529,10 +532,11 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             furn_item = tipo_mueble_usuario.strip()
         else:
             furn_item = ma.get("furniture_item", furniture_name)
-            if "directives:" in furn_item:
-                furn_item = furn_item.split("directives:")[0].strip()
+            if "directives:" in str(furn_item).lower():
+                furn_item = furniture_name
             if not furn_item:
                 furn_item = furniture_name
+
         geom_struct = ma.get("geometric_structure", "authentic 3D structural geometry and proportions from reference photos")
         existing_mats = ma.get("existing_materials", "authentic materials and finishes from reference photos")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
@@ -549,9 +553,12 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         if foto_refs and isinstance(foto_refs, dict):
             ref_lines = [f'    {k.capitalize()}: "{v}"' for k, v in foto_refs.items() if v]
             if ref_lines:
-                notes_parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):\n" + "\n".join(ref_lines))
+                notes_parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):
+" + "
+".join(ref_lines))
 
-        combined_notes = "\n".join(notes_parts)
+        combined_notes = "
+".join(notes_parts)
 
         # Detección Universal de Perfil de Mueble, Medidas y Óptica
         profile = self._detect_furniture_profile(furn_item, combined_notes, geom_struct)
@@ -575,18 +582,12 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         wood_file_str = ", ".join(f"'{fn}'" for fn in wood_filenames) if wood_filenames else ""
         ref_file_str = ", ".join(f"'{fn}'" for fn in reference_filenames) if reference_filenames else ""
 
-        # Identificación de imágenes y candados de material con Alta Densidad de Tokens
         mat_rules = []
         id_blocks = [
             f"- IMAGE 1 (TARGET FURNITURE) [File: {furn_file_str}]: Reference for 3D model, proportions, silhouette, and joinery ('{furn_item}')."
         ]
 
         has_wood_sample = bool(wa) or ma.get("has_wood_sample", False)
-        
-        # Descripción de la madera detectada en el mueble original (Casilla 1)
-        wood_from_furniture = ma.get("wood_and_finish_analysis", "") or ma.get("wood_details", "") or existing_mats
-        if not wood_from_furniture or "original" in wood_from_furniture.lower():
-            wood_from_furniture = "natural light honey oak with warm amber undertones, fine continuous horizontal wood grain pores, and oil-rubbed satin sheen"
 
         if has_wood_sample:
             w_name = wa.get("name", "Roble Claro Natural / White Oak Swatch") if wa else "Roble Claro Natural / White Oak Swatch"
@@ -612,10 +613,8 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
 • Image 2 (Attached Photo - Wood Swatch Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture})."""
 
-            wood_ais_lock = f"Sample and transfer the exact timber stain tone, warmth, and anatomical grain flow directly from the pixels of Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Preserve natural timber saturation and warmth; do not bleach or wash out. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
-
-            mat_directive_label = "1. 100% MONOLITHIC WOOD LOCK:"
-            mat_directive_body = wood_ais_lock
+            mat_directive_label = "1. 100% FROZEN PHYSICAL IDENTITY LOCK (MONOLITHIC WOOD):"
+            mat_directive_body = f"Clone 100% monolithic wood species, anatomical grain flow, stain tone, warmth, and surface sheen directly from Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden surfaces ({profile['wood_parts_ais']}) in every view. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones. Preserve identical timber tone and saturation across every single turn."
 
             dalle_wood_summary = f"Image 2: '{w_name}' ({w_color}, {w_texture})"
             dalle_title_suffix = f" in authentic {w_name} finish"
@@ -632,8 +631,8 @@ Crafted from authentic solid wood with continuous grain flow. Sample and replica
 
             ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture & Authentic Materials): 3D model, authentic architecture, and genuine materials/textures of '{furn_item}' ({existing_mats})."""
 
-            mat_directive_label = "1. 100% AUTHENTIC MATERIAL & FINISH FIDELITY:"
-            mat_directive_body = f"Sample and replicate 100% of the authentic materials, surface textures, colors, and finishes directly from the pixels of Image 1 across all components ({profile['wood_parts_ais']}). Strictly preserve genuine surface textures (e.g. natural stone, marble veining, matte lacquer, metal, or timber) and maintain all natural color contrasts and dual-tones (such as light tabletops with dark/black sculptural bases) without bleaching, hue shifts, or forced material substitution."
+            mat_directive_label = "1. 100% FROZEN PHYSICAL IDENTITY LOCK (COLOR, TEXTURE & MATERIAL):"
+            mat_directive_body = f"Sample and freeze 100% of the authentic materials, exact color palette/saturation, surface textures, and finishes directly from Image 1 across all components ({profile['wood_parts_ais']}). Strictly maintain absolute cross-turn consistency: identical tabletop color/texture (e.g. natural stone, marble veining, or timber), identical base/legs color (e.g. matte black sculptural base, sphere and column architecture), and identical surface sheen. Maintain all natural color contrasts and dual-tones without bleaching, hue shifts, or material substitution. ZERO color changes, ZERO material variation across turns."
 
             dalle_wood_summary = f"Image 1: '{furn_item}', authentic materials and surface finishes ({existing_mats})"
             dalle_title_suffix = f", preserving authentic materials, dual-tone finishes, and structural geometry directly from original reference photo (Image 1)"
@@ -663,321 +662,22 @@ Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replic
             lock_parts.append(profile["dimensions_rule"])
         if profile["mirror_optics"]:
             lock_parts.append(profile["mirror_optics"])
-        proportions_lock = "\n".join(lock_parts)
+        proportions_lock = "
+".join(lock_parts)
 
-        materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
-        image_id_final_block = "[INPUT IMAGE REFERENCES]:\n" + "\n".join(id_blocks)
+        materials_final_block = "
+".join(mat_rules) + "
+" + proportions_lock
+        image_id_final_block = "[INPUT IMAGE REFERENCES]:
+" + "
+".join(id_blocks)
 
-        mirror_optics_dalle = f"The central glass pane is an authentic high-clarity 4mm silvered reflective mirror with real optical physics, subtle diffuse studio highlight gradient, and a visible perimeter bevel where it joins the inner timber frame rebate." if is_mirror else ""
-        dalle_dimensions = profile["dimensions_rule"].replace("• ", "") if profile["dimensions_rule"] else ""
-
-        v11_a = profile["v11_angles"]
-        vistas_specs = [
-            {
-                "id": "vista_1_3_4_derecha",
-                "label": "Vista 1: 3/4 Isométrica (Mirando a la Derecha)",
-                "short_name": "3/4 Isométrica Derecha",
-                "icon": "📐",
-                "angle_desc": v11_a["vista_1_3_4_derecha"],
-                "dalle_angle": f"3/4 isometric angle looking towards the right side at 45 degrees, slightly elevated. {v11_a['vista_1_3_4_derecha']}"
-            },
-            {
-                "id": "vista_2_lateral",
-                "label": "Vista 2: Perfil Lateral Estricto (90°)",
-                "short_name": "Lateral 90°",
-                "icon": "➡️",
-                "angle_desc": v11_a["vista_2_lateral"],
-                "dalle_angle": f"Pure 90-degree orthogonal side profile elevation. {v11_a['vista_2_lateral']}"
-            },
-            {
-                "id": "vista_3_frente",
-                "label": "Vista 3: Elevación Frontal Directa (0°)",
-                "short_name": "Frontal 0°",
-                "icon": "🖼️",
-                "angle_desc": v11_a["vista_3_frente"],
-                "dalle_angle": f"Direct flat 0-degree frontal view, eye-level lens, centered horizon. {v11_a['vista_3_frente']}"
-            },
-            {
-                "id": "vista_4_picada",
-                "label": "Vista 4: 3/4 Picada Alta / Semi-Arriba (60°-70°)",
-                "short_name": "3/4 Picada Alta",
-                "icon": "↗️",
-                "angle_desc": v11_a["vista_4_picada"],
-                "dalle_angle": f"Elevated 3/4 high-angle shot from above at 65 degrees looking down at the front. {v11_a['vista_4_picada']}"
-            },
-            {
-                "id": "vista_5_cenital",
-                "label": "Vista 5: Cenital Superior Plano Directo (90° desde arriba)",
-                "short_name": "Cenital 90°",
-                "icon": "🔝",
-                "angle_desc": v11_a["vista_5_cenital"],
-                "dalle_angle": f"Pure 90-degree orthogonal flat overhead top-down view looking straight down. {v11_a['vista_5_cenital']}"
-            }
-        ]
-
-        user_notes_ais = f"\n* DIRECTIVA OBLIGATORIA: {user_notes_clean}" if user_notes_clean else ""
-
-        # Líneas adicionales de perfil para Google AI Studio
-        ais_extra_directives = []
-        if profile["dimensions_rule"]:
-            ais_extra_directives.append(profile["dimensions_rule"])
-        if profile["mirror_optics"]:
-            ais_extra_directives.append(profile["mirror_optics"])
-        ais_extra_block = "\n".join(ais_extra_directives) + "\n" if ais_extra_directives else ""
-
-        individual_results = []
-        for v in vistas_specs:
-            # Prompt individual conciso y ultra-específico para Google AI Studio / Gemini Web (Argon 4 / Pro)
-            prompt_ai_studio = f"""[MODEL: GEMINI 4 ARGON / GEMINI PRO | COMMERCIAL PHOTOGRAPHY]
-{ais_image_header}
-
-DIRECTIVES:
-{mat_directive_label} {mat_directive_body}
-2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-{ais_extra_block}3. VIEW: {v['label']} - {v['angle_desc']}
-4. STUDIO & LIGHTING: {white_bg.capitalize()}. Professional commercial lighting at 5400K with soft fill, razor-sharp 8K commercial photo."""
-
-            # Prompt individual en prosa fotográfica fluida para ChatGPT / OpenAI
-            prompt_dalle = f"""A master commercial catalog photograph of the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
-Camera Perspective: {v['dalle_angle']}
-CRITICAL: Only 1 single furniture object perfectly centered in the frame. Standalone product photograph, no collage, no split view.
-
-{dalle_mat_section}
-
-Topological Geometry & Proportions:
-Strictly preserve the frozen physical prototype proportions, joinery, and natural orientation ({geom_struct}). {dalle_dimensions}
-{user_directives_block if user_notes_clean else ""}
-
-Lighting & Commercial Studio Environment:
-Set against a {white_bg}. Illuminated by balanced commercial catalog studio strobe lighting (5400K) with soft diffuse fill, preserving natural self-ambient occlusion in joinery seams and frame crevices to convey tangible weight and tactile physical realism. Captured on 100MP medium format RAW camera, 80mm lens, f/11 aperture for edge-to-edge crystalline sharpness."""
-
-            individual_results.append({
-                "id": v["id"],
-                "label": v["label"],
-                "short_name": v["short_name"],
-                "icon": v["icon"],
-                "google_ai_studio": prompt_ai_studio,
-                "chatgpt_dalle3": prompt_dalle
-            })
-
-        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO / GEMINI WEB (Argon 4 / Pro)
-        prompt_maestro_ais = f"""[MODEL: GEMINI 4 ARGON / GEMINI PRO | 5-VIEW COMMERCIAL CATALOG]
-{ais_image_header}
-
-DIRECTIVES:
-{mat_directive_label} {mat_directive_body}
-2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-{ais_extra_block}3. STUDIO & LIGHTING: {white_bg.capitalize()}. Professional commercial catalog lighting at 5400K with soft fill, razor-sharp 8K commercial photo.
-
-EXECUTION (TURN-BY-TURN):
-Generate ONE single standalone photo per turn.
-- CURRENT TURN: Generate ONLY Vista 1 (3/4 Isométrica Derecha 45°: {v11_a['vista_1_3_4_derecha']}).
-Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (Perfil Lateral 90°)."
-- Subsequent views (triggered ONLY by typing 'foto'):
-  2. Vista 2: Lateral Perfil Estricto 90° ({v11_a['vista_2_lateral']}).
-  3. Vista 3: Elevación Frontal Directa 0° ({v11_a['vista_3_frente']}).
-  4. Vista 4: 3/4 Picada Alta 65° ({v11_a['vista_4_picada']}).
-  5. Vista 5: Cenital Superior Plano 90° ({v11_a['vista_5_cenital']})."""
-
-        # 1 SOLO PROMPT MAESTRO PARA CHATGPT / OPENAI
-        prompt_maestro_dal = f"""Commercial catalog series: Generate ALL 5 SEPARATE STANDALONE catalog photographs in sequence for the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
-
-Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage, grid, or split canvas.
-
-1. FIRST IMAGE (View 1): 3/4 Isometric Perspective Facing Right (45° angle: {v11_a['vista_1_3_4_derecha']}).
-2. SECOND IMAGE (View 2): Strict Lateral Side Profile (90° orthogonal: {v11_a['vista_2_lateral']}).
-3. THIRD IMAGE (View 3): Direct Front View (0° flat frontal elevation: {v11_a['vista_3_frente']}).
-4. FOURTH IMAGE (View 4): High-Angle Semi-Top Perspective (60°-70°: {v11_a['vista_4_picada']}).
-5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View ({v11_a['vista_5_cenital']}).
-
-{dalle_mat_section}
-
-Topological Geometry & Proportions:
-Strictly duplicate the frozen physical prototype silhouette, joinery, and natural orientation ({geom_struct}). {dalle_dimensions}
-{user_directives_block if user_notes_clean else ""}
-
-Lighting & Environment:
-Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambient occlusion in frame crevices to convey authentic 3D physical volume. 100MP medium format RAW photography with edge-to-edge sharpness."""
-
-        return {
-            "google_ai_studio": prompt_maestro_ais,
-            "chatgpt_dalle3": prompt_maestro_dal,
-            "midjourney_v6": f"5 commercial luxury catalog shots of {furn_item}, {geom_struct}, white background #FFFFFF, {hardware_str} --ar 16:9 --v 6.1 --style raw",
-            "individual_vistas": individual_results
-        }
-
-    def generate_vistas_2_1_prompts(
-        self,
-        furniture_name: str,
-        furniture_analysis: Optional[Dict[str, Any]] = None,
-        fabric_analysis: Optional[Dict[str, Any]] = None,
-        wood_analysis: Optional[Dict[str, Any]] = None,
-        notas_usuario: str = "",
-        furniture_filenames: Optional[List[str]] = None,
-        wood_filenames: Optional[List[str]] = None,
-        reference_filenames: Optional[List[str]] = None,
-        tipo_mueble_usuario: str = "",
-        medidas_usuario: str = "",
-        foto_refs: Optional[Dict[str, str]] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Genera el set 'Vistas (2.1)' con las 4 vistas canónicas exactas de catálogo con arquitectura de Alta Densidad de Tokens.
-        """
-        ma = furniture_analysis or {}
-        fa = fabric_analysis or {}
-        wa = wood_analysis or {}
-
-        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
-            furn_item = tipo_mueble_usuario.strip()
-        else:
-            furn_item = ma.get("furniture_item", furniture_name)
-            if "directives:" in furn_item.lower():
-                furn_item = furniture_name
-            if not furn_item:
-                furn_item = furniture_name
-        geom_struct = ma.get("geometric_structure", "authentic 3D structural geometry and proportions from reference photos")
-        existing_mats = ma.get("existing_materials", "authentic materials and finishes from reference photos")
-        if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
-            existing_mats = "authentic materials and surface finishes from reference photos"
-
-        # Inyectar Tipo de Mueble y Medidas si no están ya en notas_usuario
-        notes_parts = []
-        if notas_usuario and notas_usuario.strip():
-            notes_parts.append(notas_usuario.strip())
-        if tipo_mueble_usuario and tipo_mueble_usuario.strip() and tipo_mueble_usuario.lower() not in (notas_usuario or "").lower():
-            notes_parts.append(f"TARGET ITEM / TIPO DE MUEBLE: {tipo_mueble_usuario.strip()}")
-        if medidas_usuario and medidas_usuario.strip() and medidas_usuario.lower() not in (notas_usuario or "").lower():
-            notes_parts.append(f"EXACT 1:1 REAL-WORLD SCALE & DIMENSIONS: {medidas_usuario.strip()}. Maintain strict physical scale, leg-to-body ratios, and structural proportions.")
-        if foto_refs and isinstance(foto_refs, dict):
-            ref_lines = [f'    {k.capitalize()}: "{v}"' for k, v in foto_refs.items() if v]
-            if ref_lines:
-                notes_parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):\n" + "\n".join(ref_lines))
-
-        combined_notes = "\n".join(notes_parts)
-
-        # Detección Universal de Perfil de Mueble, Medidas y Óptica
-        profile = self._detect_furniture_profile(furn_item, combined_notes, geom_struct)
-        is_mirror = (profile["category"] == "mirror")
-        hardware_str = self._build_photo_hardware_str()
-        white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
-        mirror_optics_dalle = f"The central glass pane is an authentic high-clarity 4mm silvered reflective mirror with real optical physics, subtle diffuse studio highlight gradient, and a visible perimeter bevel where it joins the inner timber frame rebate." if is_mirror else ""
-
-        user_notes_clean = combined_notes
-        if user_notes_clean:
-            user_directives_block = f"""[MANDATORY USER OVERRIDE DIRECTIVES]:
-* {user_notes_clean}
-* Strictest adherence required: Ensure every specification, dimension, color tone, and material above is natively integrated without exceptions."""
-            materials_with_notes = f"{existing_mats} (User note: {user_notes_clean})"
-        else:
-            user_directives_block = ""
-            materials_with_notes = existing_mats
-
-        # Construcción de nombres de archivos para identificación transparente de tokens
-        furn_file_str = ", ".join(f"'{fn}'" for fn in furniture_filenames) if furniture_filenames else f"'{furniture_name}'"
-        wood_file_str = ", ".join(f"'{fn}'" for fn in wood_filenames) if wood_filenames else ""
-        ref_file_str = ", ".join(f"'{fn}'" for fn in reference_filenames) if reference_filenames else ""
-
-        # Identificación de imágenes y candados de material con Alta Densidad de Tokens
-        mat_rules = []
-        id_blocks = [
-            f"- IMAGE 1 (TARGET FURNITURE) [File: {furn_file_str}]: Reference for 3D model, proportions, silhouette, and joinery ('{furn_item}')."
-        ]
-
-        has_wood_sample = bool(wa) or ma.get("has_wood_sample", False)
-        
-        # Descripción de la madera detectada en el mueble original (Casilla 1)
-        wood_from_furniture = ma.get("wood_and_finish_analysis", "") or ma.get("wood_details", "") or existing_mats
-        if not wood_from_furniture or "original" in wood_from_furniture.lower():
-            wood_from_furniture = "natural light honey oak with warm amber undertones, fine continuous horizontal wood grain pores, and oil-rubbed satin sheen"
-
-        if has_wood_sample:
-            w_name = wa.get("name", "Roble Claro Natural / White Oak Swatch") if wa else "Roble Claro Natural / White Oak Swatch"
-            w_color = wa.get("color_description", materials_with_notes) if wa else materials_with_notes
-            w_texture = wa.get("texture_detail", "authentic wood grain pores") if wa else "authentic wood grain pores"
-            w_light = wa.get("light_interaction", "satin matte sheen") if wa else "satin matte sheen"
-
-            if "fallback" in w_name.lower() or "detected" in str(w_color).lower() or not w_color:
-                w_name = "Roble Claro Natural / White Oak Swatch"
-                w_color = "warm light honey natural timber tone with subtle amber undertones"
-                w_texture = "fine continuous horizontal wood grain pores, smooth satin finish"
-                w_light = "matte satin sheen"
-
-            wood_label = f" [File: {wood_file_str}]" if wood_file_str else ""
-            id_blocks.append(
-                f"- IMAGE 2 (WOOD / FINISH SWATCH) [100% GROUND TRUTH]{wood_label}: Primary source of truth for wood species, continuous grain flow, stain tone, warmth, and surface sheen ('{w_name}': {w_color}, {w_texture}, {w_light})."
-            )
-            mat_rules.append(f"""CRITICAL MATERIAL & WOOD GRAIN LOCK:
-* 100% UNIFORM MONOLITHIC FINISH: All wooden components ({profile['parts_str']}) MUST sample and match the EXACT wood finish from IMAGE 2 ('{w_name}': {w_color}, {w_texture}).
-* ZERO TWO-TONE ACCENTS: STRICTLY FORBIDDEN to introduce contrasting shades, dark walnut patches, or two-tone mismatches. All surfaces share identical continuous grain flow, color saturation, and satin matte sheen.
-* CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
-
-            ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture): 3D model, joinery, and 1:1 scale of '{furn_item}'.
-• Image 2 (Attached Photo - Wood Swatch Ground Truth): Exact wood species, grain, and stain tone ('{w_name}': {w_color}, {w_texture})."""
-
-            wood_ais_lock_21 = f"Sample and transfer the exact timber stain tone, warmth, and anatomical grain flow directly from the pixels of Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Preserve natural timber saturation and warmth; do not bleach or wash out. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
-
-            mat_directive_label = "1. 100% MONOLITHIC WOOD LOCK:"
-            mat_directive_body = wood_ais_lock_21
-
-            dalle_wood_summary = f"Image 2: '{w_name}' ({w_color}, {w_texture})"
-            dalle_title_suffix = f" in authentic {w_name} finish"
-
-            dalle_mat_section = f"""Material & Wood Fidelity:
-Crafted from authentic solid wood with continuous grain flow. Sample and replicate the exact timber stain tone, warm amber undertones, fine open pores, and satin finish from {dalle_wood_summary}. All wooden components ({profile['parts_str']}) share identical monolithic timber color and saturation without any two-tone mismatch, desaturation, or bleaching. {mirror_optics_dalle}"""
-
-        else:
-            # CASILLA 1 SOLA: El mueble ya contiene los materiales y acabados correctos en su foto original
-            mat_rules.append(f"""CRITICAL MATERIAL & SURFACE FINISH FIDELITY - CASILLA 1 MASTER:
-* 100% AUTHENTIC REPLICATION FROM IMAGE 1: Replicate 100% of the authentic materials, surface textures, colors, and finishes directly from Image 1 across all components ({profile['parts_str']}).
-* DUAL-TONE & MULTI-MATERIAL PRESERVATION: Strictly preserve all contrasting materials, two-tone finishes, and textures exactly as shown in Image 1 (e.g. natural stone/marble surfaces, mineral veining, matte black sculptural bases, metals, upholstery, or timber). ZERO artificial uniformization.
-* ZERO UNWANTED REDESIGN: Strictly forbidden to replace non-wood materials with generic wood, add unwanted doors/aprons, or force uniform monochromatic finish where contrasts exist in the prototype.""")
-
-            ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture & Authentic Materials): 3D model, authentic architecture, and genuine materials/textures of '{furn_item}' ({existing_mats})."""
-
-            mat_directive_label = "1. 100% AUTHENTIC MATERIAL & FINISH FIDELITY:"
-            mat_directive_body = f"Sample and replicate 100% of the authentic materials, surface textures, colors, and finishes directly from the pixels of Image 1 across all components ({profile['wood_parts_ais']}). Strictly preserve genuine surface textures (e.g. natural stone, marble veining, matte lacquer, metal, or timber) and maintain all natural color contrasts and dual-tones (such as light tabletops with dark/black sculptural bases) without bleaching, hue shifts, or forced material substitution."
-
-            dalle_wood_summary = f"Image 1: '{furn_item}', authentic materials and surface finishes ({existing_mats})"
-            dalle_title_suffix = f", preserving authentic materials, dual-tone finishes, and structural geometry directly from original reference photo (Image 1)"
-
-            dalle_mat_section = f"""Material & Surface Finish Fidelity:
-Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replicate genuine tabletop materials (e.g. natural stone, marble surface texture, or lacquer) and base finishes (e.g. matte black sculptural base, metals, or joinery). Preserve all authentic contrasting dual-tones and structural finishes with 0% distortion. {mirror_optics_dalle}"""
-
-        if fa:
-            f_name = fa.get("name", "Fabric Sample")
-            f_color = fa.get("color_description", "")
-            f_texture = fa.get("texture_detail", "")
-            f_light = fa.get("light_interaction", "")
-            id_blocks.append(
-                f"- IMAGE 3 (FABRIC SWATCH REFERENCE): Reference for upholstery textile weave and color ('{f_name}': {f_color}, {f_texture}, {f_light})."
-            )
-            mat_rules.append(f"""UPHOLSTERY FABRIC LOCK:
-* Apply exact upholstery weave and color from FABRIC SWATCH ('{f_name}'). Micro-texture realism, 0% color shift.""")
-
-        if ref_file_str:
-            id_blocks.append(
-                f"- AUXILIARY REFERENCES [Files: {ref_file_str}]: Auxiliary reference views for rear joints and hidden structural angles."
-            )
-
-        # Candado de medidas y proporciones 3D dinámico por categoría
-        lock_parts = [profile["geometry_clone"]]
-        if profile["dimensions_rule"]:
-            lock_parts.append(profile["dimensions_rule"])
-        if profile["mirror_optics"]:
-            lock_parts.append(profile["mirror_optics"])
-        proportions_lock = "\n".join(lock_parts)
-
-        materials_final_block = "\n".join(mat_rules) + "\n" + proportions_lock
-        image_id_final_block = "[INPUT IMAGE REFERENCES]:\n" + "\n".join(id_blocks)
-
-        mirror_optics_dalle = f"The central glass pane is an authentic high-clarity 4mm silvered reflective mirror with real optical physics, subtle diffuse studio highlight gradient, and a visible perimeter bevel where it joins the inner timber frame rebate." if is_mirror else ""
         dalle_dimensions = profile["dimensions_rule"].replace("• ", "") if profile["dimensions_rule"] else ""
 
         v21_a = profile["v21_angles"]
-        vistas_2_1_specs = [
+        vistas_specs = [
             {
-                "id": "vista_2_1_frontal",
+                "id": "vista_frontal",
                 "label": "Vista 1: Frontal Directa (0°)",
                 "short_name": "Frontal 0°",
                 "icon": "🖼️",
@@ -985,15 +685,15 @@ Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replic
                 "dalle_angle": f"Direct flat 0-degree frontal view, eye-level lens, centered horizon. {v21_a['vista_2_1_frontal']}"
             },
             {
-                "id": "vista_2_1_perspectiva",
-                "label": "Vista 2: 3/4 Perspectiva (45°)",
+                "id": "vista_perspectiva_3_4",
+                "label": "Vista 2: 3/4 Perspectiva Comercial (45°)",
                 "short_name": "3/4 Perspectiva 45°",
                 "icon": "📐",
                 "angle_desc": v21_a["vista_2_1_perspectiva"],
                 "dalle_angle": f"3/4 commercial perspective angle looking at front and side depth at 45 degrees. {v21_a['vista_2_1_perspectiva']}"
             },
             {
-                "id": "vista_2_1_lateral",
+                "id": "vista_lateral",
                 "label": "Vista 3: Lateral Perfil Estricto (90°)",
                 "short_name": "Lateral 90°",
                 "icon": "➡️",
@@ -1001,24 +701,25 @@ Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replic
                 "dalle_angle": f"Strict orthogonal 90-degree lateral side profile elevation. {v21_a['vista_2_1_lateral']}"
             },
             {
-                "id": "vista_2_1_picada_frontal",
-                "label": "Vista 4: Picada Alta / Semi-Cenital Frontal (60°-70°)",
+                "id": "vista_picada_alta",
+                "label": "Vista 4: Picada Alta / Semi-Cenital (60°-70°)",
                 "short_name": "Picada Alta 65°",
                 "icon": "↗️",
                 "angle_desc": v21_a["vista_2_1_picada_frontal"],
-                "dalle_angle": f"Elevated high-angle shot from above at 65 degrees looking down at the front. {v21_a['vista_2_1_picada_frontal']}"
+                "dalle_angle": f"Elevated high-angle shot from above at 65 degrees looking down at the front and top. {v21_a['vista_2_1_picada_frontal']}"
             },
             {
-                "id": "vista_2_1_superior_cenital",
+                "id": "vista_superior_cenital",
                 "label": "Vista 5: Superior Cenital Plano Directo (90° Desde Arriba)",
                 "short_name": "Superior Cenital 90°",
                 "icon": "🔝",
                 "angle_desc": v21_a["vista_2_1_superior_cenital"],
-                "dalle_angle": f"Pure 90-degree orthogonal flat overhead top-down view looking straight down. {v21_a['vista_2_1_superior_cenital']}"
+                "dalle_angle": f"Pure 90-degree orthogonal flat overhead top-down view looking straight down at the top surface. {v21_a['vista_2_1_superior_cenital']}"
             }
         ]
 
-        user_notes_ais = f"\n* DIRECTIVA OBLIGATORIA: {user_notes_clean}" if user_notes_clean else ""
+        user_notes_ais = f"
+* DIRECTIVA OBLIGATORIA: {user_notes_clean}" if user_notes_clean else ""
 
         # Líneas adicionales de perfil para Google AI Studio
         ais_extra_directives = []
@@ -1026,24 +727,26 @@ Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replic
             ais_extra_directives.append(profile["dimensions_rule"])
         if profile["mirror_optics"]:
             ais_extra_directives.append(profile["mirror_optics"])
-        ais_extra_block = "\n".join(ais_extra_directives) + "\n" if ais_extra_directives else ""
+        ais_extra_block = "
+".join(ais_extra_directives) + "
+" if ais_extra_directives else ""
 
         individual_results = []
-        for v in vistas_2_1_specs:
-            # Prompt individual conciso y ultra-específico para Google AI Studio / Gemini Web (Argon 4 / Pro)
-            prompt_ais = f"""[MODEL: GEMINI 4 ARGON / GEMINI PRO | COMMERCIAL PHOTOGRAPHY]
+        for v in vistas_specs:
+            prompt_ais = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | COMMERCIAL PHOTOGRAPHY]
 {ais_image_header}
 
 DIRECTIVES:
 {mat_directive_label} {mat_directive_body}
-2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-{ais_extra_block}3. VIEW: {v['label']} - {v['angle_desc']}
-4. STUDIO & LIGHTING: {white_bg.capitalize()}. Professional commercial lighting at 5400K with soft fill, razor-sharp 8K commercial photo."""
+2. 100% 3D GEOMETRY & SCALE FIDELITY: Strictly preserve the identical 3D model, joinery, and physical architecture ({geom_struct}) from Image 1. Enforce exact 1:1 real-world scale.{user_notes_ais}
+{ais_extra_block}3. VIEW: {v['label']} - {v['angle_desc']} (Preserving identical color, texture, and geometry from Image 1).
+4. STUDIO & ZERO SHADOWS: Pure seamless solid digital white background (#FFFFFF). STRICTLY ZERO GROUND SHADOWS, 0% drop shadows, 0% floor contact shadows, zero floor reflections. Crisp product cutout on pure white void, 5400K commercial lighting, razor-sharp 8K photo.
 
-            # Prompt individual en prosa fotográfica fluida para ChatGPT / OpenAI
+Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflection, grey floor, room, interior, CGI, 3D render, cartoon, plastic, color shift, changed material, redesigned base, altered legs, cabinet doors, drawers, unwanted apron, distorted geometry, text, labels, watermark."""
+
             prompt_dal = f"""A master commercial catalog photograph of the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
 Camera Perspective: {v['dalle_angle']}
-CRITICAL: Only 1 single furniture object perfectly centered in the frame. Standalone product photograph, no collage, no split view.
+CRITICAL: Only 1 single furniture object perfectly centered in the frame. Standalone product photograph, no collage, no split view. Maintain 100% identical color, material texture, and geometry from Image 1.
 
 {dalle_mat_section}
 
@@ -1052,7 +755,8 @@ Strictly preserve the frozen physical prototype proportions, joinery, and natura
 {user_directives_block if user_notes_clean else ""}
 
 Lighting & Commercial Studio Environment:
-Set against a {white_bg}. Illuminated by balanced commercial catalog studio strobe lighting (5400K) with soft diffuse fill, preserving natural self-ambient occlusion in joinery seams and frame crevices to convey tangible weight and tactile physical realism. Captured on 100MP medium format RAW camera, 80mm lens, f/11 aperture for edge-to-edge crystalline sharpness."""
+Set against a pure seamless solid digital white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, 0% floor contact shadows, pure digital cutout. Illuminated by balanced commercial catalog studio strobe lighting (5400K) with soft diffuse fill, edge-to-edge crystalline sharpness.
+Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflections, room, two-tone finish, altered legs, text, watermark."""
 
             individual_results.append({
                 "id": v["id"],
@@ -1063,29 +767,32 @@ Set against a {white_bg}. Illuminated by balanced commercial catalog studio stro
                 "chatgpt_dalle3": prompt_dal
             })
 
-        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO / GEMINI WEB (Argon 4 / Pro)
-        prompt_maestro_ais = f"""[MODEL: GEMINI 4 ARGON / GEMINI PRO | 5-VIEW COMMERCIAL CATALOG]
+        # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO / GEMINI WEB (Argon 4 / Pro / Nano Banana)
+        prompt_maestro_ais = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | 5-VIEW COMMERCIAL CATALOG]
 {ais_image_header}
 
 DIRECTIVES:
 {mat_directive_label} {mat_directive_body}
-2. 3D GEOMETRY: Preserve 100% exact dimensions and physical proportions ({geom_struct}) from Image 1.{user_notes_ais}
-{ais_extra_block}3. STUDIO & LIGHTING: {white_bg.capitalize()}. Professional commercial catalog lighting at 5400K with soft fill, razor-sharp 8K commercial photo.
+2. 100% 3D GEOMETRY & SCALE FIDELITY: Strictly preserve the identical 3D model, joinery, and physical architecture ({geom_struct}) from Image 1. Enforce exact 1:1 real-world physical scale. Do NOT alter leg architecture, do NOT redesign the tabletop or base, do NOT add cabinet doors, drawers, or aprons.{user_notes_ais}
+{ais_extra_block}3. PURE SOLID WHITE BACKGROUND & ZERO SHADOWS: {white_bg.capitalize()}. STRICTLY ZERO GROUND SHADOWS, 0% drop shadows, 0% floor contact shadows, zero floor reflections. Pure crisp isolated product cutout on pure white void.
+4. 8K COMMERCIAL PRODUCT PHOTOGRAPHY: Shot on 100MP medium-format camera, 80mm prime lens at f/11 for edge-to-edge crystalline sharpness, balanced 5400K commercial studio lighting with soft fill, ultra-realistic photorealistic textures.
 
 EXECUTION (TURN-BY-TURN):
 Generate ONE single standalone photo per turn.
-- CURRENT TURN: Generate ONLY Vista 1 (Frontal Directa 0°: {v21_a['vista_2_1_frontal']}).
+- CURRENT TURN: Generate ONLY Vista 1 (Frontal Directa 0°: {v21_a['vista_2_1_frontal']}. Preserving 100% identical color, texture, and geometry from Image 1 on solid pure white #FFFFFF with 0% ground shadows.).
 Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva 45°)."
 - Subsequent views (triggered ONLY by typing 'foto'):
-  2. Vista 2: 3/4 Perspectiva 45° ({v21_a['vista_2_1_perspectiva']}).
-  3. Vista 3: Lateral Perfil Estricto 90° ({v21_a['vista_2_1_lateral']}).
-  4. Vista 4: Picada Alta / Semi-Cenital 65° ({v21_a['vista_2_1_picada_frontal']}).
-  5. Vista 5: Superior Cenital Plano 90° ({v21_a['vista_2_1_superior_cenital']})."""
+  2. Vista 2: 3/4 Perspectiva Comercial 45° ({v21_a['vista_2_1_perspectiva']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
+  3. Vista 3: Lateral Perfil Estricto 90° ({v21_a['vista_2_1_lateral']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
+  4. Vista 4: Picada Alta / Semi-Cenital 65° ({v21_a['vista_2_1_picada_frontal']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
+  5. Vista 5: Superior Cenital Plano 90° ({v21_a['vista_2_1_superior_cenital']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
+
+Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflection, grey floor, room, interior, CGI, 3D render, cartoon, plastic, color shift, changed material, redesigned base, altered legs, cabinet doors, drawers, unwanted apron, distorted geometry, text, labels, watermark."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / OPENAI
         prompt_maestro_dal = f"""Commercial catalog series: Generate ALL 5 SEPARATE STANDALONE catalog photographs in sequence for the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
 
-Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage, grid, or split canvas.
+Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage, grid, or split canvas. Maintain 100% identical color, material texture, and geometry across all 5 images.
 
 1. FIRST IMAGE (View 1): Direct Front View (0° flat frontal elevation: {v21_a['vista_2_1_frontal']}).
 2. SECOND IMAGE (View 2): 3/4 Perspective View (45° angle: {v21_a['vista_2_1_perspectiva']}).
@@ -1096,19 +803,25 @@ Execute the image tool separately for EACH view below so they are outputted as 5
 {dalle_mat_section}
 
 Topological Geometry & Proportions:
-Strictly duplicate the frozen physical prototype silhouette, joinery, and natural orientation ({geom_struct}). {dalle_dimensions}
+Strictly duplicate the frozen physical prototype silhouette, joinery, and natural orientation ({geom_struct}). Maintain identical dimensions and architecture. {dalle_dimensions}
 {user_directives_block if user_notes_clean else ""}
 
 Lighting & Environment:
-Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambient occlusion in frame crevices to convey authentic 3D physical volume. 100MP medium format RAW photography with edge-to-edge sharpness."""
+Set against a pure seamless solid digital white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, 0% floor contact shadows, pure digital cutout. Studio strobe lighting (5400K). 100MP medium format RAW photography with edge-to-edge sharpness.
+Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflections, room, two-tone finish, altered legs, text, watermark."""
 
         return {
             "google_ai_studio": prompt_maestro_ais,
             "chatgpt_dalle3": prompt_maestro_dal,
-            "midjourney_v6": f"5 commercial luxury catalog shots of {furn_item}, {geom_struct}, white background #FFFFFF, {hardware_str} --ar 16:9 --v 6.1 --style raw",
+            "midjourney_v6": f"5 commercial luxury catalog shots of {furn_item}, {geom_struct}, white background #FFFFFF, {hardware_str} --no ground shadows, floor shadows --ar 16:9 --v 6.1 --style raw",
             "individual_vistas": individual_results
         }
 
+    def generate_vistas_1_1_prompts(self, *args, **kwargs) -> Dict[str, Any]:
+        return self.generate_vistas_prompts(*args, **kwargs)
+
+    def generate_vistas_2_1_prompts(self, *args, **kwargs) -> Dict[str, Any]:
+        return self.generate_vistas_prompts(*args, **kwargs)
     def generate_material_swap_prompts(
         self,
         mode: str,

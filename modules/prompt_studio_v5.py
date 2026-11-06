@@ -268,11 +268,7 @@ def render_prompt_studio_v5():
 
         # BOTONERA: Vistas y Herramientas
         st.markdown("###### 🎯 Generación de Vistas de Catálogo:")
-        col_b1, col_b2 = st.columns([1, 1])
-        with col_b1:
-            btn_1_1 = st.button("🎯 Vistas (1.1)", type="primary", use_container_width=True, key=f"btn_gen_11_{st.session_state.clear_key_v5}")
-        with col_b2:
-            btn_2_1 = st.button("⚡ Vistas (2.1)", type="primary", use_container_width=True, key=f"btn_gen_21_{st.session_state.clear_key_v5}")
+        btn_vistas = st.button("🎯 Generar 5 Vistas de Catálogo Oficial", type="primary", use_container_width=True, key=f"btn_gen_vistas_{st.session_state.clear_key_v5}")
 
         st.markdown("###### 🛠️ Herramientas de Estudio:")
         col_b3, col_b4 = st.columns([1, 1])
@@ -281,7 +277,7 @@ def render_prompt_studio_v5():
         with col_b4:
             btn_hd = st.button("✨ Mejora HD", use_container_width=True, key=f"btn_gen_hd_{st.session_state.clear_key_v5}")
 
-        if btn_1_1 or btn_2_1 or btn_extraer or btn_hd:
+        if btn_vistas or btn_extraer or btn_hd:
             if not mueble_actual_up and not mueble_madera_up and not mueble_ref_up:
                 st.error("⚠️ Por favor sube al menos una fotografía (mueble, muestra de madera o referencias).")
             else:
@@ -290,10 +286,8 @@ def render_prompt_studio_v5():
                     modo_nombre = "Extraer Mueble (Fondo Blanco)"
                 elif btn_hd:
                     modo_nombre = "Mejora HD"
-                elif btn_2_1:
-                    modo_nombre = "Vistas (2.1)"
                 else:
-                    modo_nombre = "Vistas (1.1)"
+                    modo_nombre = "5 Vistas de Catálogo Oficial"
                 progress_holder.info(f"⏳ Analizando fotos con Gemini Vision para generar {modo_nombre}...")
                 try:
                     # Bytes y nombres de archivos de fotos del mueble (Casilla 1)
