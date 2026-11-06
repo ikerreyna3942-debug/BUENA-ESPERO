@@ -267,8 +267,8 @@ def render_prompt_studio_v5():
         st.markdown("<br>", unsafe_allow_html=True)
 
         # BOTONERA: Vistas y Herramientas
-        st.markdown("###### 🎯 Generación de Vistas de Catálogo:")
-        btn_vistas = st.button("🎯 Generar 5 Vistas de Catálogo Oficial", type="primary", use_container_width=True, key=f"btn_gen_vistas_{st.session_state.clear_key_v5}")
+        st.markdown("###### 🎯 Generación de Set Completo de Catálogo:")
+        btn_vistas = st.button("🎯 Generar Set Completo de Catálogo Oficial (7 Vistas: 5 Ángulos + Plano Técnico + Entorno)", type="primary", use_container_width=True, key=f"btn_gen_vistas_{st.session_state.clear_key_v5}")
 
         st.markdown("###### 🛠️ Herramientas de Estudio:")
         col_b3, col_b4 = st.columns([1, 1])
@@ -287,7 +287,7 @@ def render_prompt_studio_v5():
                 elif btn_hd:
                     modo_nombre = "Mejora HD"
                 else:
-                    modo_nombre = "5 Vistas de Catálogo Oficial"
+                    modo_nombre = "Set Completo de Catálogo Oficial (7 Vistas)"
                 progress_holder.info(f"⏳ Analizando fotos con Gemini Vision para generar {modo_nombre}...")
                 try:
                     # Bytes y nombres de archivos de fotos del mueble (Casilla 1)
@@ -464,7 +464,7 @@ def render_prompt_studio_v5():
                         <div style="background: rgba(16, 185, 129, 0.15); border-left: 4px solid #10B981; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
                             <strong style="color: #10B981; font-size: 14px;">🌐 PROMPT PARA GOOGLE AI STUDIO (Nano Banana / Gemini)</strong><br>
                             <span style="color: #E2E8F0; font-size: 12px;">✅ <b>SUBE SOLO 2 FOTOS (Igual que en ChatGPT):</b> 1) Foto del Mueble y 2) Foto de la Madera. No subas fotos de referencia adicionales.<br>
-                            💬 Pega este prompt con las 2 fotos. Te dará la Foto 1; luego escribe la palabra <b>foto</b> en el chat para la siguiente vista.</span>
+                            💬 Pega este prompt con las fotos. Te dará la Vista 1; luego escribe la palabra <b>foto</b> en el chat para la siguiente vista hasta completar las 7 imágenes (5 vistas de catálogo + 1 plano técnico con medidas + 1 entorno en casa de cliente).</span>
                         </div>
                         """, unsafe_allow_html=True)
                         p_txt = prompts.get("google_ai_studio", "")

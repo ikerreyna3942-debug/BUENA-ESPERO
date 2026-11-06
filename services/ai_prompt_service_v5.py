@@ -515,6 +515,10 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             "mirror_optics": mirror_optics,
             "geometry_clone": geometry_clone,
             "dimensions_rule": dimensions_rule,
+            "width_cm": width_cm,
+            "depth_cm": depth_cm,
+            "height_cm": height_cm,
+            "diam_cm": diam_cm,
             "neg_add": neg_add,
             "v11_angles": v11_angles,
             "v21_angles": v21_angles
@@ -737,7 +741,32 @@ Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replic
             ais_extra_directives.append(profile["mirror_optics"])
         ais_extra_block = "\n".join(ais_extra_directives) + "\n" if ais_extra_directives else ""
 
+        # Preparación de medidas exactas para el Dibujo Técnico (Cotas) y Entorno
+        w_val = profile.get("width_cm")
+        d_val = profile.get("depth_cm")
+        h_val = profile.get("height_cm")
+        diam_val = profile.get("diam_cm")
+
+        lineas_medidas = []
+        if h_val:
+            lineas_medidas.append(f"Alto: {int(h_val)}")
+        if w_val:
+            lineas_medidas.append(f"Ancho: {int(w_val)}")
+        if d_val:
+            lineas_medidas.append(f"Fondo: {int(d_val)}")
+        if diam_val:
+            lineas_medidas.append(f"Diámetro: {int(diam_val)}")
+
+        if not lineas_medidas and medidas_usuario:
+            lineas_medidas.append(f"Medidas exactas: {medidas_usuario.strip()}")
+        elif not lineas_medidas:
+            lineas_medidas = ["Alto: [Según diseño]", "Ancho: [Según diseño]", "Fondo: [Según diseño]"]
+
+        medidas_bloque_str = "\n".join(lineas_medidas)
+        resumen_medidas_ais = ", ".join(lineas_medidas)
+
         individual_results = []
+        # Vistas 1 a 5: Tomas de Estudio en Fondo Blanco
         for v in vistas_specs:
             prompt_ais = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | COMMERCIAL PHOTOGRAPHY]
 TASK: Generate a hyper-realistic commercial catalog photograph of the EXACT physical furniture piece from Image 1 in {v['label']} on pure white background.
@@ -775,40 +804,140 @@ Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflections,
                 "chatgpt_dalle3": prompt_dal
             })
 
+        # Vista 6: Dibujo Técnico Isométrico con Medidas (Cotas)
+        prompt_ais_v6 = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | DIBUJO TÉCNICO ISOMÉTRICO CON COTAS]
+TASK: Generate a pure minimalist technical isometric line-art blueprint diagram with dimension arrows and numbers of the EXACT furniture from Image 1.
+
+Imagen cargada (fotos del producto):
+• Image 1: {furn_item} ('{furniture_name}')
+*Categoría de muebles para interior y exterior
+*Son productos autorizados por proveedores
+
+Creaciones de la Imagen:
+*Tamaño: 2080x2080 
+*Fondo: Blanco puro (#FFFFFF)
+
+Instrucciones para crear del dibujo:
+*Imágenes ilustrativas de técnicas isométricas, puramente lineales y minimalistas (sin sombras ni texturas)
+*Posición: Centrado y con un espacio a cada lado de 30% 
+*Vista: Isométrica
+*Perspectiva: la toma debe de ser desde arriba debe de ser 25% hacia arriba
+*No generar o crear: No color, sin sombras ni texturas, únicamente trazos lineales negros nítidos (#000000)
+*Posición: Centrado y con espacio a cada lado de 30% 
+
+Instrucciones de las medidas:
+*Altura: Al costado del mueble (siempre al lado izquierdo)
+*Fondo: Al costado (por la parte de abajo izquierda)
+*Ancho: Al enfrente del mueble (siempre por la parte de abajo)
+*No generes o coloques: No colocar más de 3 medidas (únicamente las solicitadas)
+
+Instrucciones de los números:
+*Tamaño: -90% Menor al tamaño total del dibujo
+*Posición en las flechas: centrados en las flechas a un costado, arriba o abajo según sea la medida 
+*Posición general: que empiece desde la izquierda a derecha (horizontal)
+*Color: Negro 1% más negro (#000000)
+*Separación: 10 puntos de separación a las flechas
+*No generes o coloques: Números en medio de las líneas, Texto, Letras adicionales
+
+Instrucciones de las flechas:
+*Tamaño: desde donde inicia hasta donde acaba el dibujo
+*Color: Negro (#000000)
+*Diseño: de 2 puntas, en el Inicio y final (Flecha) sin líneas intermedias, mismo grosor que el dibujo
+*Posición: 5 puntos de separación al dibujo 
+*Dirección: Paralelo al dibujo según sea la medida 
+
+Medidas a colocar:  
+{medidas_bloque_str}
+
+Negative Prompt: color, shading, gradients, realistic textures, floor shadows, drop shadows, 3D render, photographic room, watermark, extraneous text."""
+
+        prompt_dal_v6 = f"""Technical isometric blueprint diagram of the {furn_item} ('{furniture_name}') from Image 1.
+Clean minimalist black-and-white isometric line drawing on a pure solid white background (#FFFFFF) with zero color, zero shading, and zero textures.
+Includes technical dimension arrows parallel to the furniture edges with dimension numbers:
+{medidas_bloque_str}
+Height arrow on the left side, depth arrow on the lower-left, width arrow along the front bottom.
+Crisp architectural line art, high resolution, centered composition with 30% margin on all sides.
+Negative Prompt: color, photographic, gradients, shadows, 3D render, room background, watermark."""
+
+        individual_results.append({
+            "id": "vista_plano_tecnico",
+            "label": "Vista 6: 📏 Dibujo Técnico Isométrico con Medidas (Cotas)",
+            "short_name": "Plano con Medidas",
+            "icon": "📏",
+            "google_ai_studio": prompt_ais_v6,
+            "chatgpt_dalle3": prompt_dal_v6
+        })
+
+        # Vista 7: Fotografía en Entorno Realista (Casa de Cliente - Vista Lejana)
+        prompt_ais_v7 = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | FOTOGRAFÍA EN ENTORNO REALISTA - CASA DE CLIENTE]
+TASK: Place the authentic furniture piece from Image 1 into a luxury client home interior as a distant wide-angle architectural shot.
+
+• Image 1 (Target Furniture Master Reference): 3D model, authentic architecture, exact colors and genuine materials/textures of '{furn_item}'.
+
+DIRECTIVES FOR CLIENT HOME INTEGRATION:
+1. DISTANT WIDE ARCHITECTURAL PERSPECTIVE (VISTA DE LEJOS): A wide-angle architectural interior photograph capturing the luxury residential living space from a distant perspective. The furniture piece is positioned naturally in the room, captured from afar with wide lens perspective, maintaining full room context.
+2. 100% TRUE-TO-SCALE REAL-WORLD PROPORTIONS: Place the furniture piece at its EXACT real-world dimensions ({resumen_medidas_ais}). Maintain strict physical scale and height-to-width proportions relative to the room, rug, and surrounding furniture.
+3. DELIBERATE CONTRASTING ROOM PALETTE: The surrounding environment (walls, flooring, area rug, and decor) uses a complementary neutral architectural palette that deliberately CONTRASTS with the furniture's colors and finishes to make the product stand out cleanly and prominently. ZERO color blending with the background.
+4. LIVED-IN LUXURY CLIENT HOME INTERIOR: Furnished naturally as a sophisticated client's home—grounded upon an organic woven wool area rug, accompanied by elegant designer furniture (curved modern sofa in neutral tones, subtle large-scale textured canvas artwork, architectural archways, and large sheer floor-to-ceiling linen drapes).
+5. NATURAL LIGHTING & SEAMLESS GROUNDING: Soft morning daylight streams in naturally through side linen drapes, casting gentle ambient contact shadows under the legs/base to anchor the furniture realistically and organically to the floor/rug.
+6. PHOTOREALISM & SHARPNESS: Shot on medium format camera with 35mm wide architectural lens at f/8, ultra-realistic interior design commercial photography, razor-sharp focus on the furniture with natural optical depth of field.
+
+Negative Prompt: cartoon, CGI, 3D render, plastic, oversaturated, distorted scale, giant furniture, miniature furniture, matching wall colors that hide the furniture, clutter, blur, watermark, text."""
+
+        prompt_dal_v7 = f"""A wide architectural interior commercial photograph capturing a luxury high-end client home salon from a distant perspective, featuring the {furn_item} ('{furniture_name}') from Image 1.
+Placed in true-to-scale real-world proportions ({resumen_medidas_ais}) atop a soft neutral area rug.
+The surrounding room environment deliberately uses soft neutral tones that contrast with the furniture's authentic color and material finish, ensuring the product stands out prominently.
+Decorated as a genuine client's home with a distant curved sofa, architectural arched walls, large textured wall canvas, and sheer floor-to-ceiling linen drapes letting in soft natural morning daylight.
+Professional wide-angle architectural lens, edge-to-edge sharpness, photorealistic residential interior photography.
+Negative Prompt: cartoon, 3D render, CGI, distorted scale, matching colors that blend the furniture into the wall, blur, watermark."""
+
+        individual_results.append({
+            "id": "vista_entorno_cliente",
+            "label": "Vista 7: 🏡 Entorno Realista en Casa de Cliente (Vista Lejana)",
+            "short_name": "Entorno Casa Cliente",
+            "icon": "🏡",
+            "google_ai_studio": prompt_ais_v7,
+            "chatgpt_dalle3": prompt_dal_v7
+        })
+
         # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO / GEMINI WEB (Argon 4 / Pro / Nano Banana)
-        prompt_maestro_ais = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | 5-VIEW COMMERCIAL CATALOG]
-TASK: Generate hyper-realistic commercial catalog studio photographs of the EXACT physical furniture piece from Image 1 across 5 canonical product views on pure white background.
+        prompt_maestro_ais = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | 7-PIECE COMPLETE COMMERCIAL CATALOG PACK]
+TASK: Generate a complete 7-piece commercial catalog series for the EXACT physical furniture piece from Image 1: 5 canonical product views on pure white background, followed by 1 technical isometric blueprint with dimensions, and concluding with 1 realistic client home environment photograph from a distant perspective.
 
 {ais_image_header}
 
 DIRECTIVES:
 {mat_directive_label} {mat_directive_body}
 2. 100% 3D GEOMETRY & SCALE FIDELITY: Strictly preserve the identical 3D model, joinery, and physical architecture ({geom_struct}) from Image 1. Enforce exact 1:1 real-world physical scale. Do NOT alter leg architecture, do NOT redesign the tabletop or base, do NOT add cabinet doors, drawers, or aprons.{user_notes_ais}
-{ais_extra_block}3. PURE SOLID WHITE BACKGROUND & ZERO SHADOWS: {white_bg.capitalize()}. STRICTLY ZERO GROUND SHADOWS, 0% drop shadows, 0% floor contact shadows, zero floor reflections. Pure crisp isolated product cutout on pure white void.
-4. 8K COMMERCIAL PRODUCT PHOTOGRAPHY: Shot on 100MP medium-format camera, 80mm prime lens at f/11 for edge-to-edge crystalline sharpness, balanced 5400K commercial studio lighting with soft fill, ultra-realistic photorealistic textures.
+{ais_extra_block}3. PURE SOLID WHITE BACKGROUND & ZERO SHADOWS (VIEWS 1 TO 6): {white_bg.capitalize()}. STRICTLY ZERO GROUND SHADOWS, 0% drop shadows, 0% floor contact shadows, zero floor reflections. Pure crisp isolated product cutout on pure white void.
+4. 8K COMMERCIAL PRODUCT PHOTOGRAPHY & REALISM: Shot on 100MP medium-format camera, 80mm prime lens at f/11 for edge-to-edge crystalline sharpness, balanced 5400K commercial studio lighting with soft fill, ultra-realistic photorealistic textures.
 
 EXECUTION (TURN-BY-TURN):
-Generate ONE single standalone photo per turn.
+Generate ONE single standalone image per turn.
 - CURRENT TURN: Generate ONLY Vista 1 (Frontal Directa 0°: {v21_a['vista_2_1_frontal']}. Preserving 100% identical color, texture, and geometry from Image 1 on solid pure white #FFFFFF with 0% ground shadows.).
-Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva 45°)."
+Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva Comercial 45°)."
 - Subsequent views (triggered ONLY by typing 'foto'):
   2. Vista 2: 3/4 Perspectiva Comercial 45° ({v21_a['vista_2_1_perspectiva']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
   3. Vista 3: Lateral Perfil Estricto 90° ({v21_a['vista_2_1_lateral']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
   4. Vista 4: Picada Alta / Semi-Cenital 65° ({v21_a['vista_2_1_picada_frontal']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
   5. Vista 5: Superior Cenital Plano 90° ({v21_a['vista_2_1_superior_cenital']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
+  6. Vista 6: Dibujo Técnico Isométrico con Medidas (Plano lineal isométrico minimalista sin color ni sombras, fondo blanco #FFFFFF, flechas y cotas exactas: {resumen_medidas_ais}).
+  7. Vista 7: Fotografía en Entorno Realista - Casa de Cliente (Toma arquitectónica amplia de vista lejana, mueble a su escala 1:1 real, colores del entorno contrastantes con el producto para destacarlo, ambientado de forma realista con otros muebles como si fuera la casa de un cliente).
 
-Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflection, grey floor, room, interior, CGI, 3D render, cartoon, plastic, color shift, changed material, redesigned base, altered legs, cabinet doors, drawers, unwanted apron, distorted geometry, text, labels, watermark."""
+Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflection, grey floor, room in views 1-6, CGI, 3D render, cartoon, plastic, color shift, changed material, redesigned base, altered legs, cabinet doors, drawers, unwanted apron, distorted geometry, text, labels, watermark."""
 
         # 1 SOLO PROMPT MAESTRO PARA CHATGPT / OPENAI
-        prompt_maestro_dal = f"""Commercial catalog series: Generate ALL 5 SEPARATE STANDALONE catalog photographs in sequence for the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
+        prompt_maestro_dal = f"""Commercial catalog complete series: Generate ALL 7 SEPARATE STANDALONE catalog photographs and technical diagrams in sequence for the {furn_item} ('{furniture_name}'){dalle_title_suffix}.
 
-Execute the image tool separately for EACH view below so they are outputted as 5 distinct, separate image files. DO NOT combine them into a collage, grid, or split canvas. Maintain 100% identical color, material texture, and geometry across all 5 images.
+Execute the image tool separately for EACH item below so they are outputted as 7 distinct, separate image files. DO NOT combine them into a collage, grid, or split canvas. Maintain 100% identical color, material texture, and geometry across all images.
 
 1. FIRST IMAGE (View 1): Direct Front View (0° flat frontal elevation: {v21_a['vista_2_1_frontal']}).
 2. SECOND IMAGE (View 2): 3/4 Perspective View (45° angle: {v21_a['vista_2_1_perspectiva']}).
 3. THIRD IMAGE (View 3): Strict Lateral Side Profile (90° orthogonal: {v21_a['vista_2_1_lateral']}).
 4. FOURTH IMAGE (View 4): Elevated High-Angle Semi-Top View (60°-70°: {v21_a['vista_2_1_picada_frontal']}).
 5. FIFTH IMAGE (View 5): Pure 90-Degree Orthogonal Flat Overhead Top-Down View ({v21_a['vista_2_1_superior_cenital']}).
+6. SIXTH IMAGE (View 6): Technical Isometric Blueprint Drawing with Dimension Arrows ({resumen_medidas_ais}). Pure minimalist black line art on pure white background with zero color/shading.
+7. SEVENTH IMAGE (View 7): Distant Architectural Interior Photograph in Luxury Client Home. Wide-angle shot capturing the furniture piece to-scale ({resumen_medidas_ais}) in a furnished client home with contrasting room palette.
 
 {dalle_mat_section}
 
@@ -817,8 +946,8 @@ Strictly duplicate the frozen physical prototype silhouette, joinery, and natura
 {user_directives_block if user_notes_clean else ""}
 
 Lighting & Environment:
-Set against a pure seamless solid digital white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, 0% floor contact shadows, pure digital cutout. Studio strobe lighting (5400K). 100MP medium format RAW photography with edge-to-edge sharpness.
-Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflections, room, two-tone finish, altered legs, text, watermark."""
+Set against a pure seamless solid digital white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, 0% floor contact shadows for views 1-6. Studio strobe lighting (5400K). View 7 features natural residential client interior daylight.
+Negative Prompt: ground shadows in views 1-6, floor shadows, drop shadows, floor reflections, room in views 1-6, two-tone finish, altered legs, text, watermark."""
 
         return {
             "google_ai_studio": prompt_maestro_ais,
