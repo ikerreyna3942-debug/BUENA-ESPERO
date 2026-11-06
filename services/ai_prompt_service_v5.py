@@ -327,27 +327,33 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             if m_diam:
                 diam_cm = float(m_diam.group(1) or m_diam.group(2))
 
-        m_w_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:frente|ancho|largo|width|w)(?:\b|\s|$)', text_to_search)
+        m_w_bef = re.search(r'(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:frente|ancho|largo|width)(?![a-z])', text_to_search)
         if m_w_bef: width_cm = float(m_w_bef.group(1))
-        m_d_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:fondo|profundidad|prof|depth|d)(?:\b|\s|$)', text_to_search)
+        m_d_bef = re.search(r'(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:fondo|profundidad|prof|depth)(?![a-z])', text_to_search)
         if m_d_bef: depth_cm = float(m_d_bef.group(1))
-        m_h_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:alto|altura|height|h)(?:\b|\s|$)', text_to_search)
+        m_h_bef = re.search(r'(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:alto|altura|height)(?![a-z])', text_to_search)
         if m_h_bef: height_cm = float(m_h_bef.group(1))
 
         if not width_cm:
-            m_w_aft = re.search(r'(?:frente|ancho|largo|width|w)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            m_w_aft = re.search(r'(?:frente|ancho|largo|width)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
             if m_w_aft: width_cm = float(m_w_aft.group(1))
         if not depth_cm:
-            m_d_aft = re.search(r'(?:fondo|profundidad|prof|depth|d)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            m_d_aft = re.search(r'(?:fondo|profundidad|prof|depth)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
             if m_d_aft: depth_cm = float(m_d_aft.group(1))
         if not height_cm:
-            m_h_aft = re.search(r'(?:alto|altura|height|h)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            m_h_aft = re.search(r'(?:alto|altura|height)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
             if m_h_aft: height_cm = float(m_h_aft.group(1))
 
         if not (width_cm and depth_cm and height_cm) and not diam_cm:
             m_triplet = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*[xX*]\s*([0-9]+(?:\.[0-9]+)?)\s*[xX*]\s*([0-9]+(?:\.[0-9]+)?)', text_to_search)
             if m_triplet:
                 width_cm, depth_cm, height_cm = float(m_triplet.group(1)), float(m_triplet.group(2)), float(m_triplet.group(3))
+
+        # Espejos / piezas de pared: el valor mayor es el alto real y el menor el grosor
+        if category == "mirror" and width_cm and depth_cm and height_cm:
+            real_h = max(depth_cm, height_cm)
+            real_t = min(depth_cm, height_cm)
+            height_cm, depth_cm = real_h, real_t
 
         dimensions_rule = ""
         dims = []
@@ -358,7 +364,9 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         if dims:
             dim_str = ", ".join(dims)
             aspect_note = ""
-            if height_cm and width_cm:
+            if category == "mirror":
+                aspect_note = f" (Wall-mounted mirror: {int(width_cm or 0)} cm wide x {int(height_cm or 0)} cm tall, only {int(depth_cm or 0)} cm thick; it is a flat vertical wall piece, NOT a table, NOT a credenza)"
+            elif height_cm and width_cm:
                 ratio = width_cm / height_cm
                 if ratio > 2.0:
                     aspect_note = " (Low-profile elongated proportions; wide and low to the ground; NOT a tall credenza, cabinet, or console)"
@@ -650,7 +658,11 @@ Crafted from authentic solid wood with continuous grain flow. Sample and replica
             ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture & Authentic Materials): 3D model, authentic architecture, and genuine materials/textures of '{furn_item}' ({existing_mats})."""
 
             mat_directive_label = "1. 100% FROZEN PHYSICAL IDENTITY LOCK (COLOR, TEXTURE & MATERIAL):"
+            _is_mirror_item = (profile["category"] == "mirror")
             mat_directive_body = f"Sample and freeze 100% of the authentic materials, exact color palette/saturation, surface textures, and finishes directly from Image 1 across all components ({profile['wood_parts_ais']}). Strictly maintain absolute cross-turn consistency: identical tabletop color/texture (e.g. natural stone, marble veining, or timber), identical base/legs color (e.g. matte black sculptural base, sphere and column architecture), and identical surface sheen. Maintain all natural color contrasts and dual-tones without bleaching, hue shifts, or material substitution. ZERO color changes, ZERO material variation across turns."
+
+            if _is_mirror_item:
+                mat_directive_body = f"Sample and freeze 100% of the authentic wood color, grain and satin finish of the frame, and the clear silvered mirror glass, directly from Image 1 ({profile['wood_parts_ais']}). Identical wood tone, identical grain flow and identical glass clarity in every view. ZERO color change, ZERO material substitution."
 
             dalle_wood_summary = f"Image 1: '{furn_item}', authentic materials and surface finishes ({existing_mats})"
             dalle_title_suffix = f", preserving authentic materials, dual-tone finishes, and structural geometry directly from original reference photo (Image 1)"
@@ -764,6 +776,11 @@ Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replic
 
         medidas_bloque_str = "\n".join(lineas_medidas)
         resumen_medidas_ais = ", ".join(lineas_medidas)
+
+        if profile["category"] == "mirror":
+            no_redesign_ais = "Keep the exact organic asymmetric outline of the frame and glass from Image 1. Do NOT make it round, oval or rectangular, do NOT add legs, stands, shelves, doors or drawers."
+        else:
+            no_redesign_ais = "Do NOT alter leg architecture, do NOT redesign the tabletop or base, do NOT add cabinet doors, drawers, or aprons."
 
         individual_results = []
         # Vistas 1 a 5: Tomas de Estudio en Fondo Blanco
@@ -908,15 +925,16 @@ TASK: Generate a complete 7-piece commercial catalog series for the EXACT physic
 
 DIRECTIVES:
 {mat_directive_label} {mat_directive_body}
-2. 100% 3D GEOMETRY & SCALE FIDELITY: Strictly preserve the identical 3D model, joinery, and physical architecture ({geom_struct}) from Image 1. Enforce exact 1:1 real-world physical scale. Do NOT alter leg architecture, do NOT redesign the tabletop or base, do NOT add cabinet doors, drawers, or aprons.{user_notes_ais}
+2. 100% 3D GEOMETRY & SCALE FIDELITY: Strictly preserve the identical 3D model, joinery, and physical architecture ({geom_struct}) from Image 1. Enforce exact 1:1 real-world physical scale. {no_redesign_ais}{user_notes_ais}
 {ais_extra_block}3. PURE SOLID WHITE BACKGROUND & ZERO SHADOWS (VIEWS 1 TO 6): {white_bg.capitalize()}. STRICTLY ZERO GROUND SHADOWS, 0% drop shadows, 0% floor contact shadows, zero floor reflections. Pure crisp isolated product cutout on pure white void.
 4. 8K COMMERCIAL PRODUCT PHOTOGRAPHY & REALISM: Shot on 100MP medium-format camera, 80mm prime lens at f/11 for edge-to-edge crystalline sharpness, balanced 5400K commercial studio lighting with soft fill, ultra-realistic photorealistic textures.
 
 EXECUTION (TURN-BY-TURN):
-Generate ONE single standalone image per turn.
+Generate ONE single standalone image per turn. Never reply with text only, always output a NEW image.
+CRITICAL ROTATION RULE: Every new turn MUST show the SAME object from a DIFFERENT camera angle, as if the camera physically orbits the fixed object. NEVER repeat the previous angle and NEVER just re-output the reference photo. Image 1 is only the identity reference (shape, color, material), its camera angle is NOT the view you must reproduce.
 - CURRENT TURN: Generate ONLY Vista 1 (Frontal Directa 0°: {v21_a['vista_2_1_frontal']}. Preserving 100% identical color, texture, and geometry from Image 1 on solid pure white #FFFFFF with 0% ground shadows.).
 Conclude your response with: "📸 Vista 1 generada. Escribe 'foto' para generar la Vista 2 (3/4 Perspectiva Comercial 45°)."
-- Subsequent views (triggered ONLY by typing 'foto'):
+- Subsequent views (triggered ONLY by typing 'foto'; on each 'foto' output the next numbered view below and nothing else):
   2. Vista 2: 3/4 Perspectiva Comercial 45° ({v21_a['vista_2_1_perspectiva']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
   3. Vista 3: Lateral Perfil Estricto 90° ({v21_a['vista_2_1_lateral']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
   4. Vista 4: Picada Alta / Semi-Cenital 65° ({v21_a['vista_2_1_picada_frontal']}. Preserving identical color, texture, and geometry from Vista 1 on pure white #FFFFFF with 0% ground shadows.).
