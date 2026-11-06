@@ -533,10 +533,10 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
                 furn_item = furn_item.split("directives:")[0].strip()
             if not furn_item:
                 furn_item = furniture_name
-        geom_struct = ma.get("geometric_structure", "original structural geometry")
-        existing_mats = ma.get("existing_materials", "original materials")
+        geom_struct = ma.get("geometric_structure", "authentic 3D structural geometry and proportions from reference photos")
+        existing_mats = ma.get("existing_materials", "authentic materials and finishes from reference photos")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
-            existing_mats = "monolithic natural light honey oak with continuous horizontal grain flow and warm amber undertones"
+            existing_mats = "authentic materials and surface finishes from reference photos"
 
         # Inyectar Tipo de Mueble y Medidas si no están ya en notas_usuario
         notes_parts = []
@@ -827,10 +827,10 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
                 furn_item = furniture_name
             if not furn_item:
                 furn_item = furniture_name
-        geom_struct = ma.get("geometric_structure", "original structural geometry")
-        existing_mats = ma.get("existing_materials", "original materials")
+        geom_struct = ma.get("geometric_structure", "authentic 3D structural geometry and proportions from reference photos")
+        existing_mats = ma.get("existing_materials", "authentic materials and finishes from reference photos")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
-            existing_mats = "monolithic natural light honey oak with continuous horizontal grain flow and warm amber undertones"
+            existing_mats = "authentic materials and surface finishes from reference photos"
 
         # Inyectar Tipo de Mueble y Medidas si no están ya en notas_usuario
         notes_parts = []
