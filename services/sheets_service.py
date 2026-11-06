@@ -46,6 +46,8 @@ class SheetsService:
         self._sheet_name_datos_general: Optional[str] = None
         self._sheet_name_fotos_norm: Optional[str] = None
         self._sku_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        self._sku_catalog_last_sync: float = 0.0
+        self._sku_cache_ttl: float = 120.0
         self._init_service()
 
     @property
@@ -933,9 +935,10 @@ class SheetsService:
 
 
 
-    def get_furniture_by_sku(self, sku: str) -> Optional[Dict[str, Any]]:
+    def get_furniture_by_sku(self, sku: str, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
         """
         Busca un producto por SKU en 'DATOS GENERAL' (100% SOLO LECTURA).
+        Se sincroniza automáticamente en vivo con el documento de Google Sheets.
         Extrae estrictamente:
         - tipo_mueble (Columna Y, fallback Columna P)
         - medidas (Frente, Fondo, Alto, Diámetro, Piso-Asiento de Columnas C a G)
@@ -946,7 +949,16 @@ class SheetsService:
             return None
         sku_clean = str(sku).strip().upper()
 
-        if not hasattr(self, "_sku_catalog_cache") or self._sku_catalog_cache is None:
+        now = time.time()
+        last_sync = getattr(self, "_sku_catalog_last_sync", 0.0)
+        ttl = getattr(self, "_sku_cache_ttl", 120.0)
+        need_refresh = (
+            force_refresh
+            or self._sku_catalog_cache is None
+            or (now - last_sync > ttl)
+        )
+
+        if need_refresh:
             self._load_sku_catalog_cache()
 
         if self._sku_catalog_cache and sku_clean in self._sku_catalog_cache:
@@ -958,12 +970,90 @@ class SheetsService:
                 if sku_clean == k or sku_clean in k or k in sku_clean:
                     return v
 
+        # Si el SKU no fue encontrado en caché y no se ha consultado en vivo en los últimos 20s,
+        # consultar inmediatamente a Google Sheets para detectar productos recién añadidos
+        if not need_refresh and (now - getattr(self, "_sku_catalog_last_sync", 0.0) > 20.0):
+            self._load_sku_catalog_cache()
+            if self._sku_catalog_cache and sku_clean in self._sku_catalog_cache:
+                return self._sku_catalog_cache[sku_clean]
+            for k, v in self._sku_catalog_cache.items():
+                if sku_clean == k or sku_clean in k or k in sku_clean:
+                    return v
+
         return None
 
     def _load_sku_catalog_cache(self):
-        """Carga en memoria el diccionario de SKUs de DATOS GENERAL de forma 100% segura y SOLO LECTURA."""
-        self._sku_catalog_cache = {}
+        """Carga en memoria el catálogo de SKUs de DATOS GENERAL directamente en vivo desde Google Sheets y actualiza el caché de respaldo."""
         disk_cache = Path(__file__).resolve().parent.parent / "sku_catalog_cache.json"
+
+        # 1. INTENTAR SIEMPRE EN VIVO CON GOOGLE SHEETS
+        if self.service:
+            try:
+                tab_dg = self.get_datos_general_tab_name()
+                res = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"'{tab_dg}'!A4:AJ",
+                    valueRenderOption="FORMATTED_VALUE"
+                ).execute()
+                rows = res.get("values", [])
+                live_cache = {}
+                for r in rows:
+                    row_sku = str(r[0]).strip() if len(r) > 0 and r[0] else ""
+                    if not row_sku:
+                        continue
+                    row_sku_upper = row_sku.upper()
+                    nombre = str(r[1]).strip() if len(r) > 1 and r[1] else ""
+                    frente = str(r[2]).strip() if len(r) > 2 and r[2] else ""
+                    fondo = str(r[3]).strip() if len(r) > 3 and r[3] else ""
+                    alto = str(r[4]).strip() if len(r) > 4 and r[4] else ""
+                    diam = str(r[5]).strip() if len(r) > 5 and r[5] else ""
+                    piso = str(r[6]).strip() if len(r) > 6 and r[6] else ""
+                    cat = str(r[15]).strip() if len(r) > 15 and r[15] else ""
+                    tipo = str(r[24]).strip() if len(r) > 24 and r[24] else ""
+
+                    tipo_final = tipo if tipo else cat
+
+                    medidas_parts = []
+                    if diam and diam.upper() not in ["N/A", "NONE", "0", "N/D", "-"]:
+                        medidas_parts.append(f"D. {diam} cm")
+                    else:
+                        if frente: medidas_parts.append(f"{frente} cm frente")
+                        if fondo: medidas_parts.append(f"{fondo} cm fondo")
+                    if alto: medidas_parts.append(f"{alto} cm alto")
+                    if piso and piso.upper() not in ["N/A", "NONE", "0", "-"]:
+                        medidas_parts.append(f"{piso} cm piso al asiento")
+                    medidas_str = " x ".join(medidas_parts) if medidas_parts else ""
+
+                    foto_mueble = str(r[26]).strip() if len(r) > 26 and r[26] else ""
+                    foto_tela = str(r[29]).strip() if len(r) > 29 and r[29] else ""
+                    foto_madera = str(r[32]).strip() if len(r) > 32 and r[32] else ""
+                    foto_swatch = str(r[35]).strip() if len(r) > 35 and r[35] else ""
+
+                    live_cache[row_sku_upper] = {
+                        "sku": row_sku,
+                        "nombre": nombre,
+                        "tipo_mueble": tipo_final,
+                        "medidas": medidas_str,
+                        "foto_mueble_nom": foto_mueble,
+                        "foto_tela_nom": foto_tela,
+                        "foto_madera_nom": foto_madera,
+                        "foto_swatch_nom": foto_swatch
+                    }
+
+                if live_cache:
+                    self._sku_catalog_cache = live_cache
+                    self._sku_catalog_last_sync = time.time()
+                    # Guardar respaldo actualizado en disco
+                    try:
+                        with open(disk_cache, "w", encoding="utf-8") as cf:
+                            json.dump(live_cache, cf, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                    return
+            except Exception as e:
+                print(f"[SheetsService] Advertencia sincronizando en vivo con Google Sheets: {e}")
+
+        # 2. FALLBACK A DISCO SI NO HAY CONEXIÓN A INTERNET O FALLÓ LA API
         if disk_cache.exists():
             try:
                 import json
@@ -974,12 +1064,15 @@ class SheetsService:
                         return
             except Exception:
                 pass
-        if not self.service:
+
+        # 3. FALLBACK SECUNDARIO A datos_general_cache.json
+        if not self._sku_catalog_cache:
             cache_file = Path(__file__).resolve().parent.parent / "datos_general_cache.json"
             if cache_file.exists():
                 try:
                     with open(cache_file, "r", encoding="utf-8") as cf:
                         prods = json.load(cf)
+                        fallback_dict = {}
                         for p in prods:
                             s = str(p.get("sku", "")).strip().upper()
                             if s:
@@ -1002,7 +1095,7 @@ class SheetsService:
                                 m_str = " x ".join(m_parts) if m_parts else ""
                                 
                                 fts = p.get("fotos", {})
-                                self._sku_catalog_cache[s] = {
+                                fallback_dict[s] = {
                                     "sku": p.get("sku", ""),
                                     "nombre": p.get("nombre_viejo", "") or p.get("nombre_nuevo", ""),
                                     "tipo_mueble": p.get("tipo_mueble", "") or p.get("categoria", ""),
@@ -1012,62 +1105,9 @@ class SheetsService:
                                     "foto_madera_nom": fts.get("madera_nombre", ""),
                                     "foto_swatch_nom": fts.get("swatch_nombre", "")
                                 }
+                        self._sku_catalog_cache = fallback_dict
                 except Exception:
                     pass
-            return
-
-        try:
-            tab_dg = self.get_datos_general_tab_name()
-            res = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"'{tab_dg}'!A4:AJ",
-                valueRenderOption="FORMATTED_VALUE"
-            ).execute()
-            rows = res.get("values", [])
-            for r in rows:
-                row_sku = str(r[0]).strip() if len(r) > 0 and r[0] else ""
-                if not row_sku:
-                    continue
-                row_sku_upper = row_sku.upper()
-                nombre = str(r[1]).strip() if len(r) > 1 and r[1] else ""
-                frente = str(r[2]).strip() if len(r) > 2 and r[2] else ""
-                fondo = str(r[3]).strip() if len(r) > 3 and r[3] else ""
-                alto = str(r[4]).strip() if len(r) > 4 and r[4] else ""
-                diam = str(r[5]).strip() if len(r) > 5 and r[5] else ""
-                piso = str(r[6]).strip() if len(r) > 6 and r[6] else ""
-                cat = str(r[15]).strip() if len(r) > 15 and r[15] else ""
-                tipo = str(r[24]).strip() if len(r) > 24 and r[24] else ""
-
-                tipo_final = tipo if tipo else cat
-
-                medidas_parts = []
-                if diam and diam.upper() not in ["N/A", "NONE", "0", "N/D", "-"]:
-                    medidas_parts.append(f"D. {diam} cm")
-                else:
-                    if frente: medidas_parts.append(f"{frente} cm frente")
-                    if fondo: medidas_parts.append(f"{fondo} cm fondo")
-                if alto: medidas_parts.append(f"{alto} cm alto")
-                if piso and piso.upper() not in ["N/A", "NONE", "0", "-"]:
-                    medidas_parts.append(f"{piso} cm piso al asiento")
-                medidas_str = " x ".join(medidas_parts) if medidas_parts else ""
-
-                foto_mueble = str(r[26]).strip() if len(r) > 26 and r[26] else ""
-                foto_tela = str(r[29]).strip() if len(r) > 29 and r[29] else ""
-                foto_madera = str(r[32]).strip() if len(r) > 32 and r[32] else ""
-                foto_swatch = str(r[35]).strip() if len(r) > 35 and r[35] else ""
-
-                self._sku_catalog_cache[row_sku_upper] = {
-                    "sku": row_sku,
-                    "nombre": nombre,
-                    "tipo_mueble": tipo_final,
-                    "medidas": medidas_str,
-                    "foto_mueble_nom": foto_mueble,
-                    "foto_tela_nom": foto_tela,
-                    "foto_madera_nom": foto_madera,
-                    "foto_swatch_nom": foto_swatch
-                }
-        except Exception as e:
-            print(f"[SheetsService] Error cargando catálogo de SKUs: {e}")
 
     def get_pending_products(self) -> List[Dict[str, Any]]:
         """Obtiene la lista de productos de DATOS GENERAL, clasificando los que no tienen fotos."""

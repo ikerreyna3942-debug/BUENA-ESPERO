@@ -20,11 +20,12 @@ def render_sku_autofill_bar(version_key: str):
 
     st.markdown("""
     <div style="background: linear-gradient(135deg, #1E293B, #283548); border: 1px solid #3B82F6; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);">
-        <div style="font-weight: 800; font-size: 13px; color: #60A5FA; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+        <div style="font-weight: 800; font-size: 13px; color: #60A5FA; display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
             <span>🔍 AUTO-LLENADO INTELIGENTE POR SKU (BASE DE DATOS GENERALES)</span>
+            <span style="font-size: 10px; color: #34D399; font-weight: 600; background: rgba(52, 211, 153, 0.15); padding: 2px 8px; border-radius: 12px; border: 1px solid rgba(52, 211, 153, 0.3);">🟢 Sincronizado en vivo con Google Sheets</span>
         </div>
         <div style="font-size: 11px; color: #CBD5E1;">
-            Coloca el SKU del mueble para cargar automáticamente sus <b>Medidas Exactas</b> y <b>Tipo de Mueble</b> desde el catálogo oficial.
+            Coloca el SKU del mueble para cargar automáticamente sus <b>Medidas Exactas</b> y <b>Tipo de Mueble</b> actualizados en tiempo real desde Google Sheets.
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -44,7 +45,7 @@ def render_sku_autofill_bar(version_key: str):
         sku_clean = sku_val.strip().upper()
         current_loaded = st.session_state.get(k_loaded, {})
         if not current_loaded or current_loaded.get("sku", "").upper() != sku_clean or btn_buscar:
-            info = sheets_service.get_furniture_by_sku(sku_clean)
+            info = sheets_service.get_furniture_by_sku(sku_clean, force_refresh=bool(btn_buscar))
             if info:
                 st.session_state[k_loaded] = info
                 # Actualizar directamente los valores vinculados a las cajas de texto
