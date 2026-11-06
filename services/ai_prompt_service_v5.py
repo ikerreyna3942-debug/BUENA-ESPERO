@@ -920,6 +920,9 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
             mat_directive_label = "1. 100% MONOLITHIC WOOD LOCK:"
             mat_directive_body = wood_ais_lock_21
 
+            dalle_wood_summary = f"Image 2: '{w_name}' ({w_color}, {w_texture})"
+            dalle_title_suffix = f" in authentic {w_name} finish"
+
             dalle_mat_section = f"""Material & Wood Fidelity:
 Crafted from authentic solid wood with continuous grain flow. Sample and replicate the exact timber stain tone, warm amber undertones, fine open pores, and satin finish from {dalle_wood_summary}. All wooden components ({profile['parts_str']}) share identical monolithic timber color and saturation without any two-tone mismatch, desaturation, or bleaching. {mirror_optics_dalle}"""
 
