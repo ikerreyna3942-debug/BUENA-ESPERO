@@ -22,6 +22,7 @@ from modules.prompt_studio_v2 import render_prompt_studio_v2 as render_v2
 from modules.prompt_studio_v3 import render_prompt_studio_v3 as render_v3
 from modules.prompt_studio_v4 import render_prompt_studio_v4 as render_v4
 from modules.prompt_studio_v5 import render_prompt_studio_v5 as render_v5
+from modules.prompt_studio_unified import render_prompt_studio_unified as render_v6
 
 def main():
     st.sidebar.markdown("### 🤖 ESTUDIO DE IA")
@@ -31,13 +32,14 @@ def main():
     version = st.sidebar.radio(
         "📌 Versión del estudio:",
         [
+            "V6 Unificado (Recomendado)",
             "V5 Nano Banana Pro (Vistas y Maderas)",
             "V4 Ultimate (Nuevas Casillas)",
             "V3 Nivel Dios (Recomendado)",
             "V2 Optimizado",
             "V1 Clásica original"
         ],
-        index=1  # Default to V4 Ultimate
+        index=0  # Default: V6 Unificado
     )
     st.sidebar.markdown("---")
     
@@ -53,7 +55,9 @@ def main():
     """)
     st.sidebar.markdown("---")
     
-    if version == "V5 Nano Banana Pro (Vistas y Maderas)":
+    if version == "V6 Unificado (Recomendado)":
+        render_v6()
+    elif version == "V5 Nano Banana Pro (Vistas y Maderas)":
         render_v5()
     elif version == "V4 Ultimate (Nuevas Casillas)":
         render_v4()

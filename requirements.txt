@@ -1,8 +1,8 @@
-streamlit
-Pillow
-requests
-google-auth
-google-api-python-client
-google-genai
-pydantic
-numpy
+streamlit>=1.40
+Pillow>=10.0
+requests>=2.31
+google-auth>=2.30
+google-api-python-client>=2.130
+google-genai>=1.0
+pydantic>=2.5
+numpy>=1.26
