@@ -350,17 +350,29 @@ def render_prompt_studio_v5():
                         progress_holder.info("🪵 Analizando muestra de madera con Gemini Vision...")
                         w_ana = ai_prompt_service_v5.analyze_material(m_madera_bytes[0], material_type="wood")
 
+                    foto_refs_v5 = {
+                        "mueble": ", ".join(m_actual_filenames) if m_actual_filenames else "Mueble",
+                        "madera": ", ".join(m_madera_filenames) if m_madera_filenames else "",
+                        "referencia": ", ".join(m_ref_filenames) if m_ref_filenames else ""
+                    }
+
                     if btn_extraer:
                         prompts = ai_prompt_service_v5.generate_extraction_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
-                            notas_usuario=notas_para_prompt
+                            notas_usuario=notas_para_prompt,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            foto_refs=foto_refs_v5
                         )
                     elif btn_hd:
                         prompts = ai_prompt_service_v5.generate_hd_enhancement_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
-                            notas_usuario=notas_para_prompt
+                            notas_usuario=notas_para_prompt,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            foto_refs=foto_refs_v5
                         )
                     elif btn_2_1:
                         prompts = ai_prompt_service_v5.generate_vistas_2_1_prompts(
@@ -371,7 +383,10 @@ def render_prompt_studio_v5():
                             notas_usuario=notas_para_prompt,
                             furniture_filenames=m_actual_filenames,
                             wood_filenames=m_madera_filenames,
-                            reference_filenames=m_ref_filenames
+                            reference_filenames=m_ref_filenames,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            foto_refs=foto_refs_v5
                         )
                     else:
                         prompts = ai_prompt_service_v5.generate_vistas_1_1_prompts(
@@ -382,7 +397,10 @@ def render_prompt_studio_v5():
                             notas_usuario=notas_para_prompt,
                             furniture_filenames=m_actual_filenames,
                             wood_filenames=m_madera_filenames,
-                            reference_filenames=m_ref_filenames
+                            reference_filenames=m_ref_filenames,
+                            tipo_mueble_usuario=tipo_mueble_usuario,
+                            medidas_usuario=medidas_usuario,
+                            foto_refs=foto_refs_v5
                         )
 
                     st.session_state["last_studio_result_v5"] = {

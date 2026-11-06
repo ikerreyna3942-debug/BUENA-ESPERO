@@ -512,7 +512,11 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         notas_usuario: str = "",
         furniture_filenames: Optional[List[str]] = None,
         wood_filenames: Optional[List[str]] = None,
-        reference_filenames: Optional[List[str]] = None
+        reference_filenames: Optional[List[str]] = None,
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Genera el set 'Vistas (1.1)' con las 5 vistas canónicas completas con arquitectura de Alta Densidad de Tokens.
@@ -521,23 +525,41 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         fa = fabric_analysis or {}
         wa = wood_analysis or {}
 
-        furn_item = ma.get("furniture_item", furniture_name)
-        if "directives:" in furn_item:
-            furn_item = furn_item.split("directives:")[0].strip()
-        if not furn_item:
-            furn_item = furniture_name
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
+            furn_item = tipo_mueble_usuario.strip()
+        else:
+            furn_item = ma.get("furniture_item", furniture_name)
+            if "directives:" in furn_item:
+                furn_item = furn_item.split("directives:")[0].strip()
+            if not furn_item:
+                furn_item = furniture_name
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
             existing_mats = "monolithic natural light honey oak with continuous horizontal grain flow and warm amber undertones"
 
+        # Inyectar Tipo de Mueble y Medidas si no están ya en notas_usuario
+        notes_parts = []
+        if notas_usuario and notas_usuario.strip():
+            notes_parts.append(notas_usuario.strip())
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip() and tipo_mueble_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"TARGET ITEM / TIPO DE MUEBLE: {tipo_mueble_usuario.strip()}")
+        if medidas_usuario and medidas_usuario.strip() and medidas_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"EXACT 1:1 REAL-WORLD SCALE & DIMENSIONS: {medidas_usuario.strip()}. Maintain strict physical scale, leg-to-body ratios, and structural proportions.")
+        if foto_refs and isinstance(foto_refs, dict):
+            ref_lines = [f'    {k.capitalize()}: "{v}"' for k, v in foto_refs.items() if v]
+            if ref_lines:
+                notes_parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):\n" + "\n".join(ref_lines))
+
+        combined_notes = "\n".join(notes_parts)
+
         # Detección Universal de Perfil de Mueble, Medidas y Óptica
-        profile = self._detect_furniture_profile(furn_item, notas_usuario, geom_struct)
+        profile = self._detect_furniture_profile(furn_item, combined_notes, geom_struct)
         is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
         white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
 
-        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        user_notes_clean = combined_notes
         if user_notes_clean:
             user_directives_block = f"""[MANDATORY USER OVERRIDE DIRECTIVES]:
 * {user_notes_clean}
@@ -784,7 +806,11 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
         notas_usuario: str = "",
         furniture_filenames: Optional[List[str]] = None,
         wood_filenames: Optional[List[str]] = None,
-        reference_filenames: Optional[List[str]] = None
+        reference_filenames: Optional[List[str]] = None,
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Genera el set 'Vistas (2.1)' con las 4 vistas canónicas exactas de catálogo con arquitectura de Alta Densidad de Tokens.
@@ -793,21 +819,41 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
         fa = fabric_analysis or {}
         wa = wood_analysis or {}
 
-        furn_item = ma.get("furniture_item", furniture_name)
-        if "directives:" in furn_item.lower():
-            furn_item = furniture_name
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
+            furn_item = tipo_mueble_usuario.strip()
+        else:
+            furn_item = ma.get("furniture_item", furniture_name)
+            if "directives:" in furn_item.lower():
+                furn_item = furniture_name
+            if not furn_item:
+                furn_item = furniture_name
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials")
         if "original fabric and wood finish" in existing_mats or "original materials" in existing_mats:
             existing_mats = "monolithic natural light honey oak with continuous horizontal grain flow and warm amber undertones"
 
+        # Inyectar Tipo de Mueble y Medidas si no están ya en notas_usuario
+        notes_parts = []
+        if notas_usuario and notas_usuario.strip():
+            notes_parts.append(notas_usuario.strip())
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip() and tipo_mueble_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"TARGET ITEM / TIPO DE MUEBLE: {tipo_mueble_usuario.strip()}")
+        if medidas_usuario and medidas_usuario.strip() and medidas_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"EXACT 1:1 REAL-WORLD SCALE & DIMENSIONS: {medidas_usuario.strip()}. Maintain strict physical scale, leg-to-body ratios, and structural proportions.")
+        if foto_refs and isinstance(foto_refs, dict):
+            ref_lines = [f'    {k.capitalize()}: "{v}"' for k, v in foto_refs.items() if v]
+            if ref_lines:
+                notes_parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):\n" + "\n".join(ref_lines))
+
+        combined_notes = "\n".join(notes_parts)
+
         # Detección Universal de Perfil de Mueble, Medidas y Óptica
-        profile = self._detect_furniture_profile(furn_item, notas_usuario, geom_struct)
+        profile = self._detect_furniture_profile(furn_item, combined_notes, geom_struct)
         is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
         white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
 
-        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        user_notes_clean = combined_notes
         if user_notes_clean:
             user_directives_block = f"""[MANDATORY USER OVERRIDE DIRECTIVES]:
 * {user_notes_clean}
@@ -1056,7 +1102,11 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
         furniture_filenames: Optional[List[str]] = None,
         wood_filenames: Optional[List[str]] = None,
         fabric_filenames: Optional[List[str]] = None,
-        reference_filenames: Optional[List[str]] = None
+        reference_filenames: Optional[List[str]] = None,
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Genera prompts individuales para CAMBIO DE MATERIAL (Madera, Tela, o Dual)
@@ -1066,20 +1116,39 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
         fa = fabric_analysis or {}
         wa = wood_analysis or {}
 
-        furn_item = ma.get("furniture_item", furniture_name)
-        if "directives:" in str(furn_item).lower():
-            furn_item = furniture_name
-        if not furn_item:
-            furn_item = furniture_name
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
+            furn_item = tipo_mueble_usuario.strip()
+        else:
+            furn_item = ma.get("furniture_item", furniture_name)
+            if "directives:" in str(furn_item).lower():
+                furn_item = furniture_name
+            if not furn_item:
+                furn_item = furniture_name
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials")
         camera_angle = ma.get("camera_angle", "0-degree frontal and 3/4 perspective")
-        profile = self._detect_furniture_profile(furn_item, notas_usuario, geom_struct)
+
+        # Inyectar Tipo de Mueble y Medidas si no están ya en notas_usuario
+        notes_parts = []
+        if notas_usuario and notas_usuario.strip():
+            notes_parts.append(notas_usuario.strip())
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip() and tipo_mueble_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"TARGET ITEM / TIPO DE MUEBLE: {tipo_mueble_usuario.strip()}")
+        if medidas_usuario and medidas_usuario.strip() and medidas_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"EXACT 1:1 REAL-WORLD SCALE & DIMENSIONS: {medidas_usuario.strip()}. Maintain strict physical scale, leg-to-body ratios, and structural proportions.")
+        if foto_refs and isinstance(foto_refs, dict):
+            ref_lines = [f'    {k.capitalize()}: "{v}"' for k, v in foto_refs.items() if v]
+            if ref_lines:
+                notes_parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):\n" + "\n".join(ref_lines))
+
+        combined_notes = "\n".join(notes_parts)
+
+        profile = self._detect_furniture_profile(furn_item, combined_notes, geom_struct)
         is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
         white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
 
-        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        user_notes_clean = combined_notes
         if user_notes_clean:
             user_directives_block = f"""[MANDATORY USER OVERRIDE DIRECTIVES]:
 * {user_notes_clean}
@@ -1230,7 +1299,11 @@ Negative Prompt: CGI, 3D render, shadows, room, two-tone finish, altered fabric,
         self,
         furniture_name: str,
         furniture_analysis: Optional[Dict[str, Any]] = None,
-        notas_usuario: str = ""
+        notas_usuario: str = "",
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Genera prompts para EXTRAER MUEBLE (FONDO BLANCO):
@@ -1240,14 +1313,30 @@ Negative Prompt: CGI, 3D render, shadows, room, two-tone finish, altered fabric,
         - Máxima fidelidad de materiales, colores y geometría.
         """
         ma = furniture_analysis or {}
-        furn_item = ma.get("furniture_item", furniture_name)
-        if "directives:" in furn_item.lower():
-            furn_item = furniture_name
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
+            furn_item = tipo_mueble_usuario.strip()
+        else:
+            furn_item = ma.get("furniture_item", furniture_name)
+            if "directives:" in furn_item.lower():
+                furn_item = furniture_name
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials and colors")
         hardware_str = self._build_photo_hardware_str()
         
-        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        # Inyectar Tipo de Mueble y Medidas si no están ya en notas_usuario
+        notes_parts = []
+        if notas_usuario and notas_usuario.strip():
+            notes_parts.append(notas_usuario.strip())
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip() and tipo_mueble_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"TARGET ITEM / TIPO DE MUEBLE: {tipo_mueble_usuario.strip()}")
+        if medidas_usuario and medidas_usuario.strip() and medidas_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"EXACT 1:1 REAL-WORLD SCALE & DIMENSIONS: {medidas_usuario.strip()}. Maintain strict physical scale, leg-to-body ratios, and structural proportions.")
+        if foto_refs and isinstance(foto_refs, dict):
+            ref_lines = [f'    {k.capitalize()}: "{v}"' for k, v in foto_refs.items() if v]
+            if ref_lines:
+                notes_parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):\n" + "\n".join(ref_lines))
+
+        user_notes_clean = "\n".join(notes_parts)
         if user_notes_clean:
             user_directives_block = f"""
 MANDATORY DIRECTIVES APPLIED:
@@ -1314,7 +1403,11 @@ Negative Prompt: shadows, drop shadows, floor shadows, grey gradient, studio flo
         self,
         furniture_name: str,
         furniture_analysis: Optional[Dict[str, Any]] = None,
-        notas_usuario: str = ""
+        notas_usuario: str = "",
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Genera prompts para MEJORA HD (SIN CAMBIO DE COLOR, TEXTURA O GEOMETRÍA):
@@ -1324,14 +1417,30 @@ Negative Prompt: shadows, drop shadows, floor shadows, grey gradient, studio flo
         - Enfoque apilado (focus stacking) con nitidez cristalina en cada poro y fibra.
         """
         ma = furniture_analysis or {}
-        furn_item = ma.get("furniture_item", furniture_name)
-        if "directives:" in furn_item.lower():
-            furn_item = furniture_name
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
+            furn_item = tipo_mueble_usuario.strip()
+        else:
+            furn_item = ma.get("furniture_item", furniture_name)
+            if "directives:" in furn_item.lower():
+                furn_item = furniture_name
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials and exact colors")
         hardware_str = self._build_photo_hardware_str()
 
-        user_notes_clean = notas_usuario.strip() if notas_usuario else ""
+        # Inyectar Tipo de Mueble y Medidas si no están ya en notas_usuario
+        notes_parts = []
+        if notas_usuario and notas_usuario.strip():
+            notes_parts.append(notas_usuario.strip())
+        if tipo_mueble_usuario and tipo_mueble_usuario.strip() and tipo_mueble_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"TARGET ITEM / TIPO DE MUEBLE: {tipo_mueble_usuario.strip()}")
+        if medidas_usuario and medidas_usuario.strip() and medidas_usuario.lower() not in (notas_usuario or "").lower():
+            notes_parts.append(f"EXACT 1:1 REAL-WORLD SCALE & DIMENSIONS: {medidas_usuario.strip()}. Maintain strict physical scale, leg-to-body ratios, and structural proportions.")
+        if foto_refs and isinstance(foto_refs, dict):
+            ref_lines = [f'    {k.capitalize()}: "{v}"' for k, v in foto_refs.items() if v]
+            if ref_lines:
+                notes_parts.append("IMAGE ASSET FILENAME ANCHORS (Strict Visual Reference):\n" + "\n".join(ref_lines))
+
+        user_notes_clean = "\n".join(notes_parts)
         if user_notes_clean:
             user_directives_block = f"""
 MANDATORY QUALITY DIRECTIVES:
@@ -1392,7 +1501,11 @@ Negative Prompt: pixelated, blurry, low-res, compression noise, smoothed texture
         fabric_analysis: Optional[Dict[str, Any]] = None,
         wood_analysis: Optional[Dict[str, Any]] = None,
         furniture_analysis: Optional[Dict[str, Any]] = None,
-        notas_usuario: str = ""
+        notas_usuario: str = "",
+        tipo_mueble_usuario: str = "",
+        medidas_usuario: str = "",
+        foto_refs: Optional[Dict[str, str]] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """Redirige al generador canónico de Vistas 1.1"""
         return self.generate_vistas_1_1_prompts(
@@ -1400,7 +1513,11 @@ Negative Prompt: pixelated, blurry, low-res, compression noise, smoothed texture
             furniture_analysis=furniture_analysis,
             wood_analysis=wood_analysis,
             fabric_analysis=fabric_analysis,
-            notas_usuario=notas_usuario
+            notas_usuario=notas_usuario,
+            tipo_mueble_usuario=tipo_mueble_usuario,
+            medidas_usuario=medidas_usuario,
+            foto_refs=foto_refs,
+            **kwargs
         )
 
 ai_prompt_service_v5 = AIPromptServiceV5()
