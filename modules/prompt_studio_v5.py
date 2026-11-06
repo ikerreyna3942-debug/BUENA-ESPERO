@@ -151,7 +151,7 @@ def render_prompt_studio_v5():
     c_head_left, c_head_right = st.columns([2, 2])
 
     with c_head_left:
-        st.markdown('<div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;"><span style="font-size:22px; font-weight:800; color:#A855F7;">⚡ Estudio V5 (Vistas 1.1 y 2.1 con Muestras de Madera)</span><span class="studio-badge-v5">Nano Banana & ChatGPT Pro</span></div>', unsafe_allow_html=True)
+        st.markdown('<div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;"><span style="font-size:22px; font-weight:800; color:#A855F7;">⚡ Estudio V5 (5 Vistas Oficiales de Catálogo)</span><span class="studio-badge-v5">Nano Banana & Gemini Pro</span></div>', unsafe_allow_html=True)
         col_comp_btn, col_comp_info = st.columns([1.3, 2.7])
         with col_comp_btn:
             sys_prompt = (
@@ -164,7 +164,7 @@ def render_prompt_studio_v5():
             )
             render_copy_button(sys_prompt, label="Comportamiento", key="cp_comp_v5")
         with col_comp_info:
-            st.info("⚙️ Configuración (AI Studio): Modelo: Nano Banana 2.1 / Nano Banana Pro | Output: Text/Image | Thinking: High | Temp: 0.0")
+            st.info("⚙️ Configuración (AI Studio): Modelo: Gemini 2.0 / Nano Banana / Gemini Pro | Output: Text/Image | Thinking: High | Temp: 0.0")
 
     with c_head_right:
         col_dl, col_clr = st.columns([1, 1])
