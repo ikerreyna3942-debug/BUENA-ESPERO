@@ -327,11 +327,11 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             if m_diam:
                 diam_cm = float(m_diam.group(1) or m_diam.group(2))
 
-        m_w_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:frente|ancho|largo|width|w)', text_to_search)
+        m_w_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:frente|ancho|largo|width|w)(?:\b|\s|$)', text_to_search)
         if m_w_bef: width_cm = float(m_w_bef.group(1))
-        m_d_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:fondo|profundidad|prof|depth|d)', text_to_search)
+        m_d_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:fondo|profundidad|prof|depth|d)(?:\b|\s|$)', text_to_search)
         if m_d_bef: depth_cm = float(m_d_bef.group(1))
-        m_h_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:alto|altura|height|h)', text_to_search)
+        m_h_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:alto|altura|height|h)(?:\b|\s|$)', text_to_search)
         if m_h_bef: height_cm = float(m_h_bef.group(1))
 
         if not width_cm:
