@@ -293,8 +293,8 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 
     def _build_white_isolation_str(self, is_mirror: bool = False) -> str:
         if is_mirror:
-            return "pure seamless solid white background (#FFFFFF) with zero floor dirt or background clutter, while preserving delicate physical self-ambient occlusion shadows in frame rebates, corner bevels, and joinery crevices to convey authentic tangible weight and 3D volume"
-        return "pure seamless solid white background (#FFFFFF) with zero floor dirt or background clutter, while preserving delicate physical self-ambient occlusion shadows in joinery crevices, under-edges, and structural seams to convey authentic tangible weight and 3D volume"
+            return "pure seamless solid digital white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, 0% floor reflections, and zero background clutter, pure isolated product cutout"
+        return "pure seamless solid digital white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, 0% floor contact shadows, zero floor reflections, and zero background clutter, pure isolated product cutout"
 
     def _detect_furniture_profile(self, furn_item: str, user_notes: str, geom_struct: str) -> Dict[str, Any]:
         text_to_search = f"{furn_item} {user_notes} {geom_struct}".lower()
