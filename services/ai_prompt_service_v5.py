@@ -558,6 +558,7 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
         white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
+        mirror_optics_dalle = f"The central glass pane is an authentic high-clarity 4mm silvered reflective mirror with real optical physics, subtle diffuse studio highlight gradient, and a visible perimeter bevel where it joins the inner timber frame rebate." if is_mirror else ""
 
         user_notes_clean = combined_notes
         if user_notes_clean:
@@ -856,6 +857,7 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
         is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
         white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
+        mirror_optics_dalle = f"The central glass pane is an authentic high-clarity 4mm silvered reflective mirror with real optical physics, subtle diffuse studio highlight gradient, and a visible perimeter bevel where it joins the inner timber frame rebate." if is_mirror else ""
 
         user_notes_clean = combined_notes
         if user_notes_clean:
@@ -1156,6 +1158,7 @@ Set against a {white_bg}. Studio strobe lighting (5400K) with gentle self-ambien
         is_mirror = (profile["category"] == "mirror")
         hardware_str = self._build_photo_hardware_str()
         white_bg = self._build_white_isolation_str(is_mirror=is_mirror)
+        mirror_optics_dalle = f"The central glass pane is an authentic high-clarity 4mm silvered reflective mirror with real optical physics, subtle diffuse studio highlight gradient, and a visible perimeter bevel where it joins the inner timber frame rebate." if is_mirror else ""
 
         user_notes_clean = combined_notes
         if user_notes_clean:
