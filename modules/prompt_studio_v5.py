@@ -368,22 +368,8 @@ def render_prompt_studio_v5():
                             medidas_usuario=medidas_usuario,
                             foto_refs=foto_refs_v5
                         )
-                    elif btn_2_1:
-                        prompts = ai_prompt_service_v5.generate_vistas_2_1_prompts(
-                            furniture_name=m_name,
-                            furniture_analysis=m_ana,
-                            fabric_analysis=None,
-                            wood_analysis=w_ana,
-                            notas_usuario=notas_para_prompt,
-                            furniture_filenames=m_actual_filenames,
-                            wood_filenames=m_madera_filenames,
-                            reference_filenames=m_ref_filenames,
-                            tipo_mueble_usuario=tipo_mueble_usuario,
-                            medidas_usuario=medidas_usuario,
-                            foto_refs=foto_refs_v5
-                        )
                     else:
-                        prompts = ai_prompt_service_v5.generate_vistas_1_1_prompts(
+                        prompts = ai_prompt_service_v5.generate_vistas_prompts(
                             furniture_name=m_name,
                             furniture_analysis=m_ana,
                             fabric_analysis=None,
