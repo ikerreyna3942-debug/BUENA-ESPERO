@@ -613,22 +613,29 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
 
             wood_ais_lock = f"Sample and transfer the exact timber stain tone, warmth, and anatomical grain flow directly from the pixels of Image 2 ('{w_name}': {w_color}, {w_texture}) across all wooden parts ({profile['wood_parts_ais']}). Preserve natural timber saturation and warmth; do not bleach or wash out. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
 
-            dalle_wood_summary = f"Image 2: '{w_name}', {w_color}, {w_texture}"
-            dalle_title_suffix = f", with monolithic wood finish transferred from wood sample reference ('{w_name}': {w_color}, {w_texture})"
+            mat_directive_label = "1. 100% MONOLITHIC WOOD LOCK:"
+            mat_directive_body = wood_ais_lock
+
+            dalle_mat_section = f"""Material & Wood Fidelity:
+Crafted from authentic solid wood with continuous grain flow. Sample and replicate the exact timber stain tone, warm amber undertones, fine open pores, and satin finish from {dalle_wood_summary}. All wooden components ({profile['parts_str']}) share identical monolithic timber color and saturation without any two-tone mismatch, desaturation, or bleaching. {mirror_optics_dalle}"""
 
         else:
-            # CASILLA 1 SOLA: El mueble ya contiene la madera correcta
-            mat_rules.append(f"""CRITICAL MATERIAL & WOOD GRAIN LOCK - CASILLA 1 MASTER:
-* 100% MONOLITHIC REPLICATION FROM IMAGE 1: Replicate 100% exact wood species, continuous grain flow, warmth, and satin stain tone directly from Image 1 ('{furn_item}': {wood_from_furniture}) across all wooden components ({profile['parts_str']}).
-* ZERO TWO-TONE FINISH: STRICTLY FORBIDDEN to create contrasting two-tone finishes, dark walnut patches, or mismatched tones. All surfaces share identical continuous grain flow and satin sheen.
-* CONTINUOUS GRAIN FLOW: Natural continuous horizontal wood grain flow across all adjacent wooden surfaces.""")
+            # CASILLA 1 SOLA: El mueble ya contiene los materiales y acabados correctos en su foto original
+            mat_rules.append(f"""CRITICAL MATERIAL & SURFACE FINISH FIDELITY - CASILLA 1 MASTER:
+* 100% AUTHENTIC REPLICATION FROM IMAGE 1: Replicate 100% of the authentic materials, surface textures, colors, and finishes directly from Image 1 across all components ({profile['parts_str']}).
+* DUAL-TONE & MULTI-MATERIAL PRESERVATION: Strictly preserve all contrasting materials, two-tone finishes, and textures exactly as shown in Image 1 (e.g. natural stone/marble surfaces, mineral veining, matte black sculptural bases, metals, upholstery, or timber). ZERO artificial uniformization.
+* ZERO UNWANTED REDESIGN: Strictly forbidden to replace non-wood materials with generic wood, add unwanted doors/aprons, or force uniform monochromatic finish where contrasts exist in the prototype.""")
 
-            ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture & Master Wood): 3D model, joinery, and authentic wood finish/grain of '{furn_item}' ({wood_from_furniture})."""
+            ais_image_header = f"""• Image 1 (Attached Photo - Target Furniture & Authentic Materials): 3D model, authentic architecture, and genuine materials/textures of '{furn_item}' ({existing_mats})."""
 
-            wood_ais_lock = f"Sample and clone the exact timber stain tone, amber warmth, and continuous grain pores directly from the pixels of Image 1 ({wood_from_furniture}) across all wooden components ({profile['wood_parts_ais']}). Preserve the rich oil-rubbed satin warmth; do not bleach, wash out, or lighten the timber with studio lighting. Continuous horizontal grain flow. ZERO two-tone contrast; NO dark walnut or mismatched tones."
+            mat_directive_label = "1. 100% AUTHENTIC MATERIAL & FINISH FIDELITY:"
+            mat_directive_body = f"Sample and replicate 100% of the authentic materials, surface textures, colors, and finishes directly from the pixels of Image 1 across all components ({profile['wood_parts_ais']}). Strictly preserve genuine surface textures (e.g. natural stone, marble veining, matte lacquer, metal, or timber) and maintain all natural color contrasts and dual-tones (such as light tabletops with dark/black sculptural bases) without bleaching, hue shifts, or forced material substitution."
 
-            dalle_wood_summary = f"Image 1: '{furn_item}', {wood_from_furniture}"
-            dalle_title_suffix = f", preserving authentic wood species, continuous grain flow, and warm stain tone directly from original photo (Image 1: {wood_from_furniture})"
+            dalle_wood_summary = f"Image 1: '{furn_item}', authentic materials and surface finishes ({existing_mats})"
+            dalle_title_suffix = f", preserving authentic materials, dual-tone finishes, and structural geometry directly from original reference photo (Image 1)"
+
+            dalle_mat_section = f"""Material & Surface Finish Fidelity:
+Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replicate genuine tabletop materials (e.g. natural stone, marble surface texture, or lacquer) and base finishes (e.g. matte black sculptural base, metals, or joinery). Preserve all authentic contrasting dual-tones and structural finishes with 0% distortion. {mirror_optics_dalle}"""
 
         if fa:
             f_name = fa.get("name", "Fabric Sample")
