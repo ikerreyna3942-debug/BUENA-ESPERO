@@ -312,42 +312,59 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
         elif any(w in text_to_search for w in ["buro", "buró", "noche", "velador", "cajon", "cajón", "comoda", "cómoda", "credenza", "aparador", "librero", "armario", "closet", "buffet", "gabinete", "nightstand", "dresser"]):
             category = "storage"
 
-        # 2. Extracción de Dimensiones y Proporciones
+        # 2. Extracción de Dimensiones y Proporciones Avanzada
         height_cm = None
         width_cm = None
         depth_cm = None
-        
-        h_match = re.search(r'(?:alto|altura|height|h)[\s:]*([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?', text_to_search)
-        w_match = re.search(r'(?:ancho|width|w)[\s:]*([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?', text_to_search)
-        d_match = re.search(r'(?:fondo|profundidad|prof|depth|d)[\s:]*([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?', text_to_search)
-        
-        if h_match:
-            try:
-                val = float(h_match.group(1))
-                height_cm = val * 100 if val < 10 and 'm' in h_match.group(0) else val
-            except Exception:
-                pass
-        if w_match:
-            try:
-                val = float(w_match.group(1))
-                width_cm = val * 100 if val < 10 and 'm' in w_match.group(0) else val
-            except Exception:
-                pass
-        if d_match:
-            try:
-                val = float(d_match.group(1))
-                depth_cm = val * 100 if val < 10 and 'm' in d_match.group(0) else val
-            except Exception:
-                pass
+        diam_cm = None
+
+        m_diam_h = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm)?\s*(?:diam|di[aá]metro)\s*[xX*]\s*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+        if m_diam_h:
+            diam_cm = float(m_diam_h.group(1))
+            height_cm = float(m_diam_h.group(2))
+        else:
+            m_diam = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm)?\s*(?:diam|di[aá]metro)|(?:diam|di[aá]metro)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            if m_diam:
+                diam_cm = float(m_diam.group(1) or m_diam.group(2))
+
+        m_w_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:frente|ancho|largo|width|w)', text_to_search)
+        if m_w_bef: width_cm = float(m_w_bef.group(1))
+        m_d_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:fondo|profundidad|prof|depth|d)', text_to_search)
+        if m_d_bef: depth_cm = float(m_d_bef.group(1))
+        m_h_bef = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm|m)?\s*(?:alto|altura|height|h)', text_to_search)
+        if m_h_bef: height_cm = float(m_h_bef.group(1))
+
+        if not width_cm:
+            m_w_aft = re.search(r'(?:frente|ancho|largo|width|w)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            if m_w_aft: width_cm = float(m_w_aft.group(1))
+        if not depth_cm:
+            m_d_aft = re.search(r'(?:fondo|profundidad|prof|depth|d)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            if m_d_aft: depth_cm = float(m_d_aft.group(1))
+        if not height_cm:
+            m_h_aft = re.search(r'(?:alto|altura|height|h)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            if m_h_aft: height_cm = float(m_h_aft.group(1))
+
+        if not (width_cm and depth_cm and height_cm) and not diam_cm:
+            m_triplet = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*[xX*]\s*([0-9]+(?:\.[0-9]+)?)\s*[xX*]\s*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            if m_triplet:
+                width_cm, depth_cm, height_cm = float(m_triplet.group(1)), float(m_triplet.group(2)), float(m_triplet.group(3))
 
         dimensions_rule = ""
         dims = []
-        if height_cm: dims.append(f"Height: {int(height_cm)} cm")
-        if width_cm: dims.append(f"Width: {int(width_cm)} cm")
-        if depth_cm: dims.append(f"Depth: {int(depth_cm)} cm")
+        if diam_cm: dims.append(f"Diameter: {int(diam_cm)} cm")
+        if width_cm: dims.append(f"Width/Frente: {int(width_cm)} cm")
+        if depth_cm: dims.append(f"Depth/Fondo: {int(depth_cm)} cm")
+        if height_cm: dims.append(f"Height/Alto: {int(height_cm)} cm")
         if dims:
             dim_str = ", ".join(dims)
-            dimensions_rule = f"• PHYSICAL DIMENSIONS & SPECIFICATION: Reference scale ({dim_str}). Strictly preserve the frozen physical prototype, frame thickness, silhouette, and natural orientation from Image 1 without stretching, distortion, or adding interior boxes/shelves."
+            aspect_note = ""
+            if height_cm and width_cm:
+                ratio = width_cm / height_cm
+                if ratio > 2.0:
+                    aspect_note = " (Low-profile elongated proportions; wide and low to the ground; NOT a tall credenza, cabinet, or console)"
+                elif ratio < 0.8:
+                    aspect_note = " (Tall slender vertical silhouette)"
+            dimensions_rule = f"• EXACT 1:1 REAL-WORLD SCALE & PROPORTIONS: Reference scale ({dim_str}){aspect_note}. Strictly preserve the frozen physical prototype dimensions, structural joinery, leg architecture, and natural proportions from Image 1 without stretching or distortion."
 
         # 3. Configuración por Categoría
         if category == "mirror":
@@ -723,6 +740,8 @@ Crafted from authentic materials matching Image 1 ({dalle_wood_summary}). Replic
         individual_results = []
         for v in vistas_specs:
             prompt_ais = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | COMMERCIAL PHOTOGRAPHY]
+TASK: Generate a hyper-realistic commercial catalog photograph of the EXACT physical furniture piece from Image 1 in {v['label']} on pure white background.
+
 {ais_image_header}
 
 DIRECTIVES:
@@ -758,6 +777,8 @@ Negative Prompt: ground shadows, floor shadows, drop shadows, floor reflections,
 
         # 1 SOLO PROMPT MAESTRO TOKEN-OPTIMIZADO PARA GOOGLE AI STUDIO / GEMINI WEB (Argon 4 / Pro / Nano Banana)
         prompt_maestro_ais = f"""[MODEL: GOOGLE AI STUDIO / GEMINI (NANO BANANA / FLASH / PRO) | 5-VIEW COMMERCIAL CATALOG]
+TASK: Generate hyper-realistic commercial catalog studio photographs of the EXACT physical furniture piece from Image 1 across 5 canonical product views on pure white background.
+
 {ais_image_header}
 
 DIRECTIVES:
