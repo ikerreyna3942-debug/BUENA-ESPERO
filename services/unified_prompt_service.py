@@ -101,19 +101,23 @@ def parse_dimensions(tipo_mueble: str, medidas_texto: str) -> Dict[str, Any]:
     }
 
 
+def _fmt_measure(val: float) -> str:
+    return str(int(val)) if float(val).is_integer() else f"{float(val):g}"
+
+
 def compose_dimensions_text(
     width: float = 0, depth: float = 0, height: float = 0, diam: float = 0
 ) -> str:
     """Convierte los campos confirmados por el usuario en un texto canónico."""
     parts: List[str] = []
     if diam:
-        parts.append(f"{int(diam)} cm diam")
+        parts.append(f"{_fmt_measure(diam)} cm diam")
     if width:
-        parts.append(f"{int(width)} cm frente")
+        parts.append(f"{_fmt_measure(width)} cm frente")
     if depth:
-        parts.append(f"{int(depth)} cm fondo")
+        parts.append(f"{_fmt_measure(depth)} cm fondo")
     if height:
-        parts.append(f"{int(height)} cm alto")
+        parts.append(f"{_fmt_measure(height)} cm alto")
     return " x ".join(parts)
 
 

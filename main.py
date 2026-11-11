@@ -17,13 +17,6 @@ try:
 except Exception:
     pass
 
-from modules.prompt_studio_v1 import render_prompt_studio as render_v1
-from modules.prompt_studio_v2 import render_prompt_studio_v2 as render_v2
-from modules.prompt_studio_v3 import render_prompt_studio_v3 as render_v3
-from modules.prompt_studio_v4 import render_prompt_studio_v4 as render_v4
-from modules.prompt_studio_v5 import render_prompt_studio_v5 as render_v5
-from modules.prompt_studio_unified import render_prompt_studio_unified as render_v6
-
 def main():
     st.sidebar.markdown("### 🤖 ESTUDIO DE IA")
     st.sidebar.caption("Generador de Prompts y Perspectivas")
@@ -39,7 +32,7 @@ def main():
             "V2 Optimizado",
             "V1 Clásica original"
         ],
-        index=1  # Default: V5 Nano Banana Pro (Vistas y Maderas)
+        index=0  # Default: V6 Unificado
     )
     st.sidebar.markdown("---")
     
@@ -56,16 +49,22 @@ def main():
     st.sidebar.markdown("---")
     
     if version == "V6 Unificado (Recomendado)":
+        from modules.prompt_studio_unified import render_prompt_studio_unified as render_v6
         render_v6()
     elif version == "V5 Nano Banana Pro (Vistas y Maderas)":
+        from modules.prompt_studio_v5 import render_prompt_studio_v5 as render_v5
         render_v5()
     elif version == "V4 Ultimate (Nuevas Casillas)":
+        from modules.prompt_studio_v4 import render_prompt_studio_v4 as render_v4
         render_v4()
     elif version == "V3 Nivel Dios (Recomendado)":
+        from modules.prompt_studio_v3 import render_prompt_studio_v3 as render_v3
         render_v3()
     elif version == "V2 Optimizado":
+        from modules.prompt_studio_v2 import render_prompt_studio_v2 as render_v2
         render_v2()
     else:
+        from modules.prompt_studio_v1 import render_prompt_studio as render_v1
         render_v1()
 
 if __name__ == "__main__":

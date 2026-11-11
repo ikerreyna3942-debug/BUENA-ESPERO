@@ -12,6 +12,7 @@ def render_sku_autofill_bar(version_key: str):
     k_tipo = f"field_tipo_{version_key}"
     k_medidas = f"field_medidas_{version_key}"
     k_loaded = f"sku_loaded_data_{version_key}"
+    k_last_searched = f"sku_last_searched_{version_key}"
 
     if k_tipo not in st.session_state:
         st.session_state[k_tipo] = ""
@@ -41,21 +42,26 @@ def render_sku_autofill_bar(version_key: str):
     with c_sku_btn:
         btn_buscar = st.button("⚡ Cargar SKU", key=f"btn_search_sku_{version_key}", use_container_width=True)
 
-    if (btn_buscar or sku_val) and sku_val.strip():
-        sku_clean = sku_val.strip().upper()
-        current_loaded = st.session_state.get(k_loaded, {})
-        if not current_loaded or current_loaded.get("sku", "").upper() != sku_clean or btn_buscar:
-            info = sheets_service.get_furniture_by_sku(sku_clean, force_refresh=bool(btn_buscar))
-            if info:
-                st.session_state[k_loaded] = info
-                # Actualizar directamente los valores vinculados a las cajas de texto
-                st.session_state[k_tipo] = info.get("tipo_mueble", "")
-                st.session_state[k_medidas] = info.get("medidas", "")
-            else:
-                st.session_state[k_loaded] = None
-                st.warning(f"⚠️ El SKU '{sku_clean}' no fue encontrado en DATOS GENERAL. Puedes ingresar las medidas y tipo manualmente.")
+    sku_clean = (sku_val or "").strip().upper()
+    last_searched = st.session_state.get(k_last_searched, "")
+
+    if not sku_clean:
+        st.session_state[k_loaded] = None
+        st.session_state[k_last_searched] = ""
+    elif btn_buscar or (len(sku_clean) >= 3 and sku_clean != last_searched):
+        st.session_state[k_last_searched] = sku_clean
+        info = sheets_service.get_furniture_by_sku(sku_clean, force_refresh=bool(btn_buscar))
+        if info:
+            st.session_state[k_loaded] = info
+            # Actualizar directamente los valores vinculados a las cajas de texto
+            st.session_state[k_tipo] = info.get("tipo_mueble", "")
+            st.session_state[k_medidas] = info.get("medidas", "")
+        else:
+            st.session_state[k_loaded] = None
 
     data_loaded = st.session_state.get(k_loaded)
+    if sku_clean and not data_loaded and st.session_state.get(k_last_searched) == sku_clean:
+        st.warning(f"⚠️ El SKU '{sku_clean}' no fue encontrado en DATOS GENERAL. Puedes ingresar las medidas y tipo manualmente.")
     tipo_actual = st.session_state.get(k_tipo, "")
     medidas_actual = st.session_state.get(k_medidas, "")
     

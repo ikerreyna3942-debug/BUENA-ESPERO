@@ -1,48 +1,38 @@
 from modules.sku_banner import render_sku_autofill_bar
+from modules.ui_helpers import render_copy_button, render_preview_image, load_drive_file_cached
 import os
-
 import io
-
 import json
-
 from pathlib import Path
-
 import streamlit as st
-
 from PIL import Image
 
-
-
 FOLDER_TELAS_DRIVE_ID = "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
-
 FOLDER_MADERAS_DRIVE_ID = "1Jq2u1A6-xKi1YigUYSIzLauUww_RJ5Lx"
 
+
+def _scan_local_samples(folder_path: Path):
+    items = []
+    if folder_path.exists():
+        for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.JPG", "*.PNG", "*.JPEG"):
+            for f in sorted(folder_path.glob(ext)):
+                clean_name = f.stem.replace("_", " ").strip()
+                if not any(t["name"].upper() == clean_name.upper() for t in items):
+                    items.append({
+                        "id": f.name,
+                        "name": clean_name,
+                        "filename": f.name,
+                        "link": "",
+                        "local_path": str(f)
+                    })
+    return items
 
 
 @st.cache_data(ttl=300)
 def cargar_telas_menu():
-    from services.photo_service import PATH_FINAL_FOTOS
     from services.sheets_service import sheets_service
-
     app_dir = Path(__file__).resolve().parent.parent
-    telas_dirs = [
-        PATH_FINAL_FOTOS / "FOTOS TELAS" / "TELAS",
-        app_dir / "muestras_tela"
-    ]
-    local_telas = []
-    for t_dir in telas_dirs:
-        if t_dir.exists():
-            for ext in ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.JPG", "*.PNG", "*.JPEG"]:
-                for f in sorted(t_dir.glob(ext)):
-                    clean_name = f.stem.replace("_", " ").strip()
-                    if not any(t["name"].upper() == clean_name.upper() for t in local_telas):
-                        local_telas.append({
-                            "id": f.name,
-                            "name": clean_name,
-                            "filename": f.name,
-                            "link": "",
-                            "local_path": str(f)
-                        })
+    local_telas = _scan_local_samples(app_dir / "muestras_tela")
 
     drive_telas = []
     if sheets_service.connection_ok:
@@ -57,28 +47,9 @@ def cargar_telas_menu():
 
 @st.cache_data(ttl=300)
 def cargar_maderas_menu():
-    from services.photo_service import PATH_FINAL_FOTOS
     from services.sheets_service import sheets_service
-
     app_dir = Path(__file__).resolve().parent.parent
-    maderas_dirs = [
-        PATH_FINAL_FOTOS / "FOTOS TELAS" / "MADERAS",
-        app_dir / "muestras_madera"
-    ]
-    local_maderas = []
-    for m_dir in maderas_dirs:
-        if m_dir.exists():
-            for ext in ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.JPG", "*.PNG", "*.JPEG"]:
-                for f in sorted(m_dir.glob(ext)):
-                    clean_name = f.stem.replace("_", " ").strip()
-                    if not any(m["name"].upper() == clean_name.upper() for m in local_maderas):
-                        local_maderas.append({
-                            "id": f.name,
-                            "name": clean_name,
-                            "filename": f.name,
-                            "link": "",
-                            "local_path": str(f)
-                        })
+    local_maderas = _scan_local_samples(app_dir / "muestras_madera")
 
     drive_maderas = []
     if sheets_service.connection_ok:
@@ -87,129 +58,10 @@ def cargar_maderas_menu():
         except Exception:
             drive_maderas = []
 
-    # Combinar ambas listas
     combined = local_maderas + [m for m in drive_maderas if not any(l["name"].upper() == m["name"].upper() for l in local_maderas)]
     return sorted(combined, key=lambda x: x["name"].upper())
 
 
-
-def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = "cp_v1"):
-    """Renderiza un botón que copia el texto al portapapeles nativamente en 1 clic de forma 100% blindada."""
-    import base64
-    import streamlit.components.v1 as components
-    b64_text = base64.b64encode(text.encode("utf-8")).decode("utf-8")
-    html_code = f"""
-    <div style="margin: 4px 0 8px 0;">
-        <button id="btn_{key}" onclick="copy_{key}()" style="
-            width: 100%;
-            background-color: #2563EB;
-            color: #FFFFFF;
-            border: none;
-            padding: 8px 14px;
-            font-size: 13px;
-            font-weight: 600;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        ">
-            {label}
-        </button>
-    </div>
-    <script>
-    function copy_{key}() {{
-        try {{
-            const b64 = "{b64_text}";
-            const raw = decodeURIComponent(escape(window.atob(b64)));
-            if (navigator.clipboard && navigator.clipboard.writeText) {{
-                navigator.clipboard.writeText(raw).then(function() {{
-                    showCopied_{key}();
-                }}).catch(function() {{
-                    fallbackCopy_{key}(raw);
-                }});
-            }} else {{
-                fallbackCopy_{key}(raw);
-            }}
-        }} catch (err) {{
-            console.error("Error al copiar:", err);
-        }}
-    }}
-    function fallbackCopy_{key}(textToCopy) {{
-        const ta = document.createElement("textarea");
-        ta.value = textToCopy;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-        showCopied_{key}();
-    }}
-    function showCopied_{key}() {{
-        const b = document.getElementById("btn_{key}");
-        if (b) {{
-            const orig = b.innerHTML;
-            b.innerHTML = "✅ ¡Copiado!";
-            b.style.backgroundColor = "#059669";
-            setTimeout(function() {{
-                b.innerHTML = orig;
-                b.style.backgroundColor = "#2563EB";
-            }}, 2000);
-        }}
-    }}
-    </script>
-    """
-    components.html(html_code, height=44)
-
-def render_preview_image(img_data, caption: str = ""):
-    """Renderiza una imagen en Streamlit blindada con data URI en base64 para evitar errores 404 o caídas de caché."""
-    import base64
-    if not img_data:
-        return
-    try:
-        raw_bytes = None
-        if isinstance(img_data, dict) and "bytes" in img_data:
-            raw_bytes = img_data["bytes"]
-        elif hasattr(img_data, "getvalue"):
-            raw_bytes = img_data.getvalue()
-        elif hasattr(img_data, "read"):
-            if hasattr(img_data, "seek"):
-                img_data.seek(0)
-            raw_bytes = img_data.read()
-            if hasattr(img_data, "seek"):
-                img_data.seek(0)
-        elif isinstance(img_data, (bytes, bytearray)):
-            raw_bytes = bytes(img_data)
-
-        if raw_bytes and len(raw_bytes) > 0:
-            b64 = base64.b64encode(raw_bytes).decode("utf-8")
-            mime = "image/jpeg"
-            if raw_bytes.startswith(b"\x89PNG"):
-                mime = "image/png"
-            elif raw_bytes.startswith(b"RIFF") and b"WEBP" in raw_bytes[:16]:
-                mime = "image/webp"
-            elif raw_bytes.startswith(b"GIF8"):
-                mime = "image/gif"
-            st.markdown(f'''
-            <div style="text-align:center; margin-bottom:12px;">
-                <img src="data:{mime};base64,{b64}" style="max-width:100%; border-radius:8px; border:1px solid #475569; box-shadow:0 4px 10px rgba(0,0,0,0.25);" />
-                <div style="font-size:12px; color:#94A3B8; margin-top:4px;">{caption}</div>
-            </div>
-            ''', unsafe_allow_html=True)
-            return
-        
-        st.image(img_data, caption=caption, use_container_width=True)
-    except Exception:
-        try:
-            st.image(img_data, caption=caption, use_container_width=True)
-        except Exception:
-            st.caption(f"🖼️ {caption}")
 
 def render_prompt_studio():
     if "clear_key_v1" not in st.session_state:
@@ -218,8 +70,6 @@ def render_prompt_studio():
     from services.ai_prompt_service_v1 import ai_prompt_service
 
     from services.sheets_service import sheets_service
-
-    from services.photo_service import photo_service
 
 
 
@@ -443,30 +293,7 @@ def render_prompt_studio():
 
 
 
-    # Cargar catálogos interactivos para los menús
-
-    lista_telas = cargar_telas_menu()
-
-    map_telas = {t["name"].upper(): t for t in lista_telas}
-
-    opciones_telas = [""] + [t["name"] for t in lista_telas]
-
-
-
-    lista_maderas = cargar_maderas_menu()
-
-    map_maderas = {m["name"].upper(): m for m in lista_maderas}
-
-    opciones_maderas = [""] + [m["name"] for m in lista_maderas]
-
-
-
-    # -------------------------------------------------------------------------
-
     # LAYOUT DE 3 COLUMNAS EXACTO A LA FOTO 1
-
-    # -------------------------------------------------------------------------
-
     col1, col2, col3 = st.columns([1.25, 0.7, 1.45])
 
 
@@ -564,6 +391,9 @@ def render_prompt_studio():
 
 
             if tipo_origen_tela == "📂 Menú Catálogo Oficial":
+                lista_telas = cargar_telas_menu()
+                map_telas = {t["name"].upper(): t for t in lista_telas}
+                opciones_telas = [""] + [t["name"] for t in lista_telas]
 
                 sel_t_nombre = st.selectbox(
 
@@ -583,7 +413,7 @@ def render_prompt_studio():
                         if obj_t.get("local_path") and os.path.exists(obj_t["local_path"]):
                             tela_bytes = Path(obj_t["local_path"]).read_bytes()
                         elif obj_t.get("id"):
-                            tela_bytes = sheets_service.get_drive_file_bytes(obj_t["id"])
+                            tela_bytes = load_drive_file_cached(obj_t["id"])
 
             else:
 
@@ -622,6 +452,9 @@ def render_prompt_studio():
 
 
             if tipo_origen_mad == "📂 Menú Catálogo Oficial":
+                lista_maderas = cargar_maderas_menu()
+                map_maderas = {m["name"].upper(): m for m in lista_maderas}
+                opciones_maderas = [""] + [m["name"] for m in lista_maderas]
 
                 sel_m_nombre = st.selectbox(
 
@@ -647,7 +480,7 @@ def render_prompt_studio():
 
                         elif obj_m.get("id"):
 
-                            madera_bytes = sheets_service.get_drive_file_bytes(obj_m["id"])
+                            madera_bytes = load_drive_file_cached(obj_m["id"])
 
             else:
 
@@ -703,6 +536,7 @@ def render_prompt_studio():
             else:
 
                 with st.spinner("Analizando micro-texturas y generando prompts con Gemini..."):
+                    st.session_state["v1_gen_id"] = int(st.session_state.get("v1_gen_id", 0)) + 1
 
                     m_bytes = [f.getvalue() for f in mueble_up]
 
@@ -1094,6 +928,7 @@ def render_prompt_studio():
         if "last_studio_result" in st.session_state:
 
             res = st.session_state["last_studio_result"]
+            v1_gid = int(st.session_state.get("v1_gen_id", 0))
 
             p_tabs = st.tabs(["🌟 Google AI Studio", "⚡ Flux / Midjourney", "🤖 DALL-E 3", "🎨 Render Gratis (FLUX.1)", "📚 Biblioteca"])
 
@@ -1103,37 +938,37 @@ def render_prompt_studio():
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.text_area(f"Vista {v_key}:", value=v_dict["google_ai_studio"], height=160, key=f"txt_v_{v_key}_g_{st.session_state.clear_key_v1}")
-                        render_copy_button(v_dict["google_ai_studio"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_g_{st.session_state.clear_key_v1}")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["google_ai_studio"], height=160, key=f"txt_v_{v_key}_g_{st.session_state.clear_key_v1}_{v1_gid}")
+                        render_copy_button(v_dict["google_ai_studio"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_g_{st.session_state.clear_key_v1}_{v1_gid}")
                 else:
                     p_google = res["prompts"]["google_ai_studio"]
-                    st.text_area("Prompt Google AI Studio / Imagen 3:", value=p_google, height=300, key=f"txt_res_g_{st.session_state.clear_key_v1}")
-                    render_copy_button(p_google, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_g_{st.session_state.clear_key_v1}")
-                    st.download_button("💾 Descargar .txt", data=p_google, file_name=f"prompt_google_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_g_{st.session_state.clear_key_v1}")
+                    st.text_area("Prompt Google AI Studio / Imagen 3:", value=p_google, height=300, key=f"txt_res_g_{st.session_state.clear_key_v1}_{v1_gid}")
+                    render_copy_button(p_google, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_g_{st.session_state.clear_key_v1}_{v1_gid}")
+                    st.download_button("💾 Descargar .txt", data=p_google, file_name=f"prompt_google_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_g_{st.session_state.clear_key_v1}_{v1_gid}")
 
             with p_tabs[1]:
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.text_area(f"Vista {v_key}:", value=v_dict["flux_midjourney"], height=160, key=f"txt_v_{v_key}_f_{st.session_state.clear_key_v1}")
-                        render_copy_button(v_dict["flux_midjourney"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_f_{st.session_state.clear_key_v1}")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["flux_midjourney"], height=160, key=f"txt_v_{v_key}_f_{st.session_state.clear_key_v1}_{v1_gid}")
+                        render_copy_button(v_dict["flux_midjourney"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_f_{st.session_state.clear_key_v1}_{v1_gid}")
                 else:
                     p_flux = res["prompts"]["flux_midjourney"]
-                    st.text_area("Prompt Flux / Midjourney v6.1:", value=p_flux, height=180, key=f"txt_res_f_{st.session_state.clear_key_v1}")
-                    render_copy_button(p_flux, label="📋 Copiar Prompt para Flux / Midjourney", key=f"cp_res_f_{st.session_state.clear_key_v1}")
-                    st.download_button("💾 Descargar .txt", data=p_flux, file_name=f"prompt_flux_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_f_{st.session_state.clear_key_v1}")
+                    st.text_area("Prompt Flux / Midjourney v6.1:", value=p_flux, height=180, key=f"txt_res_f_{st.session_state.clear_key_v1}_{v1_gid}")
+                    render_copy_button(p_flux, label="📋 Copiar Prompt para Flux / Midjourney", key=f"cp_res_f_{st.session_state.clear_key_v1}_{v1_gid}")
+                    st.download_button("💾 Descargar .txt", data=p_flux, file_name=f"prompt_flux_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_f_{st.session_state.clear_key_v1}_{v1_gid}")
 
             with p_tabs[2]:
                 if res.get("modo") == "Vistas (360)" and "prompts_vistas" in res:
                     for v_key, v_dict in res["prompts_vistas"].items():
                         st.markdown(f"**{v_key.replace('_', ' ').upper()}**")
-                        st.text_area(f"Vista {v_key}:", value=v_dict["dalle_chatgpt"], height=160, key=f"txt_v_{v_key}_d_{st.session_state.clear_key_v1}")
-                        render_copy_button(v_dict["dalle_chatgpt"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_d_{st.session_state.clear_key_v1}")
+                        st.text_area(f"Vista {v_key}:", value=v_dict["dalle_chatgpt"], height=160, key=f"txt_v_{v_key}_d_{st.session_state.clear_key_v1}_{v1_gid}")
+                        render_copy_button(v_dict["dalle_chatgpt"], label=f"📋 Copiar Vista {v_key}", key=f"cp_v_{v_key}_d_{st.session_state.clear_key_v1}_{v1_gid}")
                 else:
                     p_dalle = res["prompts"]["dalle_chatgpt"]
-                    st.text_area("Prompt DALL-E 3 / ChatGPT:", value=p_dalle, height=180, key=f"txt_res_d_{st.session_state.clear_key_v1}")
-                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT / DALL-E", key=f"cp_res_d_{st.session_state.clear_key_v1}")
-                    st.download_button("💾 Descargar .txt", data=p_dalle, file_name=f"prompt_dalle_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_d_{st.session_state.clear_key_v1}")
+                    st.text_area("Prompt DALL-E 3 / ChatGPT:", value=p_dalle, height=180, key=f"txt_res_d_{st.session_state.clear_key_v1}_{v1_gid}")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT / DALL-E", key=f"cp_res_d_{st.session_state.clear_key_v1}_{v1_gid}")
+                    st.download_button("💾 Descargar .txt", data=p_dalle, file_name=f"prompt_dalle_{res['mueble_name']}.txt", use_container_width=True, key=f"dl_res_d_{st.session_state.clear_key_v1}_{v1_gid}")
 
 
 
@@ -1175,22 +1010,16 @@ def render_prompt_studio():
                     )
 
             with p_tabs[4]:
-
                 app_dir = Path(__file__).resolve().parent.parent
-
                 prompts_dir = app_dir / "PROMPTS EXITOSOS"
-
-                if prompts_dir.exists():
-
-                    txt_files = list(prompts_dir.glob("*.txt"))
-
+                txt_files = sorted(prompts_dir.glob("*.txt")) if prompts_dir.exists() else []
+                if txt_files:
                     sel_p = st.selectbox("Ejemplos Certificados:", [f.name for f in txt_files], key="sb_lib_ex")
-
                     if sel_p:
-
                         p_content = (prompts_dir / sel_p).read_text(encoding="utf-8", errors="ignore")
-
-                        st.text_area("Contenido:", value=p_content, height=220)
+                        st.text_area("Contenido:", value=p_content, height=220, key=f"txt_lib_ex_{sel_p}")
+                else:
+                    st.info("No hay ejemplos guardados en la carpeta local 'PROMPTS EXITOSOS'.")
 
         else:
             st.markdown('<div style="text-align:center; padding: 60px 20px; color:#64748B;"><div style="font-size:32px; margin-bottom:10px;">✨</div><div>Los prompts aparecerán aquí con botones de descarga rápida.</div></div>', unsafe_allow_html=True)

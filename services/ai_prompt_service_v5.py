@@ -4,7 +4,7 @@ import re
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from PIL import Image
+from PIL import Image, ImageOps
 try:
     from pydantic import BaseModel, Field
 except ImportError:
@@ -12,8 +12,12 @@ except ImportError:
         def __init__(self, **kwargs):
             for k, v in kwargs.items():
                 setattr(self, k, v)
+
+        def model_dump(self) -> Dict[str, Any]:
+            return dict(self.__dict__)
+
     def Field(*args, **kwargs):
-        return None
+        return kwargs.get("default", None)
 
 # Modelos Pydantic para Structured Outputs Avanzados
 class MaterialAnalysisV5(BaseModel):
@@ -36,6 +40,7 @@ class AIPromptServiceV5:
     def __init__(self):
         self.default_api_key = os.getenv("GEMINI_API_KEY", "").strip()
         self._clients: Dict[str, Any] = {}
+        self._preferred_model: Optional[str] = None
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -65,60 +70,116 @@ class AIPromptServiceV5:
             return None
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini priorizando el modelo de razonamiento profundo Argon 4 con fallbacks rápidos."""
-        models_to_try = [
-            "gemini-4-argon",
+        """Llama a Gemini con modelos vigentes y caché del modelo operativo (fail-fast en errores de auth)."""
+        base_models = [
+            "gemini-2.5-flash",
             "gemini-2.0-flash",
-            "gemini-1.5-flash",
+            "gemini-2.5-pro",
             "gemini-2.0-flash-lite",
         ]
+        models_to_try = []
+        if self._preferred_model:
+            models_to_try.append(self._preferred_model)
+        for m in base_models:
+            if m not in models_to_try:
+                models_to_try.append(m)
+
         last_err = None
         for m in models_to_try:
             try:
-                return client.models.generate_content(model=m, contents=contents, config=config)
+                res = client.models.generate_content(model=m, contents=contents, config=config)
+                self._preferred_model = m
+                return res
             except Exception as e:
+                err_txt = str(e).upper()
+                if any(tok in err_txt for tok in ("API_KEY_INVALID", "API KEY NOT VALID", "PERMISSION_DENIED", "UNAUTHENTICATED", "401", "403")):
+                    raise
                 last_err = e
                 continue
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 512) -> Image.Image:
         """Optimiza y comprime en memoria imágenes a 512px y JPEG 75 para envío ultra-rápido (<50KB)."""
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        if max(img.size) > max_dim:
-            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=75, optimize=True)
+        with Image.open(io.BytesIO(img_bytes)) as src:
+            img = ImageOps.exif_transpose(src)
+            if img.mode in ("RGBA", "LA", "P"):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                alpha = img.split()[-1] if "A" in img.getbands() else None
+                bg.paste(img, mask=alpha)
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            if max(img.size) > max_dim:
+                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=75, optimize=True)
         buf.seek(0)
-        return Image.open(buf)
+        with Image.open(buf) as compressed:
+            compressed.load()
+            return compressed.copy()
 
     def analyze_material(self, sample_bytes: bytes, api_key: Optional[str] = None, material_type: str = "auto") -> Dict[str, Any]:
         key = self.get_api_key(api_key)
-        default_material = MaterialAnalysisV5(
-            name="Roble Claro Natural / Natural Honey Oak",
-            color_description="warm light honey wood tone with soft amber undertones",
-            texture_detail="fine continuous horizontal wood grain pores, smooth satin texture",
-            light_interaction="matte satin sheen without glare"
-        ).model_dump()
+        mtype = (material_type or "auto").strip().lower()
+        is_fabric = any(k in mtype for k in ("fabric", "tela", "textil", "upholstery", "tapiz"))
+        is_wood = any(k in mtype for k in ("wood", "madera", "timber"))
+
+        if is_fabric:
+            default_material = MaterialAnalysisV5(
+                name="Lino / Bouclé Tejido Natural",
+                color_description="warm natural sand and oatmeal woven tone with soft neutral undertones",
+                texture_detail="fine intertwined upholstery textile weave with subtle tactile threads",
+                light_interaction="soft matte textile light absorption without synthetic glare",
+            ).model_dump()
+            fallback_color = "warm natural neutral upholstery tone with subtle woven depth"
+            analysis_instructions = """Analyze this upholstery fabric / textile sample with microscopic precision:
+1. Identify the textile weave and material family (e.g. Bouclé, Lino / Linen, Velvet / Terciopelo, Chenille, Microfiber, Leather / Piel).
+2. Report the exact color description with organic fabric tone, warmth, and thread undertones (avoid generic hex codes).
+3. Report yarn thickness, weave density, nubby/smooth surface structure, and directional fiber flow.
+4. Report light interaction and surface sheen (matte textile finish, soft velvet sheen, etc.)."""
+        elif is_wood:
+            default_material = MaterialAnalysisV5(
+                name="Roble Claro Natural / Natural Honey Oak",
+                color_description="warm light honey wood tone with soft amber undertones",
+                texture_detail="fine continuous horizontal wood grain pores, smooth satin texture",
+                light_interaction="matte satin sheen without glare",
+            ).model_dump()
+            fallback_color = "warm light honey natural oak tone with subtle amber undertones"
+            analysis_instructions = """Analyze this timber / wood sample with microscopic precision:
+1. Identify the exact timber species (e.g. Roble Claro Natural / Natural Light Oak, Nogal / American Walnut, Encino, Fresno, Teca, Parota, Tzalam).
+2. Report the exact color description with organic timber tone, warmth, and amber/golden undertones (avoid generic hex codes).
+3. Report wood grain flow, pore openness, and texture.
+4. Report light interaction and surface sheen (matte, low lustre satin)."""
+        else:
+            default_material = MaterialAnalysisV5(
+                name="Material Natural de Alta Gama",
+                color_description="warm natural neutral tone with balanced organic undertones",
+                texture_detail="fine authentic natural surface grain and tactile texture",
+                light_interaction="soft satin-matte natural light response without harsh glare",
+            ).model_dump()
+            fallback_color = "warm natural neutral tone with subtle organic undertones"
+            analysis_instructions = f"""Analyze this material sample ({material_type}) with microscopic precision:
+1. Identify the exact material (wood species or upholstery textile/leather) clearly and accurately.
+2. Report the exact color description with organic tonal nuances and undertones (avoid generic hex codes).
+3. Report fine grain, weave, pore structure, and surface texture.
+4. Report light interaction and surface sheen (matte, satin, velvet lustre, etc.)."""
 
         if not key:
             return default_material
-            
+
         try:
-            from google import genai
             from google.genai import types
-            
+
             client = self.get_client(key)
             if not client:
                 return default_material
             img = self._prepare_image(sample_bytes, max_dim=512)
-            
-            prompt = f"""You are an expert materials engineer, timber technologist, and luxury product photographer.
-Analyze this material sample ({material_type}) with microscopic precision:
-1. Identify the exact timber species (e.g. Roble Claro Natural / Natural Light Oak, Nogal / American Walnut, Encino, Fresno, Teca).
-2. Report the exact color description with organic timber tone, warmth, and amber/golden undertones (avoid generic hex codes).
-3. Report wood grain flow, pore openness, and texture.
-4. Report light interaction and surface sheen (matte, low lustre satin)."""
-            
+
+            prompt = f"""You are an expert materials engineer, textile/timber specialist, and luxury product photographer.
+{analysis_instructions}"""
+
             res = self._call_gemini(
                 client=client,
                 contents=[prompt, img],
@@ -131,7 +192,7 @@ Analyze this material sample ({material_type}) with microscopic precision:
             data = json.loads(res.text)
             c_desc = data.get("color_description", "")
             if not c_desc or "detected" in c_desc.lower():
-                data["color_description"] = "warm light honey natural oak tone with subtle amber undertones"
+                data["color_description"] = fallback_color
             return data
         except Exception as e:
             print(f"[AIPromptServiceV5] Error analyzing material: {e}")
@@ -323,7 +384,11 @@ Analyze the provided furniture and reference images to create an exhaustive, pro
             diam_cm = float(m_diam_h.group(1))
             height_cm = float(m_diam_h.group(2))
         else:
-            m_diam = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm)?\s*(?:diam|di[aá]metro)|(?:diam|di[aá]metro)[\s:]*([0-9]+(?:\.[0-9]+)?)', text_to_search)
+            m_diam = re.search(
+                r'([0-9]+(?:\.[0-9]+)?)\s*(?:cm)?\s*(?:diam(?:etro)?|di[aá]metro)(?![a-z])'
+                r'|(?:^|[\s,(x*])(?:d\.|diam\.?|di[aá]metro|ø)\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)',
+                text_to_search,
+            )
             if m_diam:
                 diam_cm = float(m_diam.group(1) or m_diam.group(2))
 
@@ -1202,11 +1267,11 @@ Negative Prompt: CGI, 3D render, shadows, room, two-tone finish, altered fabric,
         - Máxima fidelidad de materiales, colores y geometría.
         """
         ma = furniture_analysis or {}
-        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
-            furn_item = tipo_mueble_usuario.strip()
+        if tipo_mueble_usuario and str(tipo_mueble_usuario).strip():
+            furn_item = str(tipo_mueble_usuario).strip()
         else:
-            furn_item = ma.get("furniture_item", furniture_name)
-            if "directives:" in furn_item.lower():
+            furn_item = ma.get("furniture_item") or furniture_name
+            if "directives:" in str(furn_item).lower():
                 furn_item = furniture_name
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials and colors")
@@ -1306,11 +1371,11 @@ Negative Prompt: shadows, drop shadows, floor shadows, grey gradient, studio flo
         - Enfoque apilado (focus stacking) con nitidez cristalina en cada poro y fibra.
         """
         ma = furniture_analysis or {}
-        if tipo_mueble_usuario and tipo_mueble_usuario.strip():
-            furn_item = tipo_mueble_usuario.strip()
+        if tipo_mueble_usuario and str(tipo_mueble_usuario).strip():
+            furn_item = str(tipo_mueble_usuario).strip()
         else:
-            furn_item = ma.get("furniture_item", furniture_name)
-            if "directives:" in furn_item.lower():
+            furn_item = ma.get("furniture_item") or furniture_name
+            if "directives:" in str(furn_item).lower():
                 furn_item = furniture_name
         geom_struct = ma.get("geometric_structure", "original structural geometry")
         existing_mats = ma.get("existing_materials", "original materials and exact colors")

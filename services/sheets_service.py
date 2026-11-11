@@ -2,9 +2,17 @@ import os
 import re
 import json
 import time
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import io
+try:
+    import httplib2
+    from google_auth_httplib2 import AuthorizedHttp
+except Exception:
+    httplib2 = None
+    AuthorizedHttp = None
+
 try:
     from google.oauth2 import service_account
     from google.oauth2.credentials import Credentials as UserCredentials
@@ -47,39 +55,39 @@ class SheetsService:
         self._sheet_name_fotos_norm: Optional[str] = None
         self._sku_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._sku_catalog_last_sync: float = 0.0
+        self._sku_sync_attempted_at: float = 0.0
         self._sku_cache_ttl: float = 120.0
-        self._init_service()
+        self._init_lock = threading.Lock()
+        self._initialized = False
+
+    def _build_client(self, service_name: str, version: str, creds):
+        """Construye un cliente de Google API con timeout de red para evitar bloqueos."""
+        if AuthorizedHttp is not None and httplib2 is not None:
+            auth_http = AuthorizedHttp(creds, http=httplib2.Http(timeout=12))
+            return build(service_name, version, http=auth_http, cache_discovery=False)
+        return build(service_name, version, credentials=creds, cache_discovery=False)
+
+    def ensure_connected(self) -> bool:
+        """Conecta de forma perezosa con Google Drive y Sheets la primera vez que se necesita."""
+        if self._initialized:
+            return self.service is not None and self.drive_service is not None
+        with self._init_lock:
+            if not self._initialized:
+                self._init_service()
+                self._initialized = True
+        return self.service is not None and self.drive_service is not None
 
     @property
     def connection_ok(self) -> bool:
         """Retorna True si tanto Sheets como Drive están conectados correctamente."""
-        return self.service is not None and self.drive_service is not None
+        return self.ensure_connected()
 
     def _init_service(self):
-        # 1. Cargar Service Account de respaldo
-        sa_creds = None
-        env_creds = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
-        if not env_creds:
-            import base64
-            env_creds = base64.b64decode("ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAiYW50aWdyYXZpdHktaW50ZWdyYWNpb24iLAogICJwcml2YXRlX2tleV9pZCI6ICIzZjk2ODBmYTA5NzdmNTc3M2QwOTk2YmY1ZjEwYTlhYmY3NmJmMGMyIiwKICAicHJpdmF0ZV9rZXkiOiAiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tXG5NSUlFdmdJQkFEQU5CZ2txaGtpRzl3MEJBUUVGQUFTQ0JLZ3dnZ1NrQWdFQUFvSUJBUUR5Zmp1ZW9aQVRpa3BLXG5xRHJyYy9lTkdXckFmallEQmJiMGNtc3lGTmJzbDZtMDRidUx4ZTJnSWlBOHR2R1dZN3d4cWRyQVZLNldsT0lHXG54Vkd4RTc4S213eFhVT1lLelpUVkZkb1I3dStaK2RiK01DSHNGNy9oMXc5aEpFRWRWQzEvZDNKdm1nU1VsbC9DXG5pOFhmVUk4SElPRTRmaEtjczlRKzBGNm9HZWxDQU9Ed2NzUnZYMkZjcVFqRVN6RTZKL2hLZ00ySENXSWgvV2g5XG5XbCtKc2w4dlZrdjlRNkNWWkk5Q1czaCs2anVuT2Z3TU9KZGRPODFtN1ltUlc2OEN5M1E2RGFub2drRU9KUHF6XG54NXFzSGU4TkNLaG9PL1RIMmJORU9NU2FVSjBzSUEvWG5yaGRPQU5hVEY4RFo2eDlFa3QzcEVpbWhhcWhnRWorXG44d2hyM0I1dkFnTUJBQUVDZ2dFQUFiak1MRXNkaWR1eUt6Vm1kU0g2VUtuMkNnVnlReW83UzJwWTNGN1I4TG4rXG5ya2lnVnN1R3lPM3kwYWI2QzhDd2k4Uk54OWV5RjZ2SEhJV2dCYWp3dkI3bXVlTzJHTDdUck1yUWtxb3JVUE01XG5iR0EySHBob1NuZTkwMjM0K1QvN3NtL3d3OTMyTGFaKzE3aE5wU3pMNkZleGYyMW9tdHBrVTMvYmF4RW9DTW5jXG5qand2a1kxUlp6SGF4L0w5T3dyckNkdjZpVlpkMlo3SVJ0S0JHYzdwalpaU0lidFcvNlpzaWhES1g5TVhYc2tXXG5yU3JRR2xGdnlUSmpHVVV0NXMzU3Z5czlvNHRGc1FnWHo0RFpVRkgrSmlWdy9raHMwY3dFOEtRN3pma1R1NVB5XG5rVTh6NnRUSkNqWVdkL0x6d05jTmJVWFFlYmR1OXFnc0k1K2RHekdkZVFLQmdRRDlIRVFYdU9YTk9xd3poNFRPXG5JbzRSQWdhK1lZQytwdVlFYjRzZ1cxN1dsRUhTemJRbHhyVkhjYTcrdElVYjQ1dmhzTmVsR1hoZWpVVUE5NndYXG5Zb2JTUDdVOGZISmsvcUNXSDI5cEExcWRVV0pNMVRyKzdKTWIxZDYyeW1yQ1ZVM1QrN292ZHh5NGxBYnF3aGxSXG5vSUJkNUpkSFhMUk1xeTBpOUVlNzJSZVU5d0tCZ1FEMVF1L2ZnY1A4bTd4VFhHcERBc1dyNmg5akJjSk1MVXVOXG5JeHdIdVBLMkI2UFFxaGcydDIwTGJSUWdmYUl5a3pyb0hjK2JVRkRWZmJ1MElVc2tIRzVmejYzWEg1RDN3THZFXG5LdjBEeWVwazh5bG5vY2lzcGM2SlBHNTZKbFMvUDRUYzBxQzA0NjFDNnViUVlROVZnNWo0MUgvcjBSNGdmdjR3XG5mUDVIaUIxOFNRS0JnR25FZUFmWnNkMnkyT2FuaUsyQzd3N1lZKzBHWFlCTnlleXNsOXlya2RQbEhDUjA1UVNzXG5KbkIyWndQMGQzTVNCNytsNEZjVGI2TkRNVVNZT29lREdvZWRLNlRjOUFpVUJwTDFDOTg4RVkrUHhKNEt0SjUyXG5TWHJtUWl6c0pQU1VKUE9pUzBrdVl3Z1dnMVZ5U3BZN2xhaW1yemlZMnBiM0tPTmtaTjF3ZUZROUFvR0JBSXk0XG5KUzBXSlQ3d2svTTRXUGV0eFlESHljNWs1WUFUbFArYm4xK0c3Q3NvNHdLOE5UeGZyYjhhakt1L3FhcGU4ek51XG50MGtqb2QxOFVKQWZjaDk3K0pBY2RsK3hpdG03eVgvYU1tVlVHcHBsTWVKMTNzL0FLbXB2TSt2OXhpNGM0YnhaXG5WVCswU2hyVThDMnJJc01yeUQ4c25XRE9FUDBRSUFQdUUyOHpWOGVSQW9HQkFMaTdDNWlaejFpUDFKbzVpZ0RpXG44bHAvRDNGM01LN2JneS9QZUpkN1JBLzg4WGxaMHRSUmFRdDNFdVdkdFRlbVlyOEV1Q1lRYnBOOFRCd28yQms0XG50bE5xUkVZY1lXSG9ob1p2ZHVqZjdlSTVucyt6UTlsb0JpNFc1SGdZLzE5RkNqZGFtcUljUWphVmY2b04wZU5SXG4xdnQvUWp6RFk0YUdqV2RBRllpN294V3Rcbi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS1cbiIsCiAgImNsaWVudF9lbWFpbCI6ICJwcm95ZWN0by0xQGFudGlncmF2aXR5LWludGVncmFjaW9uLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAiY2xpZW50X2lkIjogIjEwMTE2MjUwNjA0MzM3OTc2OTgyNiIsCiAgImF1dGhfdXJpIjogImh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwKICAidG9rZW5fdXJpIjogImh0dHBzOi8vb2F1dGgyLmdvb2dsZWFwaXMuY29tL3Rva2VuIiwKICAiYXV0aF9wcm92aWRlcl94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL29hdXRoMi92MS9jZXJ0cyIsCiAgImNsaWVudF94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3JvYm90L3YxL21ldGFkYXRhL3g1MDkvcHJveWVjdG8tMSU0MGFudGlncmF2aXR5LWludGVncmFjaW9uLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAidW5pdmVyc2VfZG9tYWluIjogImdvb2dsZWFwaXMuY29tIgp9Cg==").decode('utf-8')
-        if env_creds:
-            try:
-                import json
-                cred_dict = json.loads(env_creds) if isinstance(env_creds, str) else env_creds
-                if "private_key" in cred_dict and isinstance(cred_dict["private_key"], str):
-                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
-                self.client_email = cred_dict.get("client_email", "")
-                sa_creds = service_account.Credentials.from_service_account_info(
-                    cred_dict, scopes=self.scopes
-                )
-                self.service = build("sheets", "v4", credentials=sa_creds)
-                self.drive_service = build("drive", "v3", credentials=sa_creds)
-                self.connection_status = f"Conectado SA ({self.client_email})"
-            except Exception as e:
-                self.sa_error = str(e)
-                print(f"[SheetsService] Error Service Account: {e}")
+        if build is None:
+            self.connection_status = "Librerías Google API no disponibles"
+            return
 
-        # 2. Cargar OAuth de kevin.reyna@grupoanipa.com (Principal para Drive y Sheets)
+        # 1. Priorizar OAuth (Principal para Drive y Sheets, evita construir clientes SA descartados)
         oauth_json = os.environ.get("GOOGLE_OAUTH_CREDENTIALS_JSON", "").strip()
         if not oauth_json:
             local_oauth = Path(__file__).resolve().parent.parent / "GOOGLE_OAUTH_CREDENTIALS.json"
@@ -93,21 +101,44 @@ class SheetsService:
             import base64
             oauth_json = base64.b64decode("eyJ0b2tlbiI6ICJ5YTI5LmEwQVgwN0Ntdm0zRVNMb25wZHMxRWNkSHZsb285eWZZWHJvZnNxREpRUWs3Sy1BcEp0UHpqNl82cHZxYkhzZ2JjTXJyakItZ1huNUVTdURJYWRKdnFBeWlIRDVPeXRCMUpJdE1qSElLNlJfdm94SFBYQmJQcG9JSHpVN2EwNUlXemRvbDdJYjkzcWhwZ3VqOXFkaVNvZTQxZEJyUjV6Q0xLcGRhVDgxVzdUMXFtV3hwbjBxdmFfOUMwemx1dEE1YTlvSmtMaG9YNGFDZ1lLQVpZU0FSVVNGUUhHWDJNaXpacTdyZmxHSm9tN1dLbnhIYWlsaUEwMjA2IiwgInJlZnJlc2hfdG9rZW4iOiAiMS8vMDVCQl8wbXNWNmlqcUNnWUlBUkFBR0FVU053Ri1MOUlyNEd2R3Z5UmU1TDY0NndWMFJwdVdwQWwwV0xmUmk2MUR1TU5IZE9wMlhGMjJ6QlZmR1ctS2xXd1RXeG9ZcnlCMjNubyIsICJ0b2tlbl91cmkiOiAiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCAiY2xpZW50X2lkIjogIjIxMDExMTE2MDk1Mi05NGVwM2FkaHJjazVkaTk4MW1tcWtsZzkxdm9hdGNwbi5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsICJjbGllbnRfc2VjcmV0IjogIkdPQ1NQWC1wMlZFdjNka0R0dTB5SDlHQmxpZy1UMGp3R05BIiwgInNjb3BlcyI6IFsiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9zcHJlYWRzaGVldHMiLCAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9kcml2ZSJdLCAidW5pdmVyc2VfZG9tYWluIjogImdvb2dsZWFwaXMuY29tIiwgImFjY291bnQiOiAiIiwgImV4cGlyeSI6ICIyMDI2LTEwLTE5VDE2OjUxOjE1WiJ9").decode('utf-8')
 
-        if oauth_json:
+        if oauth_json and UserCredentials is not None:
             try:
-                import json
                 from google.auth.transport.requests import Request as GoogleAuthRequest
                 user_info = json.loads(oauth_json)
                 user_creds = UserCredentials.from_authorized_user_info(
                     user_info, scopes=self.scopes
                 )
-                user_creds.refresh(GoogleAuthRequest())
-                self.drive_service = build("drive", "v3", credentials=user_creds)
-                self.service = build("sheets", "v4", credentials=user_creds)
+                if not user_creds.valid:
+                    user_creds.refresh(GoogleAuthRequest())
+                self.drive_service = self._build_client("drive", "v3", user_creds)
+                self.service = self._build_client("sheets", "v4", user_creds)
                 self.connection_status = "Conectado OAuth (kevin.reyna@grupoanipa.com)"
                 print("[SheetsService] Conectado exitosamente con OAuth de kevin.reyna@grupoanipa.com")
+                return
             except Exception as e:
-                print(f"[SheetsService] OAuth fallo, manteniendo respaldo SA: {e}")
+                print(f"[SheetsService] OAuth fallo, intentando respaldo SA: {e}")
+
+        # 2. Cargar Service Account de respaldo si OAuth falla
+        sa_creds = None
+        env_creds = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
+        if not env_creds:
+            import base64
+            env_creds = base64.b64decode("ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAiYW50aWdyYXZpdHktaW50ZWdyYWNpb24iLAogICJwcml2YXRlX2tleV9pZCI6ICIzZjk2ODBmYTA5NzdmNTc3M2QwOTk2YmY1ZjEwYTlhYmY3NmJmMGMyIiwKICAicHJpdmF0ZV9rZXkiOiAiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tXG5NSUlFdmdJQkFEQU5CZ2txaGtpRzl3MEJBUUVGQUFTQ0JLZ3dnZ1NrQWdFQUFvSUJBUUR5Zmp1ZW9aQVRpa3BLXG5xRHJyYy9lTkdXckFmallEQmJiMGNtc3lGTmJzbDZtMDRidUx4ZTJnSWlBOHR2R1dZN3d4cWRyQVZLNldsT0lHXG54Vkd4RTc4S213eFhVT1lLelpUVkZkb1I3dStaK2RiK01DSHNGNy9oMXc5aEpFRWRWQzEvZDNKdm1nU1VsbC9DXG5pOFhmVUk4SElPRTRmaEtjczlRKzBGNm9HZWxDQU9Ed2NzUnZYMkZjcVFqRVN6RTZKL2hLZ00ySENXSWgvV2g5XG5XbCtKc2w4dlZrdjlRNkNWWkk5Q1czaCs2anVuT2Z3TU9KZGRPODFtN1ltUlc2OEN5M1E2RGFub2drRU9KUHF6XG54NXFzSGU4TkNLaG9PL1RIMmJORU9NU2FVSjBzSUEvWG5yaGRPQU5hVEY4RFo2eDlFa3QzcEVpbWhhcWhnRWorXG44d2hyM0I1dkFnTUJBQUVDZ2dFQUFiak1MRXNkaWR1eUt6Vm1kU0g2VUtuMkNnVnlReW83UzJwWTNGN1I4TG4rXG5ya2lnVnN1R3lPM3kwYWI2QzhDd2k4Uk54OWV5RjZ2SEhJV2dCYWp3dkI3bXVlTzJHTDdUck1yUWtxb3JVUE01XG5iR0EySHBob1NuZTkwMjM0K1QvN3NtL3d3OTMyTGFaKzE3aE5wU3pMNkZleGYyMW9tdHBrVTMvYmF4RW9DTW5jXG5qand2a1kxUlp6SGF4L0w5T3dyckNkdjZpVlpkMlo3SVJ0S0JHYzdwalpaU0lidFcvNlpzaWhES1g5TVhYc2tXXG5yU3JRR2xGdnlUSmpHVVV0NXMzU3Z5czlvNHRGc1FnWHo0RFpVRkgrSmlWdy9raHMwY3dFOEtRN3pma1R1NVB5XG5rVTh6NnRUSkNqWVdkL0x6d05jTmJVWFFlYmR1OXFnc0k1K2RHekdkZVFLQmdRRDlIRVFYdU9YTk9xd3poNFRPXG5JbzRSQWdhK1lZQytwdVlFYjRzZ1cxN1dsRUhTemJRbHhyVkhjYTcrdElVYjQ1dmhzTmVsR1hoZWpVVUE5NndYXG5Zb2JTUDdVOGZISmsvcUNXSDI5cEExcWRVV0pNMVRyKzdKTWIxZDYyeW1yQ1ZVM1QrN292ZHh5NGxBYnF3aGxSXG5vSUJkNUpkSFhMUk1xeTBpOUVlNzJSZVU5d0tCZ1FEMVF1L2ZnY1A4bTd4VFhHcERBc1dyNmg5akJjSk1MVXVOXG5JeHdIdVBLMkI2UFFxaGcydDIwTGJSUWdmYUl5a3pyb0hjK2JVRkRWZmJ1MElVc2tIRzVmejYzWEg1RDN3THZFXG5LdjBEeWVwazh5bG5vY2lzcGM2SlBHNTZKbFMvUDRUYzBxQzA0NjFDNnViUVlROVZnNWo0MUgvcjBSNGdmdjR3XG5mUDVIaUIxOFNRS0JnR25FZUFmWnNkMnkyT2FuaUsyQzd3N1lZKzBHWFlCTnlleXNsOXlya2RQbEhDUjA1UVNzXG5KbkIyWndQMGQzTVNCNytsNEZjVGI2TkRNVVNZT29lREdvZWRLNlRjOUFpVUJwTDFDOTg4RVkrUHhKNEt0SjUyXG5TWHJtUWl6c0pQU1VKUE9pUzBrdVl3Z1dnMVZ5U3BZN2xhaW1yemlZMnBiM0tPTmtaTjF3ZUZROUFvR0JBSXk0XG5KUzBXSlQ3d2svTTRXUGV0eFlESHljNWs1WUFUbFArYm4xK0c3Q3NvNHdLOE5UeGZyYjhhakt1L3FhcGU4ek51XG50MGtqb2QxOFVKQWZjaDk3K0pBY2RsK3hpdG03eVgvYU1tVlVHcHBsTWVKMTNzL0FLbXB2TSt2OXhpNGM0YnhaXG5WVCswU2hyVThDMnJJc01yeUQ4c25XRE9FUDBRSUFQdUUyOHpWOGVSQW9HQkFMaTdDNWlaejFpUDFKbzVpZ0RpXG44bHAvRDNGM01LN2JneS9QZUpkN1JBLzg4WGxaMHRSUmFRdDNFdVdkdFRlbVlyOEV1Q1lRYnBOOFRCd28yQms0XG50bE5xUkVZY1lXSG9ob1p2ZHVqZjdlSTVucyt6UTlsb0JpNFc1SGdZLzE5RkNqZGFtcUljUWphVmY2b04wZU5SXG4xdnQvUWp6RFk0YUdqV2RBRllpN294V3Rcbi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS1cbiIsCiAgImNsaWVudF9lbWFpbCI6ICJwcm95ZWN0by0xQGFudGlncmF2aXR5LWludGVncmFjaW9uLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAiY2xpZW50X2lkIjogIjEwMTE2MjUwNjA0MzM3OTc2OTgyNiIsCiAgImF1dGhfdXJpIjogImh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwKICAidG9rZW5fdXJpIjogImh0dHBzOi8vb2F1dGgyLmdvb2dsZWFwaXMuY29tL3Rva2VuIiwKICAiYXV0aF9wcm92aWRlcl94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL29hdXRoMi92MS9jZXJ0cyIsCiAgImNsaWVudF94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3JvYm90L3YxL21ldGFkYXRhL3g1MDkvcHJveWVjdG8tMSU0MGFudGlncmF2aXR5LWludGVncmFjaW9uLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAidW5pdmVyc2VfZG9tYWluIjogImdvb2dsZWFwaXMuY29tIgp9Cg==").decode('utf-8')
+        if env_creds and service_account is not None:
+            try:
+                cred_dict = json.loads(env_creds) if isinstance(env_creds, str) else env_creds
+                if "private_key" in cred_dict and isinstance(cred_dict["private_key"], str):
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                self.client_email = cred_dict.get("client_email", "")
+                sa_creds = service_account.Credentials.from_service_account_info(
+                    cred_dict, scopes=self.scopes
+                )
+                self.service = self._build_client("sheets", "v4", sa_creds)
+                self.drive_service = self._build_client("drive", "v3", sa_creds)
+                self.connection_status = f"Conectado SA ({self.client_email})"
+            except Exception as e:
+                self.sa_error = str(e)
+                print(f"[SheetsService] Error Service Account: {e}")
 
     def clear_memory_cache(self):
         """Limpia los catálogos en memoria y nombres de pestañas para forzar sincronización fresca."""
@@ -124,6 +155,7 @@ class SheetsService:
         """Determina dinámicamente el nombre real de la pestaña (ej. 'DATOS GENERAL' o 'DATOS GENERALES')."""
         if self._sheet_name_datos_general:
             return self._sheet_name_datos_general
+        self.ensure_connected()
         if not self.service:
             return "DATOS GENERAL"
         try:
@@ -147,6 +179,7 @@ class SheetsService:
         """Determina dinámicamente el nombre real de la pestaña de fotos normalizadas."""
         if self._sheet_name_fotos_norm:
             return self._sheet_name_fotos_norm
+        self.ensure_connected()
         if not self.service:
             return "FOTOS NORMALIZADAS"
         try:
@@ -177,6 +210,7 @@ class SheetsService:
             "MADERA": {},
             "SWATCH": {}
         }
+        self.ensure_connected()
         if not self.service:
             self._fn_catalogs_by_type = cats
             return cats
@@ -262,6 +296,7 @@ class SheetsService:
             return self._drive_link_cache[cache_key]
 
         # 2. Búsqueda directa en Google Drive API por nombre exacto o stem de archivo
+        self.ensure_connected()
         if not self.drive_service:
             return ""
 
@@ -307,7 +342,12 @@ class SheetsService:
 
     def get_drive_file_bytes(self, drive_id: str, raise_on_error: bool = False) -> Optional[bytes]:
         """Descarga el contenido binario de una imagen directamente desde Google Drive API autenticada."""
-        if not self.drive_service or not drive_id:
+        if not drive_id:
+            if raise_on_error:
+                raise RuntimeError("Google Drive no está conectado o falta el ID del archivo.")
+            return None
+        self.ensure_connected()
+        if not self.drive_service:
             if raise_on_error:
                 raise RuntimeError("Google Drive no está conectado o falta el ID del archivo.")
             return None
@@ -332,13 +372,10 @@ class SheetsService:
         folder_id: str = "",
     ) -> List[Dict[str, str]]:
         """Busca imágenes frescas dentro de una carpeta de Drive y sus subcarpetas."""
-        if (
-            not self.drive_service
-            or not folder_id
-            or not query_text
-            or not str(query_text).strip()
-            or limit <= 0
-        ):
+        if not folder_id or not query_text or not str(query_text).strip() or limit <= 0:
+            return []
+        self.ensure_connected()
+        if not self.drive_service:
             return []
         
         q_str = str(query_text).strip()
@@ -390,6 +427,7 @@ class SheetsService:
     
     
     def copy_and_rename_drive_file(self, file_id: str, new_name: str, root_id: str, relative_path: str) -> str:
+        self.ensure_connected()
         if not self.drive_service:
             raise RuntimeError("Google Drive no está conectado.")
 
@@ -461,7 +499,9 @@ class SheetsService:
             raise RuntimeError(f"No se pudo copiar '{new_name}' a Google Drive: {e}") from e
 
     def get_or_create_drive_folder(self, parent_id: str, folder_name: str):
-        if not self.drive_service or not parent_id: return None
+        if not parent_id: return None
+        self.ensure_connected()
+        if not self.drive_service: return None
         query = f"'{parent_id}' in parents and name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
         try:
             res = self.drive_service.files().list(q=query, fields='files(id)', supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
@@ -480,6 +520,7 @@ class SheetsService:
             return None
 
     def upload_image_bytes_to_path(self, file_bytes: bytes, filename: str, root_id: str, relative_path: str):
+        self.ensure_connected()
         if not self.drive_service: return None
         parts = [p for p in relative_path.replace('\\', '/').split('/') if p]
         current_parent = root_id
@@ -490,7 +531,10 @@ class SheetsService:
 
     def upload_image_bytes_to_drive(self, file_bytes: bytes, filename: str, folder_id: str) -> Optional[str]:
         """Sube una imagen binaria directamente a una carpeta de Google Drive y retorna su URL oficial."""
-        if not self.drive_service or not file_bytes:
+        if not file_bytes:
+            return None
+        self.ensure_connected()
+        if not self.drive_service:
             return None
         from googleapiclient.http import MediaIoBaseUpload
         try:
@@ -533,6 +577,7 @@ class SheetsService:
 
     def get_recent_drive_images(self, limit: int = 250) -> List[Dict[str, str]]:
         """Obtiene de inmediato las fotos más recientemente subidas o modificadas en Google Drive (sin llamadas recursivas lentas, ~1 seg)."""
+        self.ensure_connected()
         if not self.drive_service:
             return []
         try:
@@ -561,7 +606,10 @@ class SheetsService:
 
     def get_drive_folder_files(self, folder_id: str, recursive: bool = True) -> List[Dict[str, str]]:
         """Obtiene la lista de imágenes desde una carpeta específica de Google Drive (con soporte recursivo para subcarpetas)."""
-        if not self.drive_service or not folder_id:
+        if not folder_id:
+            return []
+        self.ensure_connected()
+        if not self.drive_service:
             return []
         
         def _scan(f_id: str, sub_label: str = ""):
@@ -621,6 +669,7 @@ class SheetsService:
         Retorna una lista de diccionarios con metadatos: id, name, filename, mimeType,
         webViewLink, link, thumbnailLink, description, createdTime, modifiedTime, size.
         """
+        self.ensure_connected()
         if not self.drive_service:
             print("[SheetsService] Drive service no disponible para listar buzón.")
             return []
@@ -685,7 +734,10 @@ class SheetsService:
         Si se provee metadata (dict), se codifica en JSON y se almacena en el campo description de Drive.
         Retorna el webViewLink del archivo subido o None si ocurre un error.
         """
-        if not self.drive_service or not file_bytes:
+        if not file_bytes:
+            return None
+        self.ensure_connected()
+        if not self.drive_service:
             return None
 
         from googleapiclient.http import MediaIoBaseUpload
@@ -744,7 +796,10 @@ class SheetsService:
         Si se provee metadata (dict), se codifica en JSON y se almacena en el campo description.
         Retorna el webViewLink del archivo copiado o None si ocurre un error.
         """
-        if not self.drive_service or not source_drive_id:
+        if not source_drive_id:
+            return None
+        self.ensure_connected()
+        if not self.drive_service:
             return None
 
         try:
@@ -800,6 +855,7 @@ class SheetsService:
         3. Si update falla (ej. permisos entre cuentas o cuota), realiza fallback a copy + delete en origen.
         Retorna un dict con {'id': ..., 'link': ..., 'method': 'move'|'copy_delete', 'folder_id': ...}.
         """
+        self.ensure_connected()
         if not self.drive_service:
             raise RuntimeError("Google Drive no está conectado.")
         if not file_id:
@@ -909,7 +965,10 @@ class SheetsService:
         hace fallback enviando el archivo a la papelera (trashed=True).
         Retorna True si la eliminación o descarte tuvo éxito, False en caso contrario.
         """
-        if not self.drive_service or not file_id:
+        if not file_id:
+            return False
+        self.ensure_connected()
+        if not self.drive_service:
             return False
 
         try:
@@ -935,6 +994,24 @@ class SheetsService:
 
 
 
+    def _match_sku_in_cache(self, sku_clean: str) -> Optional[Dict[str, Any]]:
+        """Busca un SKU en caché: 1) exacto, 2) normalizado sin guiones/espacios, 3) prefijo (>=4 chars)."""
+        cache = self._sku_catalog_cache
+        if not cache:
+            return None
+        if sku_clean in cache:
+            return cache[sku_clean]
+        sku_norm = re.sub(r"[\s\-_]+", "", sku_clean)
+        for k, v in cache.items():
+            if re.sub(r"[\s\-_]+", "", k) == sku_norm:
+                return v
+        if len(sku_clean) >= 4:
+            prefix_matches = [k for k in cache.keys() if k.startswith(sku_clean)]
+            if prefix_matches:
+                prefix_matches.sort(key=len)
+                return cache[prefix_matches[0]]
+        return None
+
     def get_furniture_by_sku(self, sku: str, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
         """
         Busca un producto por SKU en 'DATOS GENERAL' (100% SOLO LECTURA).
@@ -951,39 +1028,37 @@ class SheetsService:
 
         now = time.time()
         last_sync = getattr(self, "_sku_catalog_last_sync", 0.0)
+        last_attempt = getattr(self, "_sku_sync_attempted_at", 0.0)
         ttl = getattr(self, "_sku_cache_ttl", 120.0)
+        cooldown_base = max(last_sync, last_attempt)
         need_refresh = (
             force_refresh
             or self._sku_catalog_cache is None
-            or (now - last_sync > ttl)
+            or (now - cooldown_base > ttl)
         )
 
         if need_refresh:
             self._load_sku_catalog_cache()
 
-        if self._sku_catalog_cache and sku_clean in self._sku_catalog_cache:
-            return self._sku_catalog_cache[sku_clean]
+        found = self._match_sku_in_cache(sku_clean)
+        if found:
+            return found
 
-        # Búsqueda parcial o flexible
-        if self._sku_catalog_cache:
-            for k, v in self._sku_catalog_cache.items():
-                if sku_clean == k or sku_clean in k or k in sku_clean:
-                    return v
-
-        # Si el SKU no fue encontrado en caché y no se ha consultado en vivo en los últimos 20s,
-        # consultar inmediatamente a Google Sheets para detectar productos recién añadidos
-        if not need_refresh and (now - getattr(self, "_sku_catalog_last_sync", 0.0) > 20.0):
+        # Si el SKU no fue encontrado y no se ha intentado sincronizar en los últimos 30s,
+        # consultar Google Sheets una vez para detectar productos recién añadidos
+        now = time.time()
+        last_attempt = getattr(self, "_sku_sync_attempted_at", 0.0)
+        last_sync = getattr(self, "_sku_catalog_last_sync", 0.0)
+        if not need_refresh and (now - max(last_sync, last_attempt) > 30.0):
             self._load_sku_catalog_cache()
-            if self._sku_catalog_cache and sku_clean in self._sku_catalog_cache:
-                return self._sku_catalog_cache[sku_clean]
-            for k, v in self._sku_catalog_cache.items():
-                if sku_clean == k or sku_clean in k or k in sku_clean:
-                    return v
+            return self._match_sku_in_cache(sku_clean)
 
         return None
 
     def _load_sku_catalog_cache(self):
         """Carga en memoria el catálogo de SKUs de DATOS GENERAL directamente en vivo desde Google Sheets y actualiza el caché de respaldo."""
+        self._sku_sync_attempted_at = time.time()
+        self.ensure_connected()
         disk_cache = Path(__file__).resolve().parent.parent / "sku_catalog_cache.json"
 
         # 1. INTENTAR SIEMPRE EN VIVO CON GOOGLE SHEETS
@@ -1111,6 +1186,7 @@ class SheetsService:
 
     def get_pending_products(self) -> List[Dict[str, Any]]:
         """Obtiene la lista de productos de DATOS GENERAL, clasificando los que no tienen fotos."""
+        self.ensure_connected()
         if not self.service:
             # Cargar desde caché pre-guardado de 1,162 productos
             cache_paths = [
@@ -1236,7 +1312,10 @@ class SheetsService:
         medidas, categoría, modelo, nombre nuevo, bultos y fotos en DATOS GENERAL,
         respetando estrictamente las columnas con fórmulas de la fila 3 (B, O, Q, R, S, T, U, V, W, AB, AE, AH, AK, AO, etc.).
         """
-        if not self.service or fila < 4:
+        if fila < 4:
+            return False
+        self.ensure_connected()
+        if not self.service:
             return False
 
         tab_dg = self.get_datos_general_tab_name()
@@ -1394,6 +1473,7 @@ class SheetsService:
 
     def register_many_in_fotos_normalizadas(self, photos: List[Dict[str, str]]) -> bool:
         """Registra varios nombres y enlaces con una lectura y una escritura por lote."""
+        self.ensure_connected()
         if not self.service:
             return False
 
@@ -1511,6 +1591,7 @@ class SheetsService:
 
     def test_connection(self) -> Dict[str, Any]:
         """Verifica el estado de conexión real con Google Sheets."""
+        self.ensure_connected()
         if not self.service:
             return {
                 "ok": False,

@@ -85,10 +85,10 @@ class FreeImageService:
 
         for url in endpoints:
             try:
-                response = requests.get(url, headers=headers, timeout=45)
+                response = requests.get(url, headers=headers, timeout=20)
                 if response.status_code == 200 and len(response.content) > 2000:
-                    img = Image.open(io.BytesIO(response.content))
-                    img.verify()
+                    with Image.open(io.BytesIO(response.content)) as img:
+                        img.verify()
                     return response.content
                 elif response.status_code != 200:
                     last_error = f"HTTP {response.status_code}"

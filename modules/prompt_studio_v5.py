@@ -1,128 +1,10 @@
 from modules.sku_banner import render_sku_autofill_bar
+from modules.ui_helpers import render_copy_button, render_preview_image
 import os
 import io
 import zipfile
 from pathlib import Path
 import streamlit as st
-
-def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = "cp_v5"):
-    """Renderiza un botón que copia el texto al portapapeles nativamente en 1 clic de forma 100% blindada."""
-    import base64
-    import streamlit.components.v1 as components
-    b64_text = base64.b64encode(text.encode("utf-8")).decode("utf-8")
-    html_code = f"""
-    <div style="margin: 4px 0 8px 0;">
-        <button id="btn_{key}" onclick="copy_{key}()" style="
-            width: 100%;
-            background-color: #2563EB;
-            color: #FFFFFF;
-            border: none;
-            padding: 8px 8px;
-            font-size: 12px;
-            font-weight: 700;
-            white-space: nowrap;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        ">
-            {label}
-        </button>
-    </div>
-    <script>
-    function copy_{key}() {{
-        try {{
-            const b64 = "{b64_text}";
-            const raw = decodeURIComponent(escape(window.atob(b64)));
-            if (navigator.clipboard && navigator.clipboard.writeText) {{
-                navigator.clipboard.writeText(raw).then(function() {{
-                    showCopied_{key}();
-                }}).catch(function() {{
-                    fallbackCopy_{key}(raw);
-                }});
-            }} else {{
-                fallbackCopy_{key}(raw);
-            }}
-        }} catch (err) {{
-            console.error("Error al copiar:", err);
-        }}
-    }}
-    function fallbackCopy_{key}(textToCopy) {{
-        const ta = document.createElement("textarea");
-        ta.value = textToCopy;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-        showCopied_{key}();
-    }}
-    function showCopied_{key}() {{
-        const b = document.getElementById("btn_{key}");
-        if (b) {{
-            const orig = b.innerHTML;
-            b.innerHTML = "✅ ¡Copiado!";
-            b.style.backgroundColor = "#059669";
-            setTimeout(function() {{
-                b.innerHTML = orig;
-                b.style.backgroundColor = "#2563EB";
-            }}, 2000);
-        }}
-    }}
-    </script>
-    """
-    components.html(html_code, height=44)
-
-def render_preview_image(img_data, caption: str = ""):
-    """Renderiza una imagen en Streamlit blindada con data URI en base64 para evitar errores 404 o caídas de caché."""
-    import base64
-    if not img_data:
-        return
-    try:
-        raw_bytes = None
-        if isinstance(img_data, dict) and "bytes" in img_data:
-            raw_bytes = img_data["bytes"]
-        elif hasattr(img_data, "getvalue"):
-            raw_bytes = img_data.getvalue()
-        elif hasattr(img_data, "read"):
-            if hasattr(img_data, "seek"):
-                img_data.seek(0)
-            raw_bytes = img_data.read()
-            if hasattr(img_data, "seek"):
-                img_data.seek(0)
-        elif isinstance(img_data, (bytes, bytearray)):
-            raw_bytes = bytes(img_data)
-
-        if raw_bytes and len(raw_bytes) > 0:
-            b64 = base64.b64encode(raw_bytes).decode("utf-8")
-            mime = "image/jpeg"
-            if raw_bytes.startswith(b"\x89PNG"):
-                mime = "image/png"
-            elif raw_bytes.startswith(b"RIFF") and b"WEBP" in raw_bytes[:16]:
-                mime = "image/webp"
-            elif raw_bytes.startswith(b"GIF8"):
-                mime = "image/gif"
-            st.markdown(f'''
-            <div style="text-align:center; margin-bottom:12px;">
-                <img src="data:{mime};base64,{b64}" style="max-width:100%; border-radius:8px; border:1px solid #475569; box-shadow:0 4px 10px rgba(0,0,0,0.25);" />
-                <div style="font-size:12px; color:#94A3B8; margin-top:4px;">{caption}</div>
-            </div>
-            ''', unsafe_allow_html=True)
-            return
-        
-        st.image(img_data, caption=caption, use_container_width=True)
-    except Exception:
-        try:
-            st.image(img_data, caption=caption, use_container_width=True)
-        except Exception:
-            st.caption(f"🖼️ {caption}")
 
 def render_prompt_studio_v5():
     if "clear_key_v5" not in st.session_state:
@@ -383,7 +265,10 @@ def render_prompt_studio_v5():
                             foto_refs=foto_refs_v5
                         )
 
+                    v5_gen_id = int(st.session_state.get("v5_gen_id", 0)) + 1
+                    st.session_state["v5_gen_id"] = v5_gen_id
                     st.session_state["last_studio_result_v5"] = {
+                        "gen_id": v5_gen_id,
                         "modo": modo_nombre,
                         "mueble_name": m_name,
                         "furniture_analysis": m_ana,
@@ -444,6 +329,7 @@ def render_prompt_studio_v5():
 
         if "last_studio_result_v5" in st.session_state:
             res = st.session_state["last_studio_result_v5"]
+            v5_gid = int(res.get("gen_id", 0))
             prompts = res.get("prompts", {})
             ind_vistas = prompts.get("individual_vistas", [])
             num_vistas = len(ind_vistas)
@@ -468,8 +354,8 @@ def render_prompt_studio_v5():
                         </div>
                         """, unsafe_allow_html=True)
                         p_txt = prompts.get("google_ai_studio", "")
-                        st.text_area("Prompt Maestro Interactivo (Google AI Studio):", p_txt, height=270, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}")
-                        render_copy_button(p_txt, label="📋 Copiar Prompt Maestro para Google AI Studio (Secuencial)", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}")
+                        st.text_area("Prompt Maestro Interactivo (Google AI Studio):", p_txt, height=270, key=f"txt_res_ais_v5_{st.session_state.clear_key_v5}_{v5_gid}")
+                        render_copy_button(p_txt, label="📋 Copiar Prompt Maestro para Google AI Studio (Secuencial)", key=f"cp_res_ais_v5_{st.session_state.clear_key_v5}_{v5_gid}")
                     with p_tab2:
                         st.markdown("""
                         <div style="background: rgba(59, 130, 246, 0.15); border-left: 4px solid #3B82F6; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
@@ -478,8 +364,8 @@ def render_prompt_studio_v5():
                         </div>
                         """, unsafe_allow_html=True)
                         p_dalle = prompts.get("chatgpt_dalle3", "")
-                        st.text_area("Prompt Maestro ChatGPT (Genera todas las fotos):", p_dalle, height=250, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}")
-                        render_copy_button(p_dalle, label="📋 Copiar Prompt Maestro para ChatGPT (Todas las fotos)", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}")
+                        st.text_area("Prompt Maestro ChatGPT (Genera todas las fotos):", p_dalle, height=250, key=f"txt_res_dal_v5_{st.session_state.clear_key_v5}_{v5_gid}")
+                        render_copy_button(p_dalle, label="📋 Copiar Prompt Maestro para ChatGPT (Todas las fotos)", key=f"cp_res_dal_v5_{st.session_state.clear_key_v5}_{v5_gid}")
                     with p_tab3:
                         st.markdown("""
                         <div style="background: rgba(245, 158, 11, 0.15); border-left: 4px solid #F59E0B; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
@@ -488,8 +374,8 @@ def render_prompt_studio_v5():
                         </div>
                         """, unsafe_allow_html=True)
                         p_mj = prompts.get("midjourney_v6", "")
-                        st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_v5_{st.session_state.clear_key_v5}")
-                        render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}")
+                        st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_v5_{st.session_state.clear_key_v5}_{v5_gid}")
+                        render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_v5_{st.session_state.clear_key_v5}_{v5_gid}")
 
                 else:
                     if ind_vistas:
@@ -505,8 +391,8 @@ def render_prompt_studio_v5():
                                     </div>
                                     """, unsafe_allow_html=True)
                                     p_ais = v_data.get("google_ai_studio", "")
-                                    st.text_area(f"Prompt AI Studio ({v_data['label']}):", p_ais, height=220, key=f"txt_ind_ais_{i}_{st.session_state.clear_key_v5}")
-                                    render_copy_button(p_ais, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para Google AI Studio", key=f"cp_ind_ais_{i}_{st.session_state.clear_key_v5}")
+                                    st.text_area(f"Prompt AI Studio ({v_data['label']}):", p_ais, height=220, key=f"txt_ind_ais_{i}_{st.session_state.clear_key_v5}_{v5_gid}")
+                                    render_copy_button(p_ais, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para Google AI Studio", key=f"cp_ind_ais_{i}_{st.session_state.clear_key_v5}_{v5_gid}")
                                 with engine_tabs[1]:
                                     st.markdown("""
                                     <div style="background: rgba(59, 130, 246, 0.15); border-left: 4px solid #3B82F6; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
@@ -514,8 +400,8 @@ def render_prompt_studio_v5():
                                     </div>
                                     """, unsafe_allow_html=True)
                                     p_dal = v_data.get("chatgpt_dalle3", "")
-                                    st.text_area(f"Prompt ChatGPT / DALL-E 3 ({v_data['label']}):", p_dal, height=200, key=f"txt_ind_dal_{i}_{st.session_state.clear_key_v5}")
-                                    render_copy_button(p_dal, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para ChatGPT", key=f"cp_ind_dal_{i}_{st.session_state.clear_key_v5}")
+                                    st.text_area(f"Prompt ChatGPT / DALL-E 3 ({v_data['label']}):", p_dal, height=200, key=f"txt_ind_dal_{i}_{st.session_state.clear_key_v5}_{v5_gid}")
+                                    render_copy_button(p_dal, label=f"📋 Copiar {v_data.get('short_name', 'Vista')} para ChatGPT", key=f"cp_ind_dal_{i}_{st.session_state.clear_key_v5}_{v5_gid}")
             else:
                 p_tab1, p_tab2, p_tab3 = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)", "🎨 Midjourney v6.1 (Discord)"])
                 with p_tab1:
@@ -525,8 +411,8 @@ def render_prompt_studio_v5():
                     </div>
                     """, unsafe_allow_html=True)
                     p_txt = prompts.get("google_ai_studio", "")
-                    st.text_area("Prompt Google AI Studio:", p_txt, height=270, key=f"txt_res_ais_single_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_ais_single_{st.session_state.clear_key_v5}")
+                    st.text_area("Prompt Google AI Studio:", p_txt, height=270, key=f"txt_res_ais_single_{st.session_state.clear_key_v5}_{v5_gid}")
+                    render_copy_button(p_txt, label="📋 Copiar Prompt para Google AI Studio", key=f"cp_res_ais_single_{st.session_state.clear_key_v5}_{v5_gid}")
                 with p_tab2:
                     st.markdown("""
                     <div style="background: rgba(59, 130, 246, 0.15); border-left: 4px solid #3B82F6; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
@@ -534,8 +420,8 @@ def render_prompt_studio_v5():
                     </div>
                     """, unsafe_allow_html=True)
                     p_dalle = prompts.get("chatgpt_dalle3", "")
-                    st.text_area("Prompt ChatGPT / DALL-E 3:", p_dalle, height=250, key=f"txt_res_dal_single_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key=f"cp_res_dal_single_{st.session_state.clear_key_v5}")
+                    st.text_area("Prompt ChatGPT / DALL-E 3:", p_dalle, height=250, key=f"txt_res_dal_single_{st.session_state.clear_key_v5}_{v5_gid}")
+                    render_copy_button(p_dalle, label="📋 Copiar Prompt para ChatGPT", key=f"cp_res_dal_single_{st.session_state.clear_key_v5}_{v5_gid}")
                 with p_tab3:
                     st.markdown("""
                     <div style="background: rgba(245, 158, 11, 0.15); border-left: 4px solid #F59E0B; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
@@ -544,8 +430,8 @@ def render_prompt_studio_v5():
                     </div>
                     """, unsafe_allow_html=True)
                     p_mj = prompts.get("midjourney_v6", "")
-                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_single_{st.session_state.clear_key_v5}")
-                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_single_{st.session_state.clear_key_v5}")
+                    st.text_area("Prompt Midjourney v6.1:", p_mj, height=220, key=f"txt_res_mj_single_{st.session_state.clear_key_v5}_{v5_gid}")
+                    render_copy_button(p_mj, label="📋 Copiar Prompt para Midjourney", key=f"cp_res_mj_single_{st.session_state.clear_key_v5}_{v5_gid}")
 
             # Metadatos del análisis de visión
             ma = res.get("furniture_analysis")

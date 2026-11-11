@@ -29,3 +29,6 @@ datos_general_cache.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+sku_catalog_cache.json
+*.json.bak

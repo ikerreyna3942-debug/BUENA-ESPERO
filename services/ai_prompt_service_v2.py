@@ -4,7 +4,7 @@ import json
 import random
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from PIL import Image
+from PIL import Image, ImageOps
 try:
     from pydantic import BaseModel, Field
 except ImportError:
@@ -12,8 +12,12 @@ except ImportError:
         def __init__(self, **kwargs):
             for k, v in kwargs.items():
                 setattr(self, k, v)
+
+        def model_dump(self):
+            return dict(self.__dict__)
+
     def Field(*args, **kwargs):
-        return None
+        return kwargs.get("default", None)
 
 # Modelos Pydantic para Structured Outputs
 class MaterialAnalysis(BaseModel):
@@ -32,6 +36,8 @@ class FurnitureAnalysis(BaseModel):
 class AIPromptServiceV2:
     def __init__(self):
         self.default_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self._clients: Dict[str, Any] = {}
+        self._preferred_model: Optional[str] = None
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -44,28 +50,47 @@ class AIPromptServiceV2:
             pass
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
+    def get_client(self, api_key: Optional[str] = None):
+        """Reutiliza cliente Gemini en caché."""
+        key = self.get_api_key(api_key)
+        if not key:
+            return None
+        if key in self._clients:
+            return self._clients[key]
+        from google import genai
+        client = genai.Client(api_key=key)
+        self._clients[key] = client
+        return client
+
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automático."""
-        models_to_try = [
-            "gemini-flash-latest",
+        """Llama a Gemini con modelos vigentes y caché del modelo operativo."""
+        base_models = [
             "gemini-2.5-flash",
-            "gemini-flash-lite-latest",
-            "gemini-3-flash-preview",
             "gemini-2.0-flash",
-            "gemini-1.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash-lite",
+        ]
+        models_to_try = ([self._preferred_model] if self._preferred_model else []) + [
+            m for m in base_models if m != self._preferred_model
         ]
         last_err = None
         for m in models_to_try:
             try:
-                return client.models.generate_content(model=m, contents=contents, config=config)
+                res = client.models.generate_content(model=m, contents=contents, config=config)
+                self._preferred_model = m
+                return res
             except Exception as e:
+                err_txt = str(e).upper()
+                if any(tok in err_txt for tok in ("API_KEY_INVALID", "API KEY NOT VALID", "PERMISSION_DENIED", "UNAUTHENTICATED", "401", "403")):
+                    raise
                 last_err = e
                 continue
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 1024) -> Image.Image:
         """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        with Image.open(io.BytesIO(img_bytes)) as src:
+            img = ImageOps.exif_transpose(src).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
         return img
@@ -85,7 +110,7 @@ class AIPromptServiceV2:
             from google import genai
             from google.genai import types
             
-            client = genai.Client(api_key=key)
+            client = self.get_client(key)
             img = self._prepare_image(sample_bytes)
             
             prompt = f"Analyze this material sample ({material_type}) for luxury furniture product photography. Extract exact color, tone and weave."
@@ -125,7 +150,7 @@ class AIPromptServiceV2:
             from google import genai
             from google.genai import types
             
-            client = genai.Client(api_key=key)
+            client = self.get_client(key)
             prompt = "Analyze this furniture image to describe its exact physical properties, exact color, texture, and camera angle for 3D preservation."
             
             contents = [prompt]

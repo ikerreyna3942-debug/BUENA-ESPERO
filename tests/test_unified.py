@@ -31,11 +31,16 @@ d = ups.parse_dimensions("MESA DE CENTRO", "138 cm frente x 70 cm fondo x 38 cm 
 check("mesa: 138/70/38", (d["width_cm"], d["depth_cm"], d["height_cm"]) == (138, 70, 38))
 d = ups.parse_dimensions("MESA LATERAL", "46 cm diam x 44 cm alto")
 check("mesa redonda: diam 46 alto 44", (d["diam_cm"], d["height_cm"]) == (46, 44))
+d_sheet = ups.parse_dimensions("MESA AUXILIAR", "D. 46 cm x 44 cm alto")
+check("mesa redonda Sheets D. 46: diam 46 alto 44", (d_sheet["diam_cm"], d_sheet["height_cm"]) == (46, 44))
 d = ups.parse_dimensions("ESPEJO", "80 cm frente x 120 cm fondo x 4 cm alto")
 check("espejo: alto 120, grosor 4", (d["height_cm"], d["depth_cm"]) == (120, 4))
 d = ups.parse_dimensions("MESA", "authentic 3D geometry 138 cm frente")
 check("'3D' no se lee como medida", d["depth_cm"] is None)
 check("compose", ups.compose_dimensions_text(80, 4, 120, 0) == "80 cm frente x 4 cm fondo x 120 cm alto")
+check("compose decimales", ups.compose_dimensions_text(80.5, 0, 45, 0) == "80.5 cm frente x 45 cm alto")
+r_round = build("catalogo", "MESA AUXILIAR", "D. 46 cm x 44 cm alto")
+check("catalogo mesa redonda incluye diam 46", "46" in r_round["items"][5]["google_ai_studio"])
 
 # --- catalogo
 r = build("catalogo", "MESA DE CENTRO", "138 cm frente x 70 cm fondo x 38 cm alto")

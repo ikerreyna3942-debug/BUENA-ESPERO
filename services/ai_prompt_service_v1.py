@@ -8,7 +8,7 @@ from pathlib import Path
 
 from typing import Optional, Dict, Any
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 
@@ -17,6 +17,8 @@ class AIPromptService:
     def __init__(self):
 
         self.default_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self._clients: Dict[str, Any] = {}
+        self._preferred_model: Optional[str] = None
 
 
 
@@ -31,27 +33,47 @@ class AIPromptService:
             pass
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
 
+    def get_client(self, api_key: Optional[str] = None):
+        """Reutiliza cliente Gemini en caché para evitar renegociación TLS."""
+        key = self.get_api_key(api_key)
+        if not key:
+            return None
+        if key in self._clients:
+            return self._clients[key]
+        from google import genai
+        client = genai.Client(api_key=key)
+        self._clients[key] = client
+        return client
+
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con lista de modelos activos y fallback automÃ¡tico."""
-        models_to_try = [
-            "gemini-flash-latest",
+        """Llama a Gemini con modelos vigentes y fallback rápido en errores de auth."""
+        base_models = [
             "gemini-2.5-flash",
-            "gemini-flash-lite-latest",
-            "gemini-3-flash-preview",
-            "gemini-2.5-pro"
+            "gemini-2.0-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash-lite",
+        ]
+        models_to_try = ([self._preferred_model] if self._preferred_model else []) + [
+            m for m in base_models if m != self._preferred_model
         ]
         last_err = None
         for m in models_to_try:
             try:
-                return client.models.generate_content(model=m, contents=contents, config=config)
+                res = client.models.generate_content(model=m, contents=contents, config=config)
+                self._preferred_model = m
+                return res
             except Exception as e:
+                err_txt = str(e).upper()
+                if any(tok in err_txt for tok in ("API_KEY_INVALID", "API KEY NOT VALID", "PERMISSION_DENIED", "UNAUTHENTICATED", "401", "403")):
+                    raise
                 last_err = e
                 continue
         raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 1024) -> Image.Image:
-        """Optimiza y redimensiona imÃ¡genes para envÃ­o ultra-rÃ¡pido a Gemini."""
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        """Optimiza y redimensiona imágenes para envío ultra-rápido a Gemini."""
+        with Image.open(io.BytesIO(img_bytes)) as src:
+            img = ImageOps.exif_transpose(src).convert("RGB")
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
         return img
@@ -68,8 +90,7 @@ class AIPromptService:
             }
 
         try:
-            from google import genai
-            client = genai.Client(api_key=key)
+            client = self.get_client(key)
             img = self._prepare_image(sample_bytes)
             prompt = f"""Analyze this material sample ({material_type}) for luxury furniture product photography.
 Respond strictly in JSON with these keys:
@@ -131,9 +152,7 @@ Respond strictly in JSON with these keys:
 
         try:
 
-            from google import genai
-
-            client = genai.Client(api_key=key)
+            client = self.get_client(key)
 
             prompt = """Analyze this furniture image for commercial catalog HD upscaling and material swapping.
 

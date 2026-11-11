@@ -4,7 +4,7 @@ import zipfile
 import streamlit as st
 
 from modules.sku_banner import render_sku_autofill_bar
-from modules.prompt_studio_v5 import render_copy_button, render_preview_image
+from modules.ui_helpers import render_copy_button
 from services import unified_prompt_service as ups
 
 IMG_TYPES = ["png", "jpg", "jpeg", "webp", "bmp", "heic", "tiff"]
@@ -40,7 +40,7 @@ def _num(label, key, help_txt=None):
     return st.number_input(label, min_value=0.0, step=1.0, format="%.0f", key=key, help=help_txt)
 
 
-def _render_item(item, idx, ck, show_anchor_tip=True):
+def _render_item(item, idx, ck, gen_id=0, show_anchor_tip=True):
     st.markdown(f"##### {item['icon']} {item['label']}")
     if item.get("needs_anchor") and show_anchor_tip:
         st.info(
@@ -50,12 +50,12 @@ def _render_item(item, idx, ck, show_anchor_tip=True):
     t_ais, t_dal = st.tabs(["🌐 Google AI Studio / Gemini", "🤖 ChatGPT (DALL-E 3)"])
     with t_ais:
         txt = item.get("google_ai_studio", "")
-        st.text_area("Prompt:", txt, height=230, key=f"uni_txt_ais_{idx}_{ck}")
-        render_copy_button(txt, label=f"📋 Copiar {item.get('short_name', 'prompt')} (AI Studio)", key=f"uni_cp_ais_{idx}_{ck}")
+        st.text_area("Prompt:", txt, height=230, key=f"uni_txt_ais_{idx}_{ck}_{gen_id}")
+        render_copy_button(txt, label=f"📋 Copiar {item.get('short_name', 'prompt')} (AI Studio)", key=f"uni_cp_ais_{idx}_{ck}_{gen_id}")
     with t_dal:
         txt = item.get("chatgpt_dalle3", "")
-        st.text_area("Prompt:", txt, height=230, key=f"uni_txt_dal_{idx}_{ck}")
-        render_copy_button(txt, label=f"📋 Copiar {item.get('short_name', 'prompt')} (ChatGPT)", key=f"uni_cp_dal_{idx}_{ck}")
+        st.text_area("Prompt:", txt, height=230, key=f"uni_txt_dal_{idx}_{ck}_{gen_id}")
+        render_copy_button(txt, label=f"📋 Copiar {item.get('short_name', 'prompt')} (ChatGPT)", key=f"uni_cp_dal_{idx}_{ck}_{gen_id}")
     with st.expander("✅ Checklist: revisa la imagen que te dé la IA", expanded=False):
         for c in item.get("checklist", []):
             st.markdown(f"- {c}")
@@ -85,7 +85,6 @@ def render_prompt_studio_unified():
     st.markdown(
         """
 <style>
-.uni-card { background-color:#283548; border:1px solid #475569; border-radius:12px; padding:18px; box-shadow:0 4px 15px rgba(0,0,0,.2); }
 .uni-title { font-size:15px; font-weight:700; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:8px; }
 .stButton > button { white-space:normal !important; font-size:13px !important; font-weight:600 !important; height:auto !important; min-height:42px !important; }
 </style>
@@ -112,62 +111,61 @@ def render_prompt_studio_unified():
 
     # ------------------------------------------------------------------ ENTRADAS
     with left:
-        st.markdown('<div class="uni-card">', unsafe_allow_html=True)
-        sku = render_sku_autofill_bar("uni")
-        tipo = sku["tipo_mueble"]
-        medidas = sku["medidas"]
+        with st.container(border=True):
+            sku = render_sku_autofill_bar("uni")
+            tipo = sku["tipo_mueble"]
+            medidas = sku["medidas"]
 
-        st.markdown('<div class="uni-title">📸 1. Fotos</div>', unsafe_allow_html=True)
-        up_mueble = st.file_uploader("Mueble (foto original):", type=IMG_TYPES, accept_multiple_files=True, key=f"uni_mueble_{ck}")
-        up_madera = st.file_uploader("Muestra de madera / color (opcional):", type=IMG_TYPES, accept_multiple_files=True, key=f"uni_madera_{ck}")
-        up_tela = st.file_uploader("Muestra de tela (opcional):", type=IMG_TYPES, accept_multiple_files=True, key=f"uni_tela_{ck}")
-        up_ref = st.file_uploader("Referencias extra (opcional):", type=IMG_TYPES, accept_multiple_files=True, key=f"uni_ref_{ck}")
+            st.markdown('<div class="uni-title">📸 1. Fotos</div>', unsafe_allow_html=True)
+            up_mueble = st.file_uploader("Mueble (foto original):", type=IMG_TYPES, accept_multiple_files=True, key=f"uni_mueble_{ck}")
+            up_madera = st.file_uploader("Muestra de madera / color (opcional):", type=IMG_TYPES, accept_multiple_files=True, key=f"uni_madera_{ck}")
+            up_tela = st.file_uploader("Muestra de tela (opcional):", type=IMG_TYPES, accept_multiple_files=True, key=f"uni_tela_{ck}")
+            up_ref = st.file_uploader("Referencias extra (opcional):", type=IMG_TYPES, accept_multiple_files=True, key=f"uni_ref_{ck}")
 
-        st.markdown('<div class="uni-title">📐 2. Confirma las medidas (cm)</div>', unsafe_allow_html=True)
-        src_key = f"uni_med_src_{ck}"
-        if st.session_state.get(src_key) != (tipo, medidas):
-            d = ups.parse_dimensions(tipo, medidas)
-            st.session_state[f"uni_w_{ck}"] = float(d["width_cm"] or 0)
-            st.session_state[f"uni_h_{ck}"] = float(d["height_cm"] or 0)
-            st.session_state[f"uni_d_{ck}"] = float(d["depth_cm"] or 0)
-            st.session_state[f"uni_diam_{ck}"] = float(d["diam_cm"] or 0)
-            st.session_state[src_key] = (tipo, medidas)
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            w = _num("Ancho", f"uni_w_{ck}")
-        with c2:
-            h = _num("Alto", f"uni_h_{ck}")
-        with c3:
-            d_ = _num("Fondo / grosor", f"uni_d_{ck}", "En espejos y piezas de pared, es el grosor.")
-        with c4:
-            diam = _num("Diámetro", f"uni_diam_{ck}", "Solo para piezas redondas.")
-        medidas_final = ups.compose_dimensions_text(w, d_, h, diam)
-        dims_now = ups.parse_dimensions(tipo, medidas_final)
-        for msg in ups.sanity_warnings(dims_now["category"], w, d_, h, diam):
-            st.warning(msg)
+            st.markdown('<div class="uni-title">📐 2. Confirma las medidas (cm)</div>', unsafe_allow_html=True)
+            src_key = f"uni_med_src_{ck}"
+            if src_key not in st.session_state or st.session_state[src_key] != medidas:
+                d = ups.parse_dimensions(tipo, medidas)
+                st.session_state[f"uni_w_{ck}"] = float(d["width_cm"] or 0)
+                st.session_state[f"uni_h_{ck}"] = float(d["height_cm"] or 0)
+                st.session_state[f"uni_d_{ck}"] = float(d["depth_cm"] or 0)
+                st.session_state[f"uni_diam_{ck}"] = float(d["diam_cm"] or 0)
+                st.session_state[src_key] = medidas
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                w = _num("Ancho", f"uni_w_{ck}")
+            with c2:
+                h = _num("Alto", f"uni_h_{ck}")
+            with c3:
+                d_ = _num("Fondo / grosor", f"uni_d_{ck}", "En espejos y piezas de pared, es el grosor.")
+            with c4:
+                diam = _num("Diámetro", f"uni_diam_{ck}", "Solo para piezas redondas.")
+            medidas_final = ups.compose_dimensions_text(w, d_, h, diam)
+            dims_now = ups.parse_dimensions(tipo, medidas_final)
+            for msg in ups.sanity_warnings(dims_now["category"], w, d_, h, diam):
+                st.warning(msg)
 
-        st.markdown('<div class="uni-title">🎯 3. ¿Qué quieres generar?</div>', unsafe_allow_html=True)
-        mode_label = st.radio("Modo:", list(ups.MODES.values()), key=f"uni_mode_{ck}", label_visibility="collapsed")
-        mode = next(k for k, v in ups.MODES.items() if v == mode_label)
+            st.markdown('<div class="uni-title">🎯 3. ¿Qué quieres generar?</div>', unsafe_allow_html=True)
+            mode_label = st.radio("Modo:", list(ups.MODES.values()), key=f"uni_mode_{ck}", label_visibility="collapsed")
+            mode = next(k for k, v in ups.MODES.items() if v == mode_label)
 
-        vista_id = "vista_frontal"
-        material_mode = "wood_only"
-        if mode == "vista_suelta":
-            vsel = st.selectbox("Vista:", list(VIEW_LABELS.values()), key=f"uni_vista_{ck}")
-            vista_id = next(k for k, v in VIEW_LABELS.items() if v == vsel)
-        if mode == "material":
-            msel = st.radio("Material a cambiar:", list(MATERIAL_MODES.keys()), horizontal=True, key=f"uni_matmode_{ck}")
-            material_mode = MATERIAL_MODES[msel]
+            vista_id = "vista_frontal"
+            material_mode = "wood_only"
+            if mode == "vista_suelta":
+                vsel = st.selectbox("Vista:", list(VIEW_LABELS.values()), key=f"uni_vista_{ck}")
+                vista_id = next(k for k, v in VIEW_LABELS.items() if v == vsel)
+            if mode == "material":
+                msel = st.radio("Material a cambiar:", list(MATERIAL_MODES.keys()), horizontal=True, key=f"uni_matmode_{ck}")
+                material_mode = MATERIAL_MODES[msel]
 
-        notas = st.text_area(
-            "📝 Notas obligatorias para la IA (opcional):",
-            key=f"uni_notas_{ck}",
-            height=80,
-            placeholder="Ej: roble claro mate, respetar proporciones. Si una imagen salió mal, describe aquí qué falló.",
-        )
+            notas = st.text_area(
+                "📝 Notas obligatorias para la IA (opcional):",
+                key=f"uni_notas_{ck}",
+                height=80,
+                placeholder="Ej: roble claro mate, respetar proporciones. Si una imagen salió mal, describe aquí qué falló.",
+            )
 
-        go = st.button("🚀 GENERAR", type="primary", use_container_width=True, key=f"uni_btn_go_{ck}")
-        st.markdown("</div>", unsafe_allow_html=True)
+            go = st.button("🚀 GENERAR", type="primary", use_container_width=True, key=f"uni_btn_go_{ck}")
 
         if go:
             err = None
@@ -198,7 +196,10 @@ def render_prompt_studio_unified():
                         ] if p
                     )
 
-                    status.info("⏳ Analizando fotos con Gemini Vision...")
+                    if not v5.get_api_key():
+                        status.info("🧩 Generando prompts en modo local (sin GEMINI_API_KEY)...")
+                    else:
+                        status.info("⏳ Analizando fotos con Gemini Vision...")
                     f_ana = v5.analyze_furniture_for_enhancement(
                         furniture_bytes=m_bytes or r_bytes or w_bytes,
                         reference_bytes=r_bytes,
@@ -231,6 +232,10 @@ def render_prompt_studio_unified():
                         vista_id=vista_id,
                         material_mode=material_mode,
                     )
+                    gen_key = f"uni_gen_id_{ck}"
+                    gen_id = int(st.session_state.get(gen_key, 0)) + 1
+                    st.session_state[gen_key] = gen_id
+                    res["gen_id"] = gen_id
                     res["mueble_name"] = name
                     res["analysis"] = f_ana
                     st.session_state["uni_result"] = res
@@ -240,62 +245,66 @@ def render_prompt_studio_unified():
 
     # ----------------------------------------------------------------- RESULTADOS
     with right:
-        st.markdown('<div class="uni-card">', unsafe_allow_html=True)
-        st.markdown('<div class="uni-title">✨ Prompts generados</div>', unsafe_allow_html=True)
-        res = st.session_state.get("uni_result")
-        if not res:
-            st.caption("Sube la foto, confirma las medidas, elige un modo y pulsa GENERAR.")
-        else:
-            for msg in res.get("warnings", []):
-                st.warning(msg)
-
-            d = res.get("dims", {})
-            st.caption(
-                f"Categoría: **{d.get('category')}** · Ancho {d.get('width_cm') or '-'} · "
-                f"Alto {d.get('height_cm') or '-'} · Fondo/grosor {d.get('depth_cm') or '-'} cm"
-            )
-
-            st.download_button(
-                "📦 Descargar kit (.zip)",
-                data=_build_zip(res, res.get("mueble_name", "mueble")),
-                file_name=f"kit_{res.get('mode')}_{res.get('mueble_name', 'mueble')}.zip",
-                mime="application/zip",
-                use_container_width=True,
-                key=f"uni_dl_{ck}",
-            )
-
-            items = res["items"]
-            if len(items) > 1:
-                fmt = st.radio(
-                    "Formato:",
-                    ["📸 Una imagen por prompt (recomendado)", "⚡ Un solo prompt secuencial con 'foto'"],
-                    horizontal=True,
-                    key=f"uni_fmt_{ck}",
-                )
-                if fmt.startswith("⚡") and res.get("master_ais"):
-                    st.warning("El modo secuencial depende de la memoria del chat y puede repetir ángulos. Abre un chat nuevo.")
-                    t1, t2, t3 = st.tabs(["🌐 Google AI Studio", "🤖 ChatGPT", "🎨 Midjourney"])
-                    with t1:
-                        st.text_area("Prompt maestro:", res["master_ais"], height=300, key=f"uni_m_ais_{ck}")
-                        render_copy_button(res["master_ais"], label="📋 Copiar prompt maestro (AI Studio)", key=f"uni_cpm_ais_{ck}")
-                    with t2:
-                        st.text_area("Prompt maestro:", res["master_dal"], height=300, key=f"uni_m_dal_{ck}")
-                        render_copy_button(res["master_dal"], label="📋 Copiar prompt maestro (ChatGPT)", key=f"uni_cpm_dal_{ck}")
-                    with t3:
-                        st.caption("⚠️ Solo para Midjourney (Discord). No pegar en AI Studio ni ChatGPT.")
-                        st.text_area("Midjourney:", res.get("midjourney", ""), height=140, key=f"uni_m_mj_{ck}")
-                else:
-                    tabs = st.tabs([f"{i['icon']} {i['short_name']}" for i in items])
-                    for idx, (tab, item) in enumerate(zip(tabs, items)):
-                        with tab:
-                            _render_item(item, idx, ck)
+        with st.container(border=True):
+            st.markdown('<div class="uni-title">✨ Prompts generados</div>', unsafe_allow_html=True)
+            res = st.session_state.get("uni_result")
+            if not res:
+                st.caption("Sube la foto, confirma las medidas, elige un modo y pulsa GENERAR.")
             else:
-                _render_item(items[0], 0, ck)
+                gen_id = int(res.get("gen_id", 0))
+                for msg in res.get("warnings", []):
+                    st.warning(msg)
 
-            ana = res.get("analysis") or {}
-            if ana:
-                with st.expander("🔍 Análisis de Gemini Vision", expanded=False):
-                    st.markdown(f"**Mueble:** `{ana.get('furniture_item', 'N/A')}`")
-                    st.markdown(f"**Materiales:** `{ana.get('existing_materials', 'N/A')}`")
-                    st.markdown(f"**Geometría:** `{ana.get('geometric_structure', 'N/A')}`")
-        st.markdown("</div>", unsafe_allow_html=True)
+                d = res.get("dims", {})
+                if d.get("diam_cm"):
+                    dims_summary = f"Diámetro {d.get('diam_cm')} · Alto {d.get('height_cm') or '-'} cm"
+                else:
+                    dims_summary = (
+                        f"Ancho {d.get('width_cm') or '-'} · "
+                        f"Alto {d.get('height_cm') or '-'} · Fondo/grosor {d.get('depth_cm') or '-'} cm"
+                    )
+                st.caption(f"Categoría: **{d.get('category')}** · {dims_summary}")
+
+                st.download_button(
+                    "📦 Descargar kit (.zip)",
+                    data=_build_zip(res, res.get("mueble_name", "mueble")),
+                    file_name=f"kit_{res.get('mode')}_{res.get('mueble_name', 'mueble')}.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    key=f"uni_dl_{ck}_{gen_id}",
+                )
+
+                items = res["items"]
+                if len(items) > 1:
+                    fmt = st.radio(
+                        "Formato:",
+                        ["📸 Una imagen por prompt (recomendado)", "⚡ Un solo prompt secuencial con 'foto'"],
+                        horizontal=True,
+                        key=f"uni_fmt_{ck}",
+                    )
+                    if fmt.startswith("⚡") and res.get("master_ais"):
+                        st.warning("El modo secuencial depende de la memoria del chat y puede repetir ángulos. Abre un chat nuevo.")
+                        t1, t2, t3 = st.tabs(["🌐 Google AI Studio", "🤖 ChatGPT", "🎨 Midjourney"])
+                        with t1:
+                            st.text_area("Prompt maestro:", res["master_ais"], height=300, key=f"uni_m_ais_{ck}_{gen_id}")
+                            render_copy_button(res["master_ais"], label="📋 Copiar prompt maestro (AI Studio)", key=f"uni_cpm_ais_{ck}_{gen_id}")
+                        with t2:
+                            st.text_area("Prompt maestro:", res["master_dal"], height=300, key=f"uni_m_dal_{ck}_{gen_id}")
+                            render_copy_button(res["master_dal"], label="📋 Copiar prompt maestro (ChatGPT)", key=f"uni_cpm_dal_{ck}_{gen_id}")
+                        with t3:
+                            st.caption("⚠️ Solo para Midjourney (Discord). No pegar en AI Studio ni ChatGPT.")
+                            st.text_area("Midjourney:", res.get("midjourney", ""), height=140, key=f"uni_m_mj_{ck}_{gen_id}")
+                    else:
+                        tabs = st.tabs([f"{i['icon']} {i['short_name']}" for i in items])
+                        for idx, (tab, item) in enumerate(zip(tabs, items)):
+                            with tab:
+                                _render_item(item, idx, ck, gen_id=gen_id)
+                else:
+                    _render_item(items[0], 0, ck, gen_id=gen_id)
+
+                ana = res.get("analysis") or {}
+                if ana:
+                    with st.expander("🔍 Análisis de Gemini Vision", expanded=False):
+                        st.markdown(f"**Mueble:** `{ana.get('furniture_item', 'N/A')}`")
+                        st.markdown(f"**Materiales:** `{ana.get('existing_materials', 'N/A')}`")
+                        st.markdown(f"**Geometría:** `{ana.get('geometric_structure', 'N/A')}`")
