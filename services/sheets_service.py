@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import json
 import time
@@ -56,7 +56,7 @@ class SheetsService:
         self._sku_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._sku_catalog_last_sync: float = 0.0
         self._sku_sync_attempted_at: float = 0.0
-        self._sku_cache_ttl: float = 120.0
+        self._sku_cache_ttl: float = 20.0
         self._init_lock = threading.Lock()
         self._initialized = False
 
@@ -1029,7 +1029,7 @@ class SheetsService:
         now = time.time()
         last_sync = getattr(self, "_sku_catalog_last_sync", 0.0)
         last_attempt = getattr(self, "_sku_sync_attempted_at", 0.0)
-        ttl = getattr(self, "_sku_cache_ttl", 120.0)
+        ttl = getattr(self, "_sku_cache_ttl", 20.0)
         cooldown_base = max(last_sync, last_attempt)
         need_refresh = (
             force_refresh
@@ -1115,16 +1115,16 @@ class SheetsService:
                         "foto_swatch_nom": foto_swatch
                     }
 
-                if live_cache:
-                    self._sku_catalog_cache = live_cache
-                    self._sku_catalog_last_sync = time.time()
-                    # Guardar respaldo actualizado en disco
-                    try:
-                        with open(disk_cache, "w", encoding="utf-8") as cf:
-                            json.dump(live_cache, cf, ensure_ascii=False, indent=2)
-                    except Exception:
-                        pass
-                    return
+                # La lectura en vivo fue exitosa: el caché refleja EXACTAMENTE la hoja
+                # (si se borró un SKU en Sheets, desaparece también aquí)
+                self._sku_catalog_cache = live_cache
+                self._sku_catalog_last_sync = time.time()
+                try:
+                    with open(disk_cache, "w", encoding="utf-8") as cf:
+                        json.dump(live_cache, cf, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                return
             except Exception as e:
                 print(f"[SheetsService] Advertencia sincronizando en vivo con Google Sheets: {e}")
 

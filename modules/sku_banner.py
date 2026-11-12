@@ -45,7 +45,13 @@ def render_sku_autofill_bar(version_key: str):
     sku_clean = (sku_val or "").strip().upper()
     last_searched = st.session_state.get(k_last_searched, "")
 
+    had_loaded = st.session_state.get(k_loaded) is not None
+
     if not sku_clean:
+        # SKU borrado: limpiar también lo que se había autollenado
+        if had_loaded:
+            st.session_state[k_tipo] = ""
+            st.session_state[k_medidas] = ""
         st.session_state[k_loaded] = None
         st.session_state[k_last_searched] = ""
     elif btn_buscar or (len(sku_clean) >= 3 and sku_clean != last_searched):
@@ -57,6 +63,10 @@ def render_sku_autofill_bar(version_key: str):
             st.session_state[k_tipo] = info.get("tipo_mueble", "")
             st.session_state[k_medidas] = info.get("medidas", "")
         else:
+            # SKU nuevo sin resultado: no dejar datos del SKU anterior
+            if had_loaded:
+                st.session_state[k_tipo] = ""
+                st.session_state[k_medidas] = ""
             st.session_state[k_loaded] = None
 
     data_loaded = st.session_state.get(k_loaded)
@@ -88,9 +98,9 @@ def render_sku_autofill_bar(version_key: str):
             key=k_medidas
         )
 
-    # Fallback inteligente: si el input está vacío pero el SKU cargado tiene datos, usar datos del SKU
-    final_tipo = tipo_in.strip() if tipo_in else (data_loaded.get("tipo_mueble", "").strip() if data_loaded else "")
-    final_medidas = med_in.strip() if med_in else (data_loaded.get("medidas", "").strip() if data_loaded else "")
+    # Respetar lo que el usuario deja en las cajas (si las borra, quedan vacías)
+    final_tipo = tipo_in.strip() if tipo_in else ""
+    final_medidas = med_in.strip() if med_in else ""
 
     return {
         "sku": sku_val.strip() if sku_val else "",
