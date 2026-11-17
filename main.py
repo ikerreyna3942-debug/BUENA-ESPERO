@@ -25,6 +25,7 @@ def main():
     version = st.sidebar.radio(
         "📌 Versión del estudio:",
         [
+            "V7 Studio Maestro (Más Actual)",
             "V6 Unificado (Recomendado)",
             "V5 Nano Banana Pro (Vistas y Maderas)",
             "V4 Ultimate (Nuevas Casillas)",
@@ -32,7 +33,7 @@ def main():
             "V2 Optimizado",
             "V1 Clásica original"
         ],
-        index=0  # Default: V6 Unificado
+        index=0  # Default: V7 Studio Maestro
     )
     st.sidebar.markdown("---")
     
@@ -48,7 +49,10 @@ def main():
     """)
     st.sidebar.markdown("---")
     
-    if version == "V6 Unificado (Recomendado)":
+    if version == "V7 Studio Maestro (Más Actual)":
+        from modules.prompt_studio_v7 import render_prompt_studio_v7 as render_v7
+        render_v7()
+    elif version == "V6 Unificado (Recomendado)":
         from modules.prompt_studio_unified import render_prompt_studio_unified as render_v6
         render_v6()
     elif version == "V5 Nano Banana Pro (Vistas y Maderas)":
