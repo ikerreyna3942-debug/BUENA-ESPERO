@@ -743,7 +743,7 @@ div[data-testid="stVerticalBlock"] > div {
                 )
             with b_foto_mode:
                 btn_make_photos = st.button(
-                    f"📸 Hacer Foto(s) ({mode_label})",
+                    "📸 Hacer Foto(s)",
                     use_container_width=True,
                     key=f"v7_btn_photos_{ck}",
                 )
