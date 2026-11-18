@@ -2,7 +2,7 @@
 
 1. **Interfaz Ultra Limpia, Pequeña y de 1 Sola Línea en Encabezado:**
    - Mantener `initial_sidebar_state="collapsed"`, navegación y controles superiores en **una sola línea horizontal pequeña** con selectores desplegables (`selectbox`), sin listas de radios grandes ni cajas duplicadas de medidas.
-   - **Cero texto extra y 3 botones con sentido claro:** mantener únicamente los 3 botones directos (`🚀 <Modo elegido>`, `↘️ 3/4 Derecha`, `🗑️ Borrar`) sin botones de generación sintética de fotos cuando no sea Nano Banana real, y miniaturas de vista previa muy pequeñas (`38×38 px`).
+   - **Cero texto extra y 3 botones con sentido claro:** mantener únicamente los 3 botones directos (`🚀 <Modo elegido>`, `↘️ 3/4 Derecha`, `🗑️ Borrar`) sin botones de generación sintética de fotos cuando no sea Nano Banana real, y vistas previas claras (`76×76 px` con zoom al pasar el cursor) cuando se seleccionen las fotos.
    - **Credenciales siempre integradas:** nunca mostrar campos ni menús de credenciales en la interfaz al usuario.
 
 2. **Comportamiento del Botón Borrar / Limpiar:**

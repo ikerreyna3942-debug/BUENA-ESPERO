@@ -438,30 +438,30 @@ def _resolve_material_selector(
 
 
 def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]]) -> None:
-    """Muestra miniaturas muy pequeñas (38×38 px) indicando cuáles fotos están cargadas."""
+    """Muestra vistas previas más grandes y nítidas (76×76 px) de las fotos seleccionadas/cargadas."""
     if not thumbs:
         return
     cards: List[str] = []
     for lbl, raw_b, badge in thumbs:
-        t_bytes = make_thumbnail_bytes(raw_b, max_dim=96)
+        t_bytes = make_thumbnail_bytes(raw_b, max_dim=240)
         if not t_bytes:
             continue
         b64 = base64.b64encode(t_bytes).decode("ascii")
-        safe_lbl = (lbl or "")[:18].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        safe_badge = (badge or "Cargada")[:14].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe_lbl = (lbl or "")[:24].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe_badge = (badge or "Cargada")[:16].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         cards.append(
-            f'<div style="display:flex;align-items:center;gap:5px;background:#1E293B;border:1px solid #0284C7;'
-            f'border-radius:6px;padding:2px 6px 2px 3px;" title="{safe_badge}: {safe_lbl}">'
-            f'<img src="data:image/jpeg;base64,{b64}" style="width:38px;height:38px;object-fit:cover;border-radius:4px;display:block;" />'
-            f'<div style="display:flex;flex-direction:column;line-height:1.15;">'
-            f'<span style="font-size:9px;color:#38BDF8;font-weight:700;white-space:nowrap;">✅ {safe_badge}</span>'
-            f'<span style="font-size:10px;color:#F8FAFC;max-width:95px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_lbl}</span>'
+            f'<div class="selected-thumb-card" style="display:flex;align-items:center;gap:8px;background:#0F172A;border:1px solid #0284C7;'
+            f'border-radius:8px;padding:4px 8px 4px 4px;box-shadow:0 2px 8px rgba(0,0,0,0.35);" title="{safe_badge}: {safe_lbl}">'
+            f'<img class="selected-photo-thumb" src="data:image/jpeg;base64,{b64}" style="width:76px;height:76px;object-fit:cover;border-radius:6px;display:block;flex-shrink:0;transition:transform 0.18s ease;" />'
+            f'<div style="display:flex;flex-direction:column;gap:2px;line-height:1.25;">'
+            f'<span style="font-size:10px;color:#4ADE80;font-weight:700;white-space:nowrap;">✅ {safe_badge}</span>'
+            f'<span style="font-size:11px;color:#F8FAFC;font-weight:600;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_lbl}</span>'
             f'</div>'
             f'</div>'
         )
     if cards:
         st.markdown(
-            f'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:2px;">{"".join(cards)}</div>',
+            f'<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:4px;">{"".join(cards)}</div>',
             unsafe_allow_html=True,
         )
 
@@ -495,24 +495,24 @@ def _render_floating_photo_menu(
             e_role = str(entry.get("role") or "Foto")
             e_src = str(entry.get("source") or "Cargada")
             raw_b = entry.get("bytes") or b""
-            t_bytes = make_thumbnail_bytes(raw_b, max_dim=96) if raw_b else b""
+            t_bytes = make_thumbnail_bytes(raw_b, max_dim=240) if raw_b else b""
             img_tag = ""
             if t_bytes:
                 b64 = base64.b64encode(t_bytes).decode("ascii")
                 img_tag = (
-                    f'<img src="data:image/jpeg;base64,{b64}" '
-                    f'style="width:38px;height:38px;object-fit:cover;border-radius:4px;flex-shrink:0;" />'
+                    f'<img class="selected-photo-thumb" src="data:image/jpeg;base64,{b64}" '
+                    f'style="width:68px;height:68px;object-fit:cover;border-radius:6px;flex-shrink:0;transition:transform 0.18s ease;" />'
                 )
             safe_name = e_name[:28].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             safe_role = e_role.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             safe_src = e_src.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             loaded_html_parts.append(
-                f'<div style="display:flex;align-items:center;gap:6px;background:#0F172A;border:1px solid #0284C7;'
-                f'border-radius:6px;padding:3px 7px;min-width:120px;">'
+                f'<div style="display:flex;align-items:center;gap:8px;background:#0F172A;border:1px solid #0284C7;'
+                f'border-radius:8px;padding:4px 8px 4px 4px;min-width:140px;">'
                 f'{img_tag}'
-                f'<div style="display:flex;flex-direction:column;line-height:1.2;overflow:hidden;">'
-                f'<span style="font-size:9.5px;color:#4ADE80;font-weight:700;">✅ {safe_role} · [{safe_src}]</span>'
-                f'<span style="font-size:10.5px;color:#F8FAFC;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_name}</span>'
+                f'<div style="display:flex;flex-direction:column;gap:2px;line-height:1.25;overflow:hidden;">'
+                f'<span style="font-size:10px;color:#4ADE80;font-weight:700;">✅ {safe_role} · [{safe_src}]</span>'
+                f'<span style="font-size:11px;color:#F8FAFC;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_name}</span>'
                 f'</div></div>'
             )
 
@@ -833,6 +833,11 @@ div[data-baseweb="popover"] > div {
     border: 1px solid #0284C7 !important;
     border-radius: 10px !important;
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.7) !important;
+}
+.selected-photo-thumb:hover {
+    transform: scale(1.35);
+    z-index: 20;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
 }
 @media (max-width: 640px) {
     .stButton > button,
