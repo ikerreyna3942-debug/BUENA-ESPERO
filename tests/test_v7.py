@@ -102,9 +102,70 @@ r_cc = build(
 )
 check("clonar_color lote 3 vistas", len(r_cc["items"]) == 3 and "COLOR & MATERIAL MASTER" in r_cc["items"][0]["google_ai_studio"])
 
-# 8. Consistencia de catálogo de modos
+# 8. Consistencia de catálogo de modos y mejoras solicitadas
 check("9 modos registrados", len(MODES) == 9)
+check("menu compacto de pocas palabras", all(len(lbl.split()) <= 3 for lbl in MODES.values()))
 check("warn sin medidas", len(v7.sanity_warnings("table", 0, 0, 0, 0)) == 1)
+
+# 9. Textura exacta de tela en todo el casco + escala real (~97%)
+rm_fab = build(
+    "material",
+    "SOFA",
+    "220 cm frente x 95 cm fondo x 82 cm alto",
+    material_mode="fabric_only",
+    fabric_label="BOUCLE MARFIL",
+    fabric_analysis={
+        "name": "BOUCLE MARFIL",
+        "color_description": "warm ivory bouclé",
+        "texture_detail": "dense looped weave",
+        "light_interaction": "soft matte",
+    },
+)
+check(
+    "material tela bloquea casco completo y escala 97%",
+    "EL CASCO COMPLETO" in rm_fab["items"][0]["google_ai_studio"]
+    and "97%" in rm_fab["items"][0]["google_ai_studio"],
+)
+
+# 10. Botón directo: 3/4 mirando a la derecha · fondo blanco · 0% sombras · 2054x2054
+r_34_2054 = v7.build_34_derecha_2054_prompts(
+    furniture_name="SILLON_PRUEBA",
+    tipo_mueble="SILLON",
+    medidas_texto="85 cm frente x 88 cm fondo x 78 cm alto",
+    fabric_label="LINO ARENA",
+    fabric_analysis={
+        "name": "LINO ARENA",
+        "color_description": "natural sand linen",
+        "texture_detail": "fine linen weave",
+        "light_interaction": "matte",
+    },
+)
+p_34 = r_34_2054["items"][0]["google_ai_studio"]
+check(
+    "boton 3/4 derecha 2054x2054 sin sombras + tela en casco",
+    "FACING TOWARD THE RIGHT" in p_34
+    and "2054 x 2054" in p_34
+    and "#FFFFFF" in p_34
+    and "0% ground shadow" in p_34
+    and "EL CASCO COMPLETO" in p_34,
+)
+
+# 11. Normalizador exacto a 2054x2054 px en blanco puro #FFFFFF
+import io as _io
+from PIL import Image as _Image
+
+_sample = _Image.new("RGB", (600, 400), (250, 250, 250))
+for _x in range(200, 400):
+    for _y in range(120, 280):
+        _sample.putpixel((_x, _y), (110, 80, 60))
+_buf = _io.BytesIO()
+_sample.save(_buf, format="JPEG", quality=95)
+_fmt = v7.format_image_2054_white(_buf.getvalue())
+with _Image.open(_io.BytesIO(_fmt["png"])) as _out:
+    check(
+        "imagen formateada exactamente a 2054x2054 y borde #FFFFFF",
+        _out.size == (2054, 2054) and _out.getpixel((0, 0)) == (255, 255, 255),
+    )
 
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)

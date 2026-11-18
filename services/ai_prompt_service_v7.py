@@ -14,6 +14,8 @@ Unifica y mejora todas las capacidades de V1–V6 sin modificar las versiones an
 
 from __future__ import annotations
 
+import base64
+from collections import deque
 import concurrent.futures
 import io
 import json
@@ -58,15 +60,15 @@ class FurnitureAnalysisV7(BaseModel):
 
 
 MODES: Dict[str, str] = {
-    "catalogo": "Catálogo completo (7 imágenes oficiales)",
-    "vista_suelta": "Una sola vista (elige entre 11 ángulos)",
-    "material": "Cambio de material (madera / tela / dual)",
-    "entorno": "Entorno realista (casa de cliente)",
-    "plano": "Plano técnico con medidas (cotas)",
-    "extraer": "Extraer mueble en fondo blanco",
-    "hd": "Mejora HD 8K (sin cambiar color)",
-    "vistas_tela": "Lote: aplicar tela a múltiples vistas",
-    "clonar_color": "Lote: clonar color/material a vistas",
+    "catalogo": "7 Vistas",
+    "vista_suelta": "1 Vista",
+    "material": "Tela / Madera",
+    "entorno": "Entorno",
+    "plano": "Plano",
+    "extraer": "Fondo Blanco",
+    "hd": "HD 8K",
+    "vistas_tela": "Lote Tela",
+    "clonar_color": "Clonar Color",
 }
 
 VIEW_IDS: List[str] = [
@@ -80,17 +82,17 @@ VIEW_IDS: List[str] = [
 ]
 
 ALL_SINGLE_VIEWS: Dict[str, Dict[str, str]] = {
-    "vista_frontal": {"label": "Vista 1 · Frontal Directa 0°", "short": "Frontal 0°", "icon": "🖼️"},
-    "vista_perspectiva_3_4": {"label": "Vista 2 · 3/4 Perspectiva Comercial 45°", "short": "3/4 Perspectiva 45°", "icon": "📐"},
-    "vista_lateral": {"label": "Vista 3 · Lateral Perfil Estricto 90°", "short": "Lateral 90°", "icon": "➡️"},
-    "vista_picada_alta": {"label": "Vista 4 · Picada Alta / Semi-Cenital 65°", "short": "Picada Alta 65°", "icon": "↗️"},
-    "vista_superior_cenital": {"label": "Vista 5 · Superior Cenital Plano 90°", "short": "Superior Cenital 90°", "icon": "🔝"},
-    "vista_plano_tecnico": {"label": "Vista 6 · Plano Técnico Isométrico con Medidas", "short": "Plano con Medidas", "icon": "📏"},
-    "vista_entorno_cliente": {"label": "Vista 7 · Entorno Realista en Casa de Cliente", "short": "Entorno Casa Cliente", "icon": "🏡"},
-    "vista_3_4_izquierda": {"label": "Extra · 3/4 Mirando a la Izquierda", "short": "3/4 Izquierda", "icon": "↙️"},
-    "vista_3_4_derecha": {"label": "Extra · 3/4 Mirando a la Derecha", "short": "3/4 Derecha", "icon": "↘️"},
-    "vista_lateral_izquierda": {"label": "Extra · Lateral Perfil Izquierdo 90°", "short": "Lateral Izquierda", "icon": "⬅️"},
-    "vista_3_4_posterior": {"label": "Extra · 3/4 Posterior / Trasera", "short": "3/4 Posterior", "icon": "🔄"},
+    "vista_frontal": {"label": "1 · Frontal 0°", "short": "Frontal 0°", "icon": "🖼️"},
+    "vista_perspectiva_3_4": {"label": "2 · 3/4 (45°)", "short": "3/4 (45°)", "icon": "📐"},
+    "vista_lateral": {"label": "3 · Lateral 90°", "short": "Lateral 90°", "icon": "➡️"},
+    "vista_picada_alta": {"label": "4 · Picada 65°", "short": "Picada 65°", "icon": "↗️"},
+    "vista_superior_cenital": {"label": "5 · Superior 90°", "short": "Superior 90°", "icon": "🔝"},
+    "vista_plano_tecnico": {"label": "6 · Plano Medidas", "short": "Plano", "icon": "📏"},
+    "vista_entorno_cliente": {"label": "7 · Entorno", "short": "Entorno", "icon": "🏡"},
+    "vista_3_4_izquierda": {"label": "3/4 Izquierda", "short": "3/4 Izq.", "icon": "↙️"},
+    "vista_3_4_derecha": {"label": "3/4 Derecha", "short": "3/4 Der.", "icon": "↘️"},
+    "vista_lateral_izquierda": {"label": "Lateral Izquierda", "short": "Lateral Izq.", "icon": "⬅️"},
+    "vista_3_4_posterior": {"label": "3/4 Posterior", "short": "3/4 Trasera", "icon": "🔄"},
 }
 
 ANCHOR_VIEWS = {
@@ -107,10 +109,11 @@ ANCHOR_VIEWS = {
 
 _COMMON_CHECKS = [
     "¿Es exactamente el MISMO mueble (silueta, proporciones, color y textura) que la foto original?",
+    "¿Se aplicó exactamente la misma textura y tono de la tela en todo el casco (respaldo, brazos, faldón) y cojines a escala real?",
     "¿Se respetaron todos los detalles sin inventar patas, puertas, cajones ni molduras inexistentes?",
 ]
 _WHITE_CHECKS = [
-    "¿Fondo blanco puro (#FFFFFF), centrado con márgenes parejos, sin piso, sin sombra y sin reflejo?",
+    "¿Fondo blanco puro (#FFFFFF), centrado con márgenes parejos, sin piso, 0% sombras y 0% reflejos?",
 ]
 
 CHECKLISTS: Dict[str, List[str]] = {
@@ -119,7 +122,7 @@ CHECKLISTS: Dict[str, List[str]] = {
     "vista_lateral": _COMMON_CHECKS + _WHITE_CHECKS + ["¿Es un perfil lateral estricto a 90° (sin ángulo 3/4)?"],
     "vista_lateral_izquierda": _COMMON_CHECKS + _WHITE_CHECKS + ["¿Es un perfil lateral izquierdo estricto a 90°?"],
     "vista_3_4_izquierda": _COMMON_CHECKS + _WHITE_CHECKS + ["¿Muestra el ángulo 3/4 orientado hacia la izquierda?"],
-    "vista_3_4_derecha": _COMMON_CHECKS + _WHITE_CHECKS + ["¿Muestra el ángulo 3/4 orientado hacia la derecha?"],
+    "vista_3_4_derecha": _COMMON_CHECKS + _WHITE_CHECKS + ["¿Muestra el ángulo 3/4 orientado hacia la derecha, en 2054×2054 y con 0% sombras?"],
     "vista_3_4_posterior": _COMMON_CHECKS + _WHITE_CHECKS + ["¿Muestra correctamente la parte trasera y el perfil 3/4 posterior?"],
     "vista_picada_alta": _COMMON_CHECKS + _WHITE_CHECKS + ["¿Se ve desde arriba en ángulo elevado (60°–70°) y no horizontal?"],
     "vista_superior_cenital": _COMMON_CHECKS + _WHITE_CHECKS + ["¿Es vista cenital estricta a 90° (plana desde arriba)?"],
@@ -138,11 +141,11 @@ CHECKLISTS: Dict[str, List[str]] = {
     "hd": _COMMON_CHECKS + ["¿Mayor nitidez en vetas/tejido SIN cambiar tono, forma ni geometría?"],
     "material": [
         "¿La forma, proporciones y costuras/ensambles del mueble permanecieron intactos?",
-        "¿El nuevo material coincide fielmente con la muestra (tono, veta o trama)?",
-        "¿Todas las piezas del mismo material quedaron uniformes sin parches ni dos tonos no deseados?",
+        "¿La misma textura y tono exacto de la tela cubrió al 100% todo el casco (respaldo, brazos, base/faldón) y cojines?",
+        "¿La trama textil se ve a escala real de mueble (no macro agrandada ni lisa como pintura)?",
     ],
     "vistas_tela": _COMMON_CHECKS + [
-        "¿Conservó el ángulo exacto de cada vista subida y aplicó la tela sin deformar la silueta?"
+        "¿Conservó el ángulo exacto de cada vista y aplicó la misma textura de tela en todo el casco y cojines?"
     ],
     "clonar_color": _COMMON_CHECKS + [
         "¿Clonó el color y acabado exacto de la foto referencia manteniendo el ángulo de cada vista?"
@@ -150,13 +153,13 @@ CHECKLISTS: Dict[str, List[str]] = {
 }
 
 ROOM_PRESETS: List[str] = [
-    "Automático según tipo de mueble",
-    "Sala de estar contemporánea",
-    "Comedor principal luminoso",
-    "Recámara principal serena",
-    "Recibidor / Vestíbulo arquitectónico",
-    "Estudio / Oficina residencial",
-    "Terraza techada residencial",
+    "Automático",
+    "Sala",
+    "Comedor",
+    "Recámara",
+    "Recibidor",
+    "Estudio",
+    "Terraza",
 ]
 
 
@@ -192,12 +195,16 @@ class AIPromptServiceV7:
             print(f"[AIPromptServiceV7] Error instanciando cliente: {e}")
             return None
 
+    @staticmethod
+    def _pil_to_b64_jpeg(img: Image.Image, quality: int = 85) -> str:
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+
     def _call_gemini(self, client: Any, contents: Any, config: Any = None) -> Any:
         base_models = [
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-2.5-pro",
-            "gemini-2.0-flash-lite",
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
         ]
         models_to_try: List[str] = []
         if self._preferred_model:
@@ -206,9 +213,45 @@ class AIPromptServiceV7:
             if m not in models_to_try:
                 models_to_try.append(m)
 
+        # Construir input compatible con client.interactions.create (SDK moderno >=2.0)
+        items_list = contents if isinstance(contents, list) else [contents]
+        interaction_inputs: List[Dict[str, Any]] = []
+        for it in items_list:
+            if isinstance(it, str):
+                interaction_inputs.append({"type": "text", "text": it})
+            elif isinstance(it, Image.Image):
+                interaction_inputs.append({
+                    "type": "image",
+                    "data": self._pil_to_b64_jpeg(it, quality=80),
+                    "mime_type": "image/jpeg",
+                })
+
+        resp_fmt: Optional[Dict[str, Any]] = None
+        schema_cls = getattr(config, "response_schema", None) if config is not None else None
+        resp_mime = getattr(config, "response_mime_type", None) if config is not None else None
+        if schema_cls is not None and hasattr(schema_cls, "model_json_schema"):
+            resp_fmt = {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": schema_cls.model_json_schema(),
+            }
+        elif resp_mime == "application/json":
+            resp_fmt = {"type": "text", "mime_type": "application/json"}
+
         last_err = None
         for m in models_to_try:
             try:
+                if hasattr(client, "interactions"):
+                    kwargs: Dict[str, Any] = {"model": m, "input": interaction_inputs}
+                    if resp_fmt is not None:
+                        kwargs["response_format"] = resp_fmt
+                    inter = client.interactions.create(**kwargs)
+
+                    class _ResWrap:
+                        text = inter.output_text or ""
+
+                    self._preferred_model = m
+                    return _ResWrap()
                 res = client.models.generate_content(model=m, contents=contents, config=config)
                 self._preferred_model = m
                 return res
@@ -862,11 +905,19 @@ class AIPromptServiceV7:
             f_light = fa.get("light_interaction") or "soft matte textile sheen"
             src = f"Image {fabric_idx}" if fabric_idx else "the fabric swatch"
             ais_parts.append(
-                f"- UPHOLSTERY FABRIC LOCK (from {src} — '{f_name}'): Reupholster all fabric surfaces in the exact weave, "
-                f"thread scale, {f_color}, {f_tex}, and {f_light} of {src}, following seams, piping, and cushions naturally."
+                f"- FULL CASCO & CUSHIONS FABRIC TEXTURE LOCK (from {src} — '{f_name}'): "
+                f"Apply the EXACT textile weave, thread structure, {f_color}, {f_tex}, and {f_light} of {src} uniformly across "
+                f"100% of the upholstered body shell (EL CASCO COMPLETO: outer & inner backrest, armrests/descansabrazos, "
+                f"upholstered lower base rail/faldón, side panels, headboard/rails if bed) AND all upholstered seat/back cushions. "
+                f"Follow original seams, piping/welting, pleats, and taut upholstery tension with 0% color/hue shift. "
+                f"CRITICAL MICRO-SCALE CALIBRATION (~97% macro reduction): {src} is a close-up macro swatch — scale down the weave pattern "
+                f"~97% to realistic 1:1 furniture viewing distance so micro-threads and loops look authentic on the casco "
+                f"(NEVER oversized macro loops, NEVER flat painted color, NEVER leaving the casco in the old fabric). "
+                f"Strictly protect all non-upholstered parts (exposed wooden legs, wooden plinths/frames, metal hardware, glass, stone)."
             )
             dal_parts.append(
-                f"Upholstered surfaces crafted in {f_name} ({f_color}, {f_tex}, {f_light}) matching {src}, preserving original seams and folds."
+                f"100% of the upholstered body shell (casco: backrest, armrests, upholstered base rail/sides) AND all cushions crafted uniformly in "
+                f"{f_name} ({f_color}, {f_tex}, {f_light}) matching {src} with ~97% macro-to-furniture weave scale reduction, preserving original seams, piping, and non-upholstered wood/metal parts."
             )
         elif not has_wood:
             # Ya cubierto arriba por la preservación integral de Image 1
@@ -1557,22 +1608,24 @@ class AIPromptServiceV7:
 
         if batch_mode == "vistas_tela":
             local_ais = (
-                f"[BATCH VIEW FABRIC APPLICATION · {view_name}]\n"
-                f"TASK: Reupholster the furniture '{furn_item}' in Image 2 using the exact fabric color, weave, and micro-texture of Image 1 ({ref_label or 'Fabric Swatch'}).\n\n"
+                f"[BATCH VIEW FABRIC APPLICATION ON FULL CASCO & CUSHIONS · {view_name}]\n"
+                f"TASK: Reupholster 100% of the upholstered body shell (el casco: backrest, armrests, lower upholstered rail/faldón, sides) AND all cushions of '{furn_item}' in Image 2 using the exact fabric color, weave, and micro-texture of Image 1 ({ref_label or 'Fabric Swatch'}).\n\n"
                 "ATTACHED IMAGES:\n"
                 f"- Image 1 (FABRIC SWATCH GROUND TRUTH): Exact color, thread thickness, and textile weave ({ref_label or 'Fabric Swatch'}).\n"
-                "- Image 2 (TARGET VIEW): Keep the EXACT camera angle, 3D silhouette, proportions, seams, folds, and wooden/metal parts.\n\n"
+                "- Image 2 (TARGET VIEW): Keep the EXACT camera angle, 3D silhouette, proportions, seams, piping, folds, and wooden/metal parts.\n\n"
                 "RULES:\n"
-                "- Apply Image 1's textile weave realistically along the 3D contours and cushions of Image 2 with 0% hue shift.\n"
-                "- Keep all non-upholstered parts (wood legs, frame, metal) strictly identical to Image 2.\n"
+                "- FULL CASCO & CUSHIONS LOCK: Apply Image 1's exact textile weave uniformly across the ENTIRE upholstered casco AND cushions of Image 2 with 0% hue shift (never leave the casco in the old fabric).\n"
+                "- MICRO-SCALE CALIBRATION (~97% reduction): Scale Image 1's close-up macro weave down ~97% to realistic 1:1 furniture thread density (never oversized loops, never flat solid paint).\n"
+                "- Keep all non-upholstered parts (wood legs, wooden base, metal) strictly identical to Image 2.\n"
                 f"- BACKGROUND: {bg_clause}.{dims_part}{notes_part}\n\n"
-                "Exclude: altered camera angle, altered geometry, distorted seams, wrong fabric hue, CGI look, text, watermark."
+                "Exclude: altered camera angle, altered geometry, leftover old fabric on casco, oversized weave, wrong fabric hue, CGI look, text, watermark."
             )
             vision_task = (
-                "Image 1 is a FABRIC SWATCH (exact color and weave). Image 2 is a TARGET FURNITURE VIEW (exact geometry and camera angle).\n"
+                "Image 1 is a close-up FABRIC SWATCH (exact color and weave). Image 2 is a TARGET FURNITURE VIEW (exact geometry and camera angle).\n"
                 "Write a crisp, production-grade image-generation prompt commanding the model to keep Image 2's exact camera angle, "
-                "3D silhouette, seams, and wooden parts while reupholstering ONLY the fabric surfaces using Image 1's exact weave and color "
-                f"with 0% hue shift, on {bg_clause}."
+                "3D silhouette, seams, piping, and wooden/metal parts while reupholstering 100% of BOTH the upholstered body shell (casco: backrest, armrests, upholstered base rail) "
+                "AND all cushions using Image 1's exact weave and color (~97% macro-to-furniture scale reduction, 0% hue shift), on "
+                f"{bg_clause}."
             )
         else:  # clonar_color
             local_ais = (
@@ -1969,6 +2022,300 @@ class AIPromptServiceV7:
             "dims": dims_summary_dict,
             "warnings": warnings,
         }
+
+    # ------------------------------------------------------------------
+    # BOTÓN DIRECTO: 3/4 MIRANDO A LA DERECHA · BLANCO SIN SOMBRA · 2054×2054
+    # ------------------------------------------------------------------
+    def build_34_derecha_2054_prompts(
+        self,
+        furniture_name: str,
+        furniture_analysis: Optional[Dict[str, Any]] = None,
+        wood_analysis: Optional[Dict[str, Any]] = None,
+        fabric_analysis: Optional[Dict[str, Any]] = None,
+        notas_usuario: str = "",
+        tipo_mueble: str = "",
+        medidas_texto: str = "",
+        wood_label: str = "",
+        fabric_label: str = "",
+        has_reference_imgs: bool = False,
+        classic_numbering: bool = False,
+    ) -> Dict[str, Any]:
+        ma = furniture_analysis or {}
+        wa = wood_analysis or {}
+        fa = fabric_analysis or {}
+
+        furn_item = (tipo_mueble or "").strip() or ma.get("furniture_item") or furniture_name or "Furniture Piece"
+        geom_struct = ma.get("geometric_structure") or "exact 3D silhouette, proportions, and joinery from the reference"
+        existing_mats = ma.get("existing_materials") or "authentic materials, tones, and finishes from the reference"
+        user_notes_clean = (notas_usuario or "").strip()
+
+        profile_search = f"{furn_item} {medidas_texto} {user_notes_clean}"
+        profile = self.detect_furniture_profile(furn_item, profile_search, geom_struct)
+
+        has_wood = bool(wa) or bool(wood_label)
+        has_fabric = bool(fa) or bool(fabric_label)
+        w_label = wood_label or wa.get("name") or "Muestra de madera"
+        f_label = fabric_label or fa.get("name") or "Muestra de tela"
+
+        slots = self._build_image_slots(
+            furn_item=furn_item,
+            has_wood=has_wood,
+            wood_label=w_label,
+            has_fabric=has_fabric,
+            fabric_label=f_label,
+            has_ref=has_reference_imgs,
+            include_anchor=False,
+            classic_numbering=classic_numbering,
+        )
+        mat_ais, mat_dal = self._build_material_lock_text(
+            profile=profile,
+            furn_item=furn_item,
+            existing_mats=existing_mats,
+            wa=wa,
+            fa=fa,
+            wood_idx=slots["wood_idx"],
+            fabric_idx=slots["fabric_idx"],
+            has_wood=has_wood,
+            has_fabric=has_fabric,
+        )
+
+        angle_right_ais = (
+            "Strict commercial 3/4 perspective at a 45-degree angle with the furniture FACING TOWARD THE RIGHT "
+            "(front facade oriented toward the right side of the frame, left side panel/armrest receding cleanly in 3D depth), "
+            "camera slightly elevated 12°–15° at studio eye-line."
+        )
+        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
+        notes_dal = f" Mandatory user directives: {user_notes_clean}." if user_notes_clean else ""
+        mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
+        dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
+
+        prompt_ais = (
+            "[COMMERCIAL MASTER CUTOUT · 3/4 FACING RIGHT · PURE WHITE #FFFFFF · ZERO SHADOWS · 2054x2054 PX]\n"
+            f"TASK: Generate ONE standalone ultra-sharp commercial catalog photograph of '{furn_item}' ('{furniture_name}') "
+            "in a 3/4 perspective facing toward the RIGHT, isolated on pure solid white (#FFFFFF) with ABSOLUTELY ZERO SHADOWS, "
+            "formatted at exact 1:1 square 2054x2054 px proportions.\n\n"
+            f"{slots['header_block']}\n\n"
+            "CAMERA, ORIENTATION & 2054x2054 SQUARE CANVAS:\n"
+            f"- 3/4 RIGHT-FACING ANGLE: {angle_right_ais}\n"
+            "- EXACT RESOLUTION & FRAMING: Square 1:1 canvas (2054 x 2054 pixels). Center the single furniture piece occupying ~74% of the frame with clean balanced ~13% pure white margins on all 4 sides. Zero cropping, no collage.\n\n"
+            "PURE WHITE BACKGROUND & STRICT ZERO-SHADOW MANDATE:\n"
+            "- BACKGROUND: 100% pure seamless solid digital white (#FFFFFF, RGB 255,255,255) everywhere around and beneath the legs/base.\n"
+            "- ABSOLUTELY NO SHADOWS (0% SOMBRAS): 0% ground shadow, 0% contact shadow under legs, 0% drop shadow, 0% ambient floor shadow, 0% floor reflection, 0% studio horizon line.\n\n"
+            "MATERIAL, CASCO FABRIC TEXTURE & GEOMETRY LOCK:\n"
+            f"{mat_ais}\n"
+            f"- GEOMETRY RULE: {profile['geometry_rule']}{dim_ais}{mirror_ais}{notes_ais}\n"
+            "- OPTICS: 100MP medium-format camera, 80mm prime lens at f/11, even shadowless 5400K wrap-around softbox lighting, tack-sharp micro-texture edge-to-edge.\n\n"
+            "Exclude: ground shadow, contact shadow, drop shadow, cast shadow, under-furniture shadow, floor reflection, grey floor, studio backdrop gradient, facing left, frontal 0-degree flat angle, collage, text, watermark, CGI plastic sheen"
+            f"{profile['neg_add']}."
+        )
+
+        prompt_dal = (
+            f"Standalone 2054x2054 px (1:1 square) commercial catalog photograph of a single {furn_item} ('{furniture_name}').\n"
+            f"Camera & Orientation: {angle_right_ais} Centered in a 1:1 square 2054x2054 frame with balanced white margins.\n"
+            "Background & Zero-Shadow Rule: Pure seamless solid digital white (#FFFFFF, RGB 255,255,255) with ABSOLUTELY ZERO SHADOWS — 0% ground shadow, 0% leg contact shadow, 0% drop shadow, and 0% floor reflection.\n"
+            f"Materials & Casco Texture: {mat_dal}\n"
+            f"Structure & Proportions: {profile['geometry_rule']} {profile['dimensions_rule']}{notes_dal}\n"
+            f"Avoid: any shadows, contact shadow, floor line, reflections, facing left, collage, text, watermarks, CGI plastic look{profile['neg_add']}."
+        )
+
+        prompt_mj = (
+            f"Commercial luxury product photography of {furn_item}, 3/4 perspective at 45 degrees facing toward the right, "
+            f"{geom_struct}, {mat_dal}, centered 1:1 square 2054x2054 composition, isolated on pure solid white background #FFFFFF, "
+            "strictly zero shadows, zero contact shadow, zero reflection, 80mm lens f/11 even 5400K wrap-around lighting "
+            "--ar 1:1 --v 6.1 --style raw --no shadow, ground shadow, drop shadow, contact shadow, reflection, floor, room, collage, text, watermark"
+        )
+
+        item = {
+            "id": "vista_3_4_derecha_2054",
+            "label": "3/4 Derecha · Blanco Sin Sombra · 2054×2054",
+            "short_name": "3/4 Der · 2054×2054",
+            "icon": "↘️",
+            "google_ai_studio": prompt_ais,
+            "chatgpt_dalle3": prompt_dal,
+            "midjourney_v6": prompt_mj,
+            "checklist": [
+                "¿Está en posición 3/4 mirando hacia la derecha?",
+                "¿Fondo blanco puro (#FFFFFF) y 0% sombras (ni debajo de las patas ni alrededor)?",
+                "¿La misma textura y color de la tela se aplicó en todo el casco y cojines a escala real?",
+                "¿La imagen final mide exactamente 2054 × 2054 px?",
+            ],
+            "needs_anchor": False,
+            "attachment_guide": slots["guide"],
+            "is_2054_special": True,
+        }
+
+        dims_summary_dict = {
+            "category": profile["category"],
+            "sub_category": profile["sub_category"],
+            "width_cm": profile.get("width_cm"),
+            "depth_cm": profile.get("depth_cm"),
+            "height_cm": profile.get("height_cm"),
+            "diam_cm": profile.get("diam_cm"),
+        }
+        warnings = self.sanity_warnings(
+            profile["category"],
+            profile.get("width_cm") or 0,
+            profile.get("depth_cm") or 0,
+            profile.get("height_cm") or 0,
+            profile.get("diam_cm") or 0,
+        )
+
+        return {
+            "mode": "vista_34_der_2054",
+            "items": [item],
+            "master_ais": "",
+            "master_dal": "",
+            "midjourney": prompt_mj,
+            "dims": dims_summary_dict,
+            "warnings": warnings,
+        }
+
+    @staticmethod
+    def format_image_2054_white(raw_bytes: bytes, target_px: int = 2054) -> Dict[str, Any]:
+        """
+        Normaliza cualquier imagen a un lienzo cuadrado exacto de 2054×2054 px
+        con fondo blanco puro (#FFFFFF, RGB 255,255,255) y bordes limpios sin viñeta.
+        """
+        with Image.open(io.BytesIO(raw_bytes)) as src:
+            img = ImageOps.exif_transpose(src)
+            if img.mode in ("RGBA", "LA", "P"):
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                alpha = img.split()[-1] if "A" in img.getbands() else None
+                bg.paste(img.convert("RGB"), mask=alpha)
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            else:
+                img = img.copy()
+
+        # Si no es cuadrada, encajar centrada sobre cuadrado blanco puro antes de escalar
+        w0, h0 = img.size
+        if w0 != h0:
+            side = max(w0, h0)
+            sq = Image.new("RGB", (side, side), (255, 255, 255))
+            sq.paste(img, ((side - w0) // 2, (side - h0) // 2))
+            img = sq
+
+        # Escalar con LANCZOS a exactamente 2054×2054 px
+        if img.size != (target_px, target_px):
+            img = img.resize((target_px, target_px), Image.Resampling.LANCZOS)
+
+        # Limpieza por flood-fill desde los 4 bordes para garantizar blanco puro #FFFFFF (255,255,255)
+        # eliminando cualquier gris tenue de estudio (ej. #FAFAFA / #F5F5F5) sin tocar el interior del mueble.
+        px = img.load()
+        W, H = img.size
+        visited = bytearray(W * H)
+        q: deque[Tuple[int, int]] = deque()
+
+        def _is_near_white(r: int, g: int, b: int) -> bool:
+            return min(r, g, b) >= 245 and (max(r, g, b) - min(r, g, b)) <= 8
+
+        for x in range(W):
+            for y in (0, H - 1):
+                idx = y * W + x
+                if not visited[idx] and _is_near_white(*px[x, y]):
+                    visited[idx] = 1
+                    q.append((x, y))
+        for y in range(H):
+            for x in (0, W - 1):
+                idx = y * W + x
+                if not visited[idx] and _is_near_white(*px[x, y]):
+                    visited[idx] = 1
+                    q.append((x, y))
+
+        while q:
+            cx, cy = q.popleft()
+            px[cx, cy] = (255, 255, 255)
+            for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
+                if 0 <= nx < W and 0 <= ny < H:
+                    nidx = ny * W + nx
+                    if not visited[nidx] and _is_near_white(*px[nx, ny]):
+                        visited[nidx] = 1
+                        q.append((nx, ny))
+
+        png_buf = io.BytesIO()
+        img.save(png_buf, format="PNG", optimize=True)
+        jpg_buf = io.BytesIO()
+        img.save(jpg_buf, format="JPEG", quality=96, subsampling=0, optimize=True)
+
+        return {
+            "png": png_buf.getvalue(),
+            "jpg": jpg_buf.getvalue(),
+            "width": img.size[0],
+            "height": img.size[1],
+        }
+
+    def generate_image_34_derecha_2054(
+        self,
+        prompt_text: str,
+        furniture_bytes: bytes,
+        wood_bytes: Optional[bytes] = None,
+        fabric_bytes: Optional[bytes] = None,
+        ref_bytes: Optional[List[bytes]] = None,
+        api_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Genera directamente la fotografía 3/4 derecha sin sombras con Gemini Nano Banana
+        (si GEMINI_API_KEY está activa y con cuota de imagen) y la entrega en 2054×2054 px exactos (#FFFFFF).
+        """
+        key = self.get_api_key(api_key)
+        if not key or not furniture_bytes:
+            return None
+        client = self.get_client(key)
+        if not client or not hasattr(client, "interactions"):
+            return None
+
+        inputs: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
+        inputs.append({
+            "type": "image",
+            "data": self._pil_to_b64_jpeg(self._prepare_image(furniture_bytes, max_dim=1024), quality=90),
+            "mime_type": "image/jpeg",
+        })
+        if wood_bytes:
+            inputs.append({
+                "type": "image",
+                "data": self._pil_to_b64_jpeg(self._prepare_image(wood_bytes, max_dim=768), quality=90),
+                "mime_type": "image/jpeg",
+            })
+        if fabric_bytes:
+            inputs.append({
+                "type": "image",
+                "data": self._pil_to_b64_jpeg(self._prepare_image(fabric_bytes, max_dim=768), quality=90),
+                "mime_type": "image/jpeg",
+            })
+        for rb in (ref_bytes or [])[:1]:
+            if rb:
+                inputs.append({
+                    "type": "image",
+                    "data": self._pil_to_b64_jpeg(self._prepare_image(rb, max_dim=768), quality=88),
+                    "mime_type": "image/jpeg",
+                })
+
+        img_models = ["gemini-nano-banana-2.1", "gemini-3-pro-image"]
+        for m in img_models:
+            try:
+                inter = client.interactions.create(
+                    model=m,
+                    input=inputs,
+                    response_format={
+                        "type": "image",
+                        "aspect_ratio": "1:1",
+                        "image_size": "2K",
+                    },
+                )
+                out_img = getattr(inter, "output_image", None)
+                data_b64 = getattr(out_img, "data", None) if out_img is not None else None
+                if data_b64:
+                    raw_out = base64.b64decode(data_b64)
+                    formatted = self.format_image_2054_white(raw_out, target_px=2054)
+                    formatted["model"] = m
+                    return formatted
+            except Exception as e:
+                print(f"[AIPromptServiceV7] Aviso generación de imagen ({m}): {e}")
+                continue
+        return None
 
 
 ai_prompt_service_v7 = AIPromptServiceV7()

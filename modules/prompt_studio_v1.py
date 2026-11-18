@@ -284,11 +284,16 @@ def render_prompt_studio():
                     type="primary"
                 )
         with btn_col2:
-            if st.button("🗑️ Limpiar Todo", key="btn_clear_studio", use_container_width=True):
+            if st.button("🗑️ Borrar", key="btn_clear_studio", use_container_width=True):
+                cur_ck = st.session_state.get("clear_key_v1", 0)
+                saved_mode = st.session_state.get(f"studio_mode_radio_v1_{cur_ck}")
                 keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith(("last_studio_result", "st_", "sb_", "txt_", "sku_", "field_", "rad_", "studio_", "render_", "cp_"))]
                 for k in keys_to_del:
                     del st.session_state[k]
-                st.session_state.clear_key_v1 = st.session_state.get("clear_key_v1", 0) + 1
+                next_ck = cur_ck + 1
+                st.session_state.clear_key_v1 = next_ck
+                if saved_mode is not None:
+                    st.session_state[f"studio_mode_radio_v1_{next_ck}"] = saved_mode
                 st.rerun()
 
 

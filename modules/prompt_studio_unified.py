@@ -100,11 +100,21 @@ def render_prompt_studio_unified():
             unsafe_allow_html=True,
         )
     with h2:
-        if st.button("🗑️ Limpiar todo", use_container_width=True, key="uni_btn_clear"):
+        if st.button("🗑️ Borrar", use_container_width=True, key="uni_btn_clear"):
+            saved_mode = st.session_state.get(f"uni_mode_{ck}")
+            saved_vista = st.session_state.get(f"uni_vista_{ck}")
+            saved_mat = st.session_state.get(f"uni_matmode_{ck}")
             prefixes = ("uni_", "sku_", "field_", "last_studio_result")
             for k in [k for k in list(st.session_state.keys()) if k.startswith(prefixes)]:
                 del st.session_state[k]
-            st.session_state.clear_key_uni = ck + 1
+            next_ck = ck + 1
+            st.session_state.clear_key_uni = next_ck
+            if saved_mode is not None:
+                st.session_state[f"uni_mode_{next_ck}"] = saved_mode
+            if saved_vista is not None:
+                st.session_state[f"uni_vista_{next_ck}"] = saved_vista
+            if saved_mat is not None:
+                st.session_state[f"uni_matmode_{next_ck}"] = saved_mat
             st.rerun()
 
     left, right = st.columns([1.2, 1.6])
