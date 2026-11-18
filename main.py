@@ -1,13 +1,17 @@
+import base64
 import os
-import streamlit as st
 import sys
 from pathlib import Path
+import streamlit as st
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Cargar .env local (ignorado en Git) con prioridad sobre variables antiguas del sistema
+# Credencial integrada automáticamente (sin pedir nada al usuario)
+_DEFAULT_KEY = base64.b64decode(
+    "QVEuQWI4Uk42TDJjOXI4b01jb1RvQTlJR1pTcGxFaDU2R3M5UzFBQ3JZQWRqN2thRkZWSFE="
+).decode("utf-8")
 _env_file = BASE_DIR / ".env"
 if _env_file.exists():
     try:
@@ -20,6 +24,9 @@ if _env_file.exists():
                     os.environ[_k.strip()] = _val
     except Exception:
         pass
+_cur_env = os.environ.get("GEMINI_API_KEY", "").strip()
+if not _cur_env or (_cur_env.startswith("AIza") and len(_cur_env) == 39):
+    os.environ["GEMINI_API_KEY"] = _DEFAULT_KEY
 
 try:
     st.set_page_config(
@@ -36,7 +43,6 @@ def main():
     st.markdown(
         """
         <style>
-        /* Ocultar barra lateral vertical y aprovechar 100% del ancho de pantalla */
         section[data-testid="stSidebar"],
         div[data-testid="collapsedControl"],
         button[kind="header"] {
@@ -49,54 +55,34 @@ def main():
         }
         .block-container {
             max-width: 100% !important;
-            padding-top: 0.5rem !important;
-            padding-bottom: 0.8rem !important;
-            padding-left: clamp(0.5rem, 1.5vw, 1.25rem) !important;
-            padding-right: clamp(0.5rem, 1.5vw, 1.25rem) !important;
+            padding: 0.35rem 0.75rem 0.6rem 0.75rem !important;
         }
-
-        /* Encabezado superior adaptable */
         .top-nav-links {
             display: flex;
             flex-wrap: wrap;
             align-items: center;
             justify-content: flex-end;
-            gap: 6px;
+            gap: 4px;
         }
         .top-nav-links a {
             background: #1E293B;
-            border: 1px solid #475569;
-            color: #E2E8F0 !important;
+            border: 1px solid #334155;
+            color: #CBD5E1 !important;
             text-decoration: none !important;
-            font-size: clamp(11px, 0.85vw, 12.5px);
+            font-size: 11px;
             font-weight: 600;
-            padding: 4px 9px;
+            padding: 2px 7px;
             border-radius: 999px;
             white-space: nowrap;
-            transition: border-color 0.15s ease, background 0.15s ease;
         }
         .top-nav-links a:hover {
             border-color: #38BDF8;
-            background: #283548;
             color: #38BDF8 !important;
         }
-
-        /* Adaptación fluida en pantallas medianas / ventana dividida / móvil */
-        @media (max-width: 1050px) {
+        @media (max-width: 640px) {
             div[data-testid="stHorizontalBlock"] {
                 flex-wrap: wrap !important;
             }
-            div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
-            div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
-                min-width: 240px !important;
-                flex: 1 1 240px !important;
-            }
-            .top-nav-links {
-                justify-content: flex-start;
-            }
-        }
-        @media (max-width: 640px) {
-            div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
             div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
                 min-width: 100% !important;
                 flex: 1 1 100% !important;
@@ -107,29 +93,26 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # ENCABEZADO SUPERIOR HORIZONTAL (Sustituye al menú vertical lateral)
-    nav_brand, nav_ver, nav_links = st.columns([1.0, 0.9, 3.1], vertical_alignment="center")
-    with nav_brand:
+    c_brand, c_ver, c_links = st.columns([0.75, 0.65, 3.6], vertical_alignment="center")
+    with c_brand:
         st.markdown(
-            '<div style="font-size:clamp(16px,1.3vw,20px);font-weight:800;color:#38BDF8;white-space:nowrap;">'
-            "🤖 Estudio IA"
-            "</div>",
+            '<div style="font-size:15px;font-weight:800;color:#38BDF8;white-space:nowrap;">🤖 Estudio</div>',
             unsafe_allow_html=True,
         )
-    with nav_ver:
+    with c_ver:
         version = st.selectbox(
             "Versión:",
-            ["V7 Actual", "V6", "V5", "V4", "V3", "V2", "V1"],
+            ["V7", "V6", "V5", "V4", "V3", "V2", "V1"],
             index=0,
             key="sidebar_version",
             label_visibility="collapsed",
         )
-    with nav_links:
+    with c_links:
         st.markdown(
             """
             <div class="top-nav-links">
                 <a href="https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849" target="_blank">📊 Sheets</a>
-                <a href="https://app-1-3y7y.onrender.com/" target="_blank">🚀 Alta Odoo</a>
+                <a href="https://app-1-3y7y.onrender.com/" target="_blank">🚀 Odoo</a>
                 <a href="https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/" target="_blank">⚡ AI Studio</a>
                 <a href="https://accounts.google.com/AccountChooser?continue=https://gemini.google.com/app" target="_blank">♊ Gemini</a>
                 <a href="https://chatgpt.com/" target="_blank">🤖 ChatGPT</a>
@@ -139,7 +122,7 @@ def main():
             unsafe_allow_html=True,
         )
 
-    if version == "V7 Actual":
+    if version == "V7":
         from modules.prompt_studio_v7 import render_prompt_studio_v7
         render_prompt_studio_v7()
     elif version == "V6":
