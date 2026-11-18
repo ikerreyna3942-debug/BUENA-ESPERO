@@ -167,5 +167,50 @@ with _Image.open(_io.BytesIO(_fmt["png"])) as _out:
         _out.size == (2054, 2054) and _out.getpixel((0, 0)) == (255, 255, 255),
     )
 
+# 12. Modo escena (pure_white_border=False) conserva color de pared en 2054x2054
+_fmt_room = v7.format_image_2054_white(_buf.getvalue(), target_px=2054, pure_white_border=False)
+with _Image.open(_io.BytesIO(_fmt_room["png"])) as _out_room:
+    check(
+        "escena entorno 2054x2054 sin blanquear paredes",
+        _out_room.size == (2054, 2054) and _out_room.getpixel((0, 0))[0] < 255,
+    )
+
+# 13. Helpers de URL Drive y diagnóstico claro de API key filtrada (403 leaked)
+from services.sheets_service import sheets_service as _ss  # noqa: E402
+from modules.prompt_studio_v7 import _build_zip as _build_zip_v7  # noqa: E402
+
+check(
+    "extract_drive_id extrae ID limpio de link Drive",
+    _ss.extract_drive_id("https://drive.google.com/file/d/1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B/view?usp=sharing")
+    == "1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B",
+)
+check(
+    "format_gemini_error detecta API key filtrada (403 leaked)",
+    "bloqueada por Google" in v7.format_gemini_error(RuntimeError("403 Your API key was reported as leaked")),
+)
+
+r_34_2054["mueble_name"] = "SILLON_PRUEBA"
+r_34_2054["items"][0]["generated_photo"] = {
+    "png": _fmt["png"],
+    "jpg": _fmt["jpg"],
+    "width": 2054,
+    "height": 2054,
+    "urls": {
+        "drive_view_url": "https://drive.google.com/file/d/TEST123456789012345/view",
+        "direct_cdn_url": "https://lh3.googleusercontent.com/d/TEST123456789012345=s2054",
+        "download_url": "https://drive.google.com/uc?export=download&id=TEST123456789012345",
+    },
+}
+import zipfile as _zf
+
+_zip_bytes = _build_zip_v7(r_34_2054)
+with _zf.ZipFile(_io.BytesIO(_zip_bytes), "r") as _z:
+    _names = _z.namelist()
+    check(
+        "zip empaqueta PNG 2054x2054 y urls_catalogo.csv",
+        any(n.startswith("fotos_generadas_2054/") and n.endswith(".png") for n in _names)
+        and "urls_catalogo.csv" in _names,
+    )
+
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)

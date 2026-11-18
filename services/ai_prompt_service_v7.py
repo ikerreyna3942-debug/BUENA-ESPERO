@@ -174,11 +174,42 @@ class AIPromptServiceV7:
             return custom_key.strip()
         try:
             import streamlit as st
+            sess_key = str(st.session_state.get("v7_custom_api_key", "")).strip()
+            if sess_key:
+                return sess_key
             if "GEMINI_API_KEY" in st.secrets:
                 return str(st.secrets["GEMINI_API_KEY"]).strip()
         except Exception:
             pass
+        # Revisar archivo .env local si existe (ignorado por Git)
+        try:
+            env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as ef:
+                    for line in ef:
+                        line_s = line.strip()
+                        if line_s.startswith("GEMINI_API_KEY="):
+                            val = line_s.split("=", 1)[1].strip().strip('"').strip("'")
+                            if val:
+                                return val
+        except Exception:
+            pass
         return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
+
+    @staticmethod
+    def format_gemini_error(err: Exception) -> str:
+        txt = str(err)
+        up = txt.upper()
+        if "LEAKED" in up:
+            return (
+                "Tu GEMINI_API_KEY actual fue bloqueada por Google porque se detectó filtrada públicamente (Error 403). "
+                "Genera una llave nueva en Google AI Studio y pégala en el botón '🔑 API Key' del encabezado (o en Render > Environment)."
+            )
+        if "API_KEY_INVALID" in up or "API KEY NOT VALID" in up or "UNAUTHENTICATED" in up or "401" in up:
+            return "La GEMINI_API_KEY no es válida. Verifica la clave en '🔑 API Key'."
+        if "RESOURCE_EXHAUSTED" in up or "429" in up or "QUOTA" in up:
+            return "Límite de cuota alcanzado en Gemini API (429). Espera unos segundos o usa una cuenta con facturación activa para generación masiva."
+        return f"Aviso de Gemini API: {txt[:220]}"
 
     def get_client(self, api_key: Optional[str] = None) -> Any:
         key = self.get_api_key(api_key)
@@ -2171,10 +2202,14 @@ class AIPromptServiceV7:
         }
 
     @staticmethod
-    def format_image_2054_white(raw_bytes: bytes, target_px: int = 2054) -> Dict[str, Any]:
+    def format_image_2054_white(
+        raw_bytes: bytes,
+        target_px: int = 2054,
+        pure_white_border: bool = True,
+    ) -> Dict[str, Any]:
         """
-        Normaliza cualquier imagen a un lienzo cuadrado exacto de 2054×2054 px
-        con fondo blanco puro (#FFFFFF, RGB 255,255,255) y bordes limpios sin viñeta.
+        Normaliza cualquier imagen a un lienzo cuadrado exacto de 2054×2054 px.
+        Cuando pure_white_border=True, limpia el fondo exterior a blanco puro (#FFFFFF, RGB 255,255,255).
         """
         with Image.open(io.BytesIO(raw_bytes)) as src:
             img = ImageOps.exif_transpose(src)
@@ -2190,50 +2225,50 @@ class AIPromptServiceV7:
             else:
                 img = img.copy()
 
-        # Si no es cuadrada, encajar centrada sobre cuadrado blanco puro antes de escalar
         w0, h0 = img.size
         if w0 != h0:
-            side = max(w0, h0)
-            sq = Image.new("RGB", (side, side), (255, 255, 255))
-            sq.paste(img, ((side - w0) // 2, (side - h0) // 2))
-            img = sq
+            if pure_white_border:
+                side = max(w0, h0)
+                sq = Image.new("RGB", (side, side), (255, 255, 255))
+                sq.paste(img, ((side - w0) // 2, (side - h0) // 2))
+                img = sq
+            else:
+                img = ImageOps.fit(img, (target_px, target_px), method=Image.Resampling.LANCZOS)
 
-        # Escalar con LANCZOS a exactamente 2054×2054 px
         if img.size != (target_px, target_px):
             img = img.resize((target_px, target_px), Image.Resampling.LANCZOS)
 
-        # Limpieza por flood-fill desde los 4 bordes para garantizar blanco puro #FFFFFF (255,255,255)
-        # eliminando cualquier gris tenue de estudio (ej. #FAFAFA / #F5F5F5) sin tocar el interior del mueble.
-        px = img.load()
-        W, H = img.size
-        visited = bytearray(W * H)
-        q: deque[Tuple[int, int]] = deque()
+        if pure_white_border:
+            px = img.load()
+            W, H = img.size
+            visited = bytearray(W * H)
+            q: deque[Tuple[int, int]] = deque()
 
-        def _is_near_white(r: int, g: int, b: int) -> bool:
-            return min(r, g, b) >= 245 and (max(r, g, b) - min(r, g, b)) <= 8
+            def _is_near_white(r: int, g: int, b: int) -> bool:
+                return min(r, g, b) >= 245 and (max(r, g, b) - min(r, g, b)) <= 8
 
-        for x in range(W):
-            for y in (0, H - 1):
-                idx = y * W + x
-                if not visited[idx] and _is_near_white(*px[x, y]):
-                    visited[idx] = 1
-                    q.append((x, y))
-        for y in range(H):
-            for x in (0, W - 1):
-                idx = y * W + x
-                if not visited[idx] and _is_near_white(*px[x, y]):
-                    visited[idx] = 1
-                    q.append((x, y))
+            for x in range(W):
+                for y in (0, H - 1):
+                    idx = y * W + x
+                    if not visited[idx] and _is_near_white(*px[x, y]):
+                        visited[idx] = 1
+                        q.append((x, y))
+            for y in range(H):
+                for x in (0, W - 1):
+                    idx = y * W + x
+                    if not visited[idx] and _is_near_white(*px[x, y]):
+                        visited[idx] = 1
+                        q.append((x, y))
 
-        while q:
-            cx, cy = q.popleft()
-            px[cx, cy] = (255, 255, 255)
-            for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
-                if 0 <= nx < W and 0 <= ny < H:
-                    nidx = ny * W + nx
-                    if not visited[nidx] and _is_near_white(*px[nx, ny]):
-                        visited[nidx] = 1
-                        q.append((nx, ny))
+            while q:
+                cx, cy = q.popleft()
+                px[cx, cy] = (255, 255, 255)
+                for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
+                    if 0 <= nx < W and 0 <= ny < H:
+                        nidx = ny * W + nx
+                        if not visited[nidx] and _is_near_white(*px[nx, ny]):
+                            visited[nidx] = 1
+                            q.append((nx, ny))
 
         png_buf = io.BytesIO()
         img.save(png_buf, format="PNG", optimize=True)
@@ -2247,30 +2282,36 @@ class AIPromptServiceV7:
             "height": img.size[1],
         }
 
-    def generate_image_34_derecha_2054(
+    def generate_catalog_photo(
         self,
         prompt_text: str,
-        furniture_bytes: bytes,
+        primary_bytes: bytes,
         wood_bytes: Optional[bytes] = None,
         fabric_bytes: Optional[bytes] = None,
         ref_bytes: Optional[List[bytes]] = None,
+        anchor_bytes: Optional[bytes] = None,
+        pure_white_border: bool = True,
+        preferred_image_model: str = "gemini-nano-banana-2.1",
         api_key: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
-        Genera directamente la fotografía 3/4 derecha sin sombras con Gemini Nano Banana
-        (si GEMINI_API_KEY está activa y con cuota de imagen) y la entrega en 2054×2054 px exactos (#FFFFFF).
+        Motor universal de generación directa de fotografías de catálogo en 2054×2054 px
+        usando Gemini Nano Banana (gemini-nano-banana-2.1 / gemini-3-pro-image).
+        Retorna (dict_imagen_2054, mensaje_error_opcional).
         """
         key = self.get_api_key(api_key)
-        if not key or not furniture_bytes:
-            return None
+        if not key:
+            return None, "No hay GEMINI_API_KEY configurada. Agrégala en '🔑 API Key' arriba."
+        if not primary_bytes:
+            return None, "Falta la imagen base para generar la fotografía."
         client = self.get_client(key)
         if not client or not hasattr(client, "interactions"):
-            return None
+            return None, "El SDK google-genai actual no soporta interactions.create."
 
         inputs: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
         inputs.append({
             "type": "image",
-            "data": self._pil_to_b64_jpeg(self._prepare_image(furniture_bytes, max_dim=1024), quality=90),
+            "data": self._pil_to_b64_jpeg(self._prepare_image(primary_bytes, max_dim=1024), quality=90),
             "mime_type": "image/jpeg",
         })
         if wood_bytes:
@@ -2292,8 +2333,17 @@ class AIPromptServiceV7:
                     "data": self._pil_to_b64_jpeg(self._prepare_image(rb, max_dim=768), quality=88),
                     "mime_type": "image/jpeg",
                 })
+        if anchor_bytes:
+            inputs.append({
+                "type": "image",
+                "data": self._pil_to_b64_jpeg(self._prepare_image(anchor_bytes, max_dim=1024), quality=90),
+                "mime_type": "image/jpeg",
+            })
 
-        img_models = ["gemini-nano-banana-2.1", "gemini-3-pro-image"]
+        base_chain = ["gemini-nano-banana-2.1", "gemini-3-pro-image", "gemini-3.1-flash-lite-image"]
+        img_models = [preferred_image_model] + [m for m in base_chain if m != preferred_image_model]
+        last_err_msg = ""
+
         for m in img_models:
             try:
                 inter = client.interactions.create(
@@ -2309,13 +2359,48 @@ class AIPromptServiceV7:
                 data_b64 = getattr(out_img, "data", None) if out_img is not None else None
                 if data_b64:
                     raw_out = base64.b64decode(data_b64)
-                    formatted = self.format_image_2054_white(raw_out, target_px=2054)
+                    formatted = self.format_image_2054_white(
+                        raw_out,
+                        target_px=2054,
+                        pure_white_border=pure_white_border,
+                    )
                     formatted["model"] = m
-                    return formatted
+                    return formatted, None
             except Exception as e:
+                last_err_msg = self.format_gemini_error(e)
                 print(f"[AIPromptServiceV7] Aviso generación de imagen ({m}): {e}")
+                if any(tok in str(e).upper() for tok in ("LEAKED", "API_KEY_INVALID", "API KEY NOT VALID", "401", "403")):
+                    break
                 continue
-        return None
+
+        return None, (last_err_msg or "No se recibió imagen de salida desde Gemini API.")
+
+    def generate_image_34_derecha_2054(
+        self,
+        prompt_text: str,
+        furniture_bytes: bytes,
+        wood_bytes: Optional[bytes] = None,
+        fabric_bytes: Optional[bytes] = None,
+        ref_bytes: Optional[List[bytes]] = None,
+        preferred_image_model: str = "gemini-nano-banana-2.1",
+        api_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Genera directamente la fotografía 3/4 derecha sin sombras con Gemini Nano Banana
+        y la entrega en 2054×2054 px exactos (#FFFFFF). Guarda cualquier error en self.last_image_error.
+        """
+        img_dict, err_msg = self.generate_catalog_photo(
+            prompt_text=prompt_text,
+            primary_bytes=furniture_bytes,
+            wood_bytes=wood_bytes,
+            fabric_bytes=fabric_bytes,
+            ref_bytes=ref_bytes,
+            pure_white_border=True,
+            preferred_image_model=preferred_image_model,
+            api_key=api_key,
+        )
+        self.last_image_error = err_msg
+        return img_dict
 
 
 ai_prompt_service_v7 = AIPromptServiceV7()

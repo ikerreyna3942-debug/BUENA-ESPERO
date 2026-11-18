@@ -1619,4 +1619,149 @@ class SheetsService:
                 "spreadsheet_id": self.spreadsheet_id
             }
 
+    @staticmethod
+    def extract_drive_id(url_or_id: str) -> str:
+        """Extrae el fileId limpio desde un enlace de Google Drive o devuelve el ID directo."""
+        if not url_or_id:
+            return ""
+        val = str(url_or_id).strip()
+        m = re.search(r"/d/([a-zA-Z0-9_-]{15,})", val)
+        if m:
+            return m.group(1)
+        m2 = re.search(r"[?&]id=([a-zA-Z0-9_-]{15,})", val)
+        if m2:
+            return m2.group(1)
+        if re.fullmatch(r"[a-zA-Z0-9_-]{18,}", val):
+            return val
+        return ""
+
+    def fetch_sku_assets_from_drive(self, sku_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        """
+        Descarga automáticamente desde Google Drive (o muestras_madera local) los insumos
+        registrados para un SKU en DATOS GENERAL: mueble, tela y madera.
+        """
+        out: Dict[str, Dict[str, Any]] = {}
+        if not sku_data or not isinstance(sku_data, dict):
+            return out
+
+        app_dir = Path(__file__).resolve().parent.parent
+        maderas_dir = app_dir / "muestras_madera"
+
+        mapping = [
+            ("mueble", sku_data.get("foto_mueble_nom", ""), "MUEBLE"),
+            ("tela", sku_data.get("foto_tela_nom", ""), "TELA"),
+            ("madera", sku_data.get("foto_madera_nom", ""), "MADERA"),
+        ]
+        for key, raw_name, cat_type in mapping:
+            nom = str(raw_name or "").strip()
+            if not nom or nom.upper() in ("N/A", "NONE", "-", "0"):
+                continue
+
+            # Para madera, revisar primero catálogo local muestras_madera/ (0ms)
+            if key == "madera" and maderas_dir.exists():
+                stem_target = os.path.splitext(nom)[0].strip().upper()
+                local_hit = next(
+                    (
+                        f for f in maderas_dir.iterdir()
+                        if f.is_file() and f.stem.replace("_", " ").strip().upper() == stem_target
+                    ),
+                    None,
+                )
+                if local_hit:
+                    try:
+                        out[key] = {
+                            "name": local_hit.stem,
+                            "filename": local_hit.name,
+                            "bytes": local_hit.read_bytes(),
+                            "source": "local",
+                        }
+                        continue
+                    except Exception:
+                        pass
+
+            link = self.buscar_link_drive_inteligente(nom, tipo=cat_type)
+            fid = self.extract_drive_id(link)
+            if fid:
+                raw_bytes = self.get_drive_file_bytes(fid)
+                if raw_bytes:
+                    ext = os.path.splitext(nom)[1] or ".jpg"
+                    fname = nom if os.path.splitext(nom)[1] else f"{nom}{ext}"
+                    out[key] = {
+                        "name": os.path.splitext(nom)[0].strip(),
+                        "filename": fname,
+                        "bytes": raw_bytes,
+                        "drive_id": fid,
+                        "link": link,
+                        "source": "drive",
+                    }
+        return out
+
+    def publish_photo_and_get_urls(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        dest: str = "buzon",
+        subfolder: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """
+        Sube una fotografía generada (ej. 2054×2054 PNG/JPG) a Google Drive (Buzón o Fotos Final),
+        habilita lectura por enlace ('anyone' -> 'reader') y retorna todas las URLs listas para
+        Odoo, Google Sheets y Canva.
+        """
+        if not file_bytes:
+            raise ValueError("No hay bytes de imagen para subir.")
+        self.ensure_connected()
+        if not self.drive_service:
+            raise RuntimeError("Google Drive no está conectado.")
+
+        if dest == "final":
+            target_parent = self.fotos_final_drive_id
+            if subfolder and subfolder.strip():
+                for part in [p for p in subfolder.replace("\\", "/").split("/") if p]:
+                    folder_id = self.get_or_create_drive_folder(target_parent, part)
+                    if folder_id:
+                        target_parent = folder_id
+        else:
+            target_parent = self.buzon_drive_id
+
+        ext = os.path.splitext(filename)[1].lower().replace(".", "") or "png"
+        mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime, resumable=True)
+        body: Dict[str, Any] = {
+            "name": filename,
+            "parents": [target_parent],
+        }
+        if metadata:
+            body["description"] = json.dumps(metadata, ensure_ascii=False)
+
+        uploaded = self.drive_service.files().create(
+            body=body,
+            media_body=media,
+            fields="id, name, webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+
+        file_id = uploaded.get("id", "")
+        if not file_id:
+            raise RuntimeError("Google Drive no devolvió un ID de archivo.")
+
+        self._drive_link_cache.clear()
+        try:
+            self.drive_service.permissions().create(
+                fileId=file_id,
+                body={"role": "reader", "type": "anyone"},
+                supportsAllDrives=True,
+            ).execute()
+        except Exception:
+            pass
+
+        return {
+            "file_id": file_id,
+            "filename": filename,
+            "drive_view_url": f"https://drive.google.com/file/d/{file_id}/view",
+            "direct_cdn_url": f"https://lh3.googleusercontent.com/d/{file_id}=s2054",
+            "download_url": f"https://drive.google.com/uc?export=download&id={file_id}",
+        }
+
 sheets_service = SheetsService()
