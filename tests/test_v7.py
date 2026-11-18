@@ -180,12 +180,14 @@ from pathlib import PureWindowsPath as _PWP  # noqa: E402
 from services.sheets_service import sheets_service as _ss  # noqa: E402
 from modules.prompt_studio_v7 import (  # noqa: E402
     FOLDER_MUEBLES_RENDER_DRIVE_ID,
+    FOLDER_MUEBLES_SUBIR_DRIVE_ID,
     FURNITURE_FOLDER_CHOICES,
     LOCAL_COTIZACION_MUEBLES_DIR,
     LOCAL_RENDER_MUEBLES_DIR,
     LOCAL_SUBIR_MUEBLES_DIR,
     _build_zip as _build_zip_v7,
     _candidate_local_dirs,
+    _resolve_furniture_drive_id,
     filter_catalog_photos_by_name,
 )
 
@@ -205,7 +207,9 @@ check(
     and set(FURNITURE_FOLDER_CHOICES.values()) == {"ALL", "RENDER", "SUBIR", "COTIZACION"}
     and len(_candidate_local_dirs("SUBIR")) >= 1
     and len(_candidate_local_dirs("COTIZACION")) >= 1
-    and _ss._norm_drive_name("Cotización") == "cotizacion",
+    and _ss._norm_drive_name("Cotización") == "cotizacion"
+    and _resolve_furniture_drive_id("RENDER") == FOLDER_MUEBLES_RENDER_DRIVE_ID
+    and _resolve_furniture_drive_id("SUBIR") == FOLDER_MUEBLES_SUBIR_DRIVE_ID,
 )
 
 _sample_cat = [

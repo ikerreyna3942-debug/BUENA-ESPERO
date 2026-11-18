@@ -129,69 +129,78 @@ def _candidate_local_dirs(folder_key: str) -> List[Path]:
     return dirs
 
 
-def _load_single_furniture_folder(folder_key: str) -> List[Dict[str, str]]:
+def _scan_local_furniture_folder(folder_key: str) -> List[Dict[str, str]]:
     spec = _FURNITURE_FOLDER_SPECS[folder_key]
     source_label = spec["source"]
     local_items: List[Dict[str, str]] = []
     seen_local = set()
-
     for cand_dir in _candidate_local_dirs(folder_key):
         for it in _scan_local_dir(cand_dir, recursive=True, source_label=source_label):
             k = it["name"].strip().upper()
             if k not in seen_local:
                 seen_local.add(k)
                 local_items.append(it)
-
-    drive_items: List[Dict[str, str]] = []
-    try:
-        if sheets_service.ensure_connected():
-            drive_id = spec.get("drive_id", "")
-            if spec.get("drive_path"):
-                drive_id = sheets_service.find_drive_folder_by_path(
-                    spec["drive_path"],
-                    fallback_id=drive_id,
-                )
-            if drive_id:
-                raw_drive = sheets_service.get_drive_folder_files(
-                    drive_id,
-                    recursive=True,
-                    max_depth=3,
-                    ttl=15,
-                )
-                for d in raw_drive:
-                    item_copy = dict(d)
-                    item_copy["source"] = source_label
-                    drive_items.append(item_copy)
-    except Exception:
-        drive_items = []
-
-    return local_items + [d for d in drive_items if d["name"].strip().upper() not in seen_local]
+    return local_items
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+def _resolve_furniture_drive_id(folder_key: str) -> str:
+    spec = _FURNITURE_FOLDER_SPECS[folder_key]
+    drive_id = spec.get("drive_id", "")
+    if drive_id:
+        return drive_id
+    if spec.get("drive_path"):
+        return sheets_service.find_drive_folder_by_path(
+            spec["drive_path"],
+            fallback_id=drive_id,
+        )
+    return ""
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
 def cargar_muebles_v7(folder_key: str = "ALL", refresh_tick: int = 0) -> List[Dict[str, str]]:
-    """Lee muebles de RENDER, SUBIR y Cotización (local G:/I: + Google Drive) en paralelo."""
+    """Lee muebles de RENDER, SUBIR y Cotización en un solo lote BFS (local G:/I: + Google Drive)."""
     _ = refresh_tick
     keys = ["RENDER", "SUBIR", "COTIZACION"] if folder_key == "ALL" else [folder_key]
-    if len(keys) == 1:
-        return _load_single_furniture_folder(keys[0])
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(keys)) as ex:
+        local_by_key = dict(zip(keys, ex.map(_scan_local_furniture_folder, keys)))
+
+    drive_by_key: Dict[str, List[Dict[str, str]]] = {}
+    try:
+        if sheets_service.ensure_connected():
+            folder_map = {k: _resolve_furniture_drive_id(k) for k in keys}
+            drive_by_key = sheets_service.get_multiple_drive_folders_files(
+                folder_map,
+                recursive=True,
+                max_depth=2,
+                ttl=1800,
+            )
+    except Exception:
+        drive_by_key = {}
 
     merged: List[Dict[str, str]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(keys)) as ex:
-        results = list(ex.map(_load_single_furniture_folder, keys))
-    for chunk in results:
-        merged.extend(chunk)
+    for k in keys:
+        source_label = _FURNITURE_FOLDER_SPECS[k]["source"]
+        loc_items = local_by_key.get(k, [])
+        seen_local = {it["name"].strip().upper() for it in loc_items}
+        merged.extend(loc_items)
+        for d in drive_by_key.get(k, []):
+            if d["name"].strip().upper() not in seen_local:
+                item_copy = dict(d)
+                item_copy["source"] = source_label
+                merged.append(item_copy)
     return merged
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def cargar_muebles_render_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
     """Compatibilidad: lee la carpeta RENDER (local + Google Drive 1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX)."""
     return cargar_muebles_v7("RENDER", refresh_tick)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cargar_maderas_v7(include_drive: bool = True) -> List[Dict[str, str]]:
+def cargar_maderas_v7(include_drive: bool = True, refresh_tick: int = 0) -> List[Dict[str, str]]:
+    _ = refresh_tick
     app_dir = Path(__file__).resolve().parent.parent
     local_maderas = _scan_local_dir(app_dir / "muestras_madera", recursive=False)
     seen = {m["name"].upper() for m in local_maderas}
@@ -199,20 +208,85 @@ def cargar_maderas_v7(include_drive: bool = True) -> List[Dict[str, str]]:
     if include_drive:
         try:
             if sheets_service.ensure_connected():
-                drive_maderas = sheets_service.get_drive_folder_files(FOLDER_MADERAS_DRIVE_ID, recursive=True)
+                drive_maderas = sheets_service.get_drive_folder_files(
+                    FOLDER_MADERAS_DRIVE_ID,
+                    recursive=True,
+                    max_depth=2,
+                    ttl=1800,
+                )
         except Exception:
             drive_maderas = []
     return local_maderas + [m for m in drive_maderas if m["name"].strip().upper() not in seen]
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cargar_telas_v7() -> List[Dict[str, str]]:
+def cargar_telas_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
+    _ = refresh_tick
     try:
         if sheets_service.ensure_connected():
-            return sheets_service.get_drive_folder_files(FOLDER_TELAS_DRIVE_ID, recursive=True)
+            return sheets_service.get_drive_folder_files(
+                FOLDER_TELAS_DRIVE_ID,
+                recursive=True,
+                max_depth=2,
+                ttl=1800,
+            )
     except Exception:
         pass
     return []
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cargar_todo_catalogo_v7(
+    refresh_tick: int = 0,
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
+    """Carga muebles (RENDER, SUBIR, Cotización), telas y maderas en un solo BFS multi-raíz ultra-rápido."""
+    _ = refresh_tick
+    f_keys = ["RENDER", "SUBIR", "COTIZACION"]
+    app_dir = Path(__file__).resolve().parent.parent
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        fut_loc = {k: ex.submit(_scan_local_furniture_folder, k) for k in f_keys}
+        fut_wood = ex.submit(_scan_local_dir, app_dir / "muestras_madera", False)
+        local_by_key = {k: fut.result() for k, fut in fut_loc.items()}
+        local_maderas = fut_wood.result()
+
+    drive_batches: Dict[str, List[Dict[str, str]]] = {}
+    try:
+        if sheets_service.ensure_connected():
+            folder_map = {
+                "RENDER": _resolve_furniture_drive_id("RENDER"),
+                "SUBIR": _resolve_furniture_drive_id("SUBIR"),
+                "COTIZACION": _resolve_furniture_drive_id("COTIZACION"),
+                "TELAS": FOLDER_TELAS_DRIVE_ID,
+                "MADERAS": FOLDER_MADERAS_DRIVE_ID,
+            }
+            drive_batches = sheets_service.get_multiple_drive_folders_files(
+                folder_map,
+                recursive=True,
+                max_depth=2,
+                ttl=1800,
+            )
+    except Exception:
+        drive_batches = {}
+
+    all_muebles: List[Dict[str, str]] = []
+    for k in f_keys:
+        source_label = _FURNITURE_FOLDER_SPECS[k]["source"]
+        loc_items = local_by_key.get(k, [])
+        seen_local = {it["name"].strip().upper() for it in loc_items}
+        all_muebles.extend(loc_items)
+        for d in drive_batches.get(k, []):
+            if d["name"].strip().upper() not in seen_local:
+                item_copy = dict(d)
+                item_copy["source"] = source_label
+                all_muebles.append(item_copy)
+
+    all_telas = list(drive_batches.get("TELAS", []))
+    seen_wood = {m["name"].upper() for m in local_maderas}
+    all_maderas = local_maderas + [
+        m for m in drive_batches.get("MADERAS", []) if m["name"].strip().upper() not in seen_wood
+    ]
+    return all_muebles, all_telas, all_maderas
 
 
 def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
@@ -294,9 +368,20 @@ def _pick_catalog_photo_cb(ck: int, kind: str, item: Dict[str, str]) -> None:
         st.session_state[f"v7_ign_up_{kind}_{ck}"] = cur_sig
 
 
-def _resolve_mueble_selector(ck: int, folder_key: str = "ALL") -> Tuple[List[bytes], List[str], str]:
-    tick = int(st.session_state.get("v7_render_tick", 0))
-    catalog_items = list(cargar_muebles_v7(folder_key, tick))
+def _resolve_mueble_selector(
+    ck: int,
+    folder_key: str = "ALL",
+    all_muebles_cat: Optional[List[Dict[str, str]]] = None,
+) -> Tuple[List[bytes], List[str], str]:
+    if all_muebles_cat is not None:
+        if folder_key == "ALL":
+            catalog_items = list(all_muebles_cat)
+        else:
+            target_src = _FURNITURE_FOLDER_SPECS.get(folder_key, {}).get("source", "")
+            catalog_items = [x for x in all_muebles_cat if x.get("source") == target_src]
+    else:
+        tick = int(st.session_state.get("v7_render_tick", 0))
+        catalog_items = list(cargar_muebles_v7(folder_key, tick))
     picked_item = st.session_state.get(f"v7_picked_mueble_{ck}")
     if isinstance(picked_item, dict) and picked_item.get("name"):
         p_name_up = picked_item["name"].strip().upper()
@@ -466,6 +551,20 @@ def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]]) -> None:
         )
 
 
+@st.cache_data(ttl=600, max_entries=64, show_spinner=False)
+def _search_drive_live_cached(query_str: str) -> List[Dict[str, str]]:
+    try:
+        if sheets_service.ensure_connected():
+            return sheets_service.search_drive_images_live(
+                query_text=query_str,
+                limit=12,
+                folder_id=FOLDER_MUEBLES_RENDER_DRIVE_ID,
+            )
+    except Exception:
+        pass
+    return []
+
+
 def _render_floating_photo_menu(
     ck: int,
     loaded_entries: List[Dict[str, Any]],
@@ -606,40 +705,29 @@ def _render_floating_photo_menu(
 
         matches = filter_catalog_photos_by_name(pool, q_text, active_names_upper)
 
-        if q_text.strip() and len(q_text.strip()) >= 2 and len(matches) < 5:
-            try:
-                if sheets_service.ensure_connected():
-                    live_hits = sheets_service.search_drive_images_live(
-                        query_text=q_text.strip(),
-                        limit=12,
-                        folder_id=FOLDER_MUEBLES_RENDER_DRIVE_ID,
-                    )
-                    seen_ids = {x.get("id") for x in matches if x.get("id")}
-                    for lh in live_hits:
-                        if lh.get("id") and lh["id"] not in seen_ids:
-                            seen_ids.add(lh["id"])
-                            clean_nm = os.path.splitext(lh.get("name", ""))[0].strip() or lh.get("name", "Foto")
-                            matches.append({
-                                "id": lh["id"],
-                                "name": clean_nm,
-                                "filename": lh.get("name", f"{clean_nm}.jpg"),
-                                "source": "Drive",
-                                "kind": "mueble",
-                                "badge": "☁️ Drive",
-                            })
-            except Exception:
-                pass
+        if q_text.strip() and len(q_text.strip()) >= 3 and not matches:
+            for lh in _search_drive_live_cached(q_text.strip()):
+                clean_nm = os.path.splitext(lh.get("name", ""))[0].strip() or lh.get("name", "Foto")
+                matches.append({
+                    "id": lh["id"],
+                    "name": clean_nm,
+                    "filename": lh.get("name", f"{clean_nm}.jpg"),
+                    "source": "Drive",
+                    "kind": "mueble",
+                    "badge": "☁️ Drive",
+                })
 
         st.caption(
             f"🔎 {len(matches)} resultado{'s' if len(matches) != 1 else ''}"
             + (f" para «{q_text.strip()}»" if q_text.strip() else " disponibles en catálogo")
         )
 
+        max_rows = 35 if q_text.strip() else 24
         with st.container(height=210, border=True):
             if not matches:
                 st.caption("No se encontraron fotos con ese nombre.")
             else:
-                for idx_m, it in enumerate(matches[:45]):
+                for idx_m, it in enumerate(matches[:max_rows]):
                     it_name = it.get("name", "Foto")
                     it_badge = it.get("badge", "📁 Foto")
                     it_kind = it.get("kind", "mueble")
@@ -928,9 +1016,7 @@ div[data-baseweb="popover"] > div {
     fabric_source: str = ""
 
     tick = int(st.session_state.get("v7_render_tick", 0))
-    all_muebles_cat = cargar_muebles_v7("ALL", tick)
-    all_telas_cat = cargar_telas_v7()
-    all_maderas_cat = cargar_maderas_v7()
+    all_muebles_cat, all_telas_cat, all_maderas_cat = cargar_todo_catalogo_v7(tick)
 
     col_work, col_out = st.columns([1.18, 1.32], gap="small")
 
@@ -958,6 +1044,11 @@ div[data-baseweb="popover"] > div {
                 ):
                     sheets_service._drive_folder_tree_cache.clear()
                     sheets_service._resolved_folder_ids.clear()
+                    sheets_service._save_disk_catalog_cache()
+                    cargar_todo_catalogo_v7.clear()
+                    cargar_muebles_v7.clear()
+                    cargar_telas_v7.clear()
+                    cargar_maderas_v7.clear()
                     st.session_state["v7_render_tick"] = tick + 1
                     st.rerun()
 
@@ -999,7 +1090,7 @@ div[data-baseweb="popover"] > div {
                     vb, vn = _read_files(up_views)
                     batch_views_files = list(zip(vn, vb))
             else:
-                m_bytes, m_names, m_source = _resolve_mueble_selector(ck, folder_key)
+                m_bytes, m_names, m_source = _resolve_mueble_selector(ck, folder_key, all_muebles_cat)
                 if mode != "material" or material_mode in ("fabric_only", "dual"):
                     fabric_bytes, fabric_name, fabric_source = _resolve_material_selector("fabric", ck, all_telas_cat)
                 if mode != "material" or material_mode in ("wood_only", "dual"):
