@@ -187,10 +187,11 @@ check(
     == "1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi",
 )
 check(
-    "carpetas del usuario integradas (Mi Carpeta, SUBIR, RENDER)",
-    "📂 Mi Carpeta" in DRIVE_MUEBLES_FOLDERS
-    and "📥 SUBIR" in DRIVE_MUEBLES_FOLDERS
-    and "🖼️ RENDER" in DRIVE_MUEBLES_FOLDERS,
+    "carpetas del usuario integradas (PROMPTS por defecto, Info mia, SUBIR)",
+    list(DRIVE_MUEBLES_FOLDERS.keys())[0] == "🛋️ PROMPTS"
+    and DRIVE_MUEBLES_FOLDERS["🛋️ PROMPTS"][0] == "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX"
+    and "📂 Info mía" in DRIVE_MUEBLES_FOLDERS
+    and "📥 SUBIR" in DRIVE_MUEBLES_FOLDERS,
 )
 check(
     "format_gemini_error detecta API key filtrada (403 leaked)",

@@ -15,12 +15,13 @@ from services.ai_prompt_service_v7 import (
     ROOM_PRESETS,
     ai_prompt_service_v7,
 )
-from services.sheets_service import RENDER_DRIVE_ID, sheets_service
+from services.sheets_service import PROMPTS_MUEBLES_DRIVE_ID, SUBIR_DRIVE_ID, sheets_service
 
 FOLDER_TELAS_DRIVE_ID = "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
 FOLDER_MADERAS_DRIVE_ID = "1Jq2u1A6-xKi1YigUYSIzLauUww_RJ5Lx"
+LOCAL_PROMPTS_MUEBLES_DIR = Path(r"I:\Mi unidad\DOC ANIPA\Fotos general\Informacion mia\PROMPTS")
 IMG_TYPES = ["png", "jpg", "jpeg", "webp", "bmp", "heic", "tiff"]
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff"}
 
 MATERIAL_MODES = {
     "Solo tela": "fabric_only",
@@ -29,9 +30,9 @@ MATERIAL_MODES = {
 }
 
 DRIVE_MUEBLES_FOLDERS: Dict[str, Tuple[str, bool]] = {
-    "📂 Mi Carpeta": ("1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi", False),
-    "📥 SUBIR": ("11_rR-qhgM02Sfx9zw7uHU5AwXvTpKD4p", True),
-    "🖼️ RENDER": ("1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX", True),
+    "🛋️ PROMPTS": (PROMPTS_MUEBLES_DRIVE_ID, True),
+    "📂 Info mía": ("1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi", False),
+    "📥 SUBIR": (SUBIR_DRIVE_ID, True),
     "⚡ Recientes": ("__RECENT__", False),
     "📤 Subida / Buzón": ("1rwRk-bZtb8m4Hso9pCJE1A0_QiS-rqUQ", False),
     "🏠 Interior": ("1jFGFpOocxQs-Wbq9pMgegB_ard-dUZDr", True),
@@ -90,19 +91,54 @@ def cargar_telas_v7() -> List[Dict[str, str]]:
     return []
 
 
-@st.cache_data(ttl=90, show_spinner=False)
+def _scan_local_prompts_folder() -> List[Dict[str, str]]:
+    items: List[Dict[str, str]] = []
+    if not LOCAL_PROMPTS_MUEBLES_DIR.exists():
+        return items
+    seen = set()
+    for f in sorted(LOCAL_PROMPTS_MUEBLES_DIR.rglob("*")):
+        if f.is_file() and f.suffix.lower() in _IMAGE_EXTS and not f.name.startswith("."):
+            clean_name = f.stem.strip()
+            key = clean_name.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            sub = f.parent.name if f.parent != LOCAL_PROMPTS_MUEBLES_DIR else ""
+            items.append({
+                "id": "",
+                "name": clean_name,
+                "filename": f.name,
+                "local_path": str(f),
+                "subcarpeta": sub,
+            })
+    return items
+
+
+@st.cache_data(ttl=20, show_spinner=False)
 def cargar_muebles_drive_v7(folder_id: str, recursive: bool, refresh_tick: int = 0) -> List[Dict[str, str]]:
     _ = refresh_tick
     if not folder_id:
         return []
+    local_items: List[Dict[str, str]] = []
+    if folder_id == PROMPTS_MUEBLES_DRIVE_ID:
+        local_items = _scan_local_prompts_folder()
+    seen = {x["name"].strip().upper() for x in local_items}
+    drive_items: List[Dict[str, str]] = []
     try:
-        if not sheets_service.ensure_connected():
-            return []
-        if folder_id == "__RECENT__":
-            return sheets_service.get_recent_drive_images(limit=120)
-        return sheets_service.get_drive_folder_files(folder_id, recursive=recursive, max_depth=3)
+        if sheets_service.ensure_connected():
+            if folder_id == "__RECENT__":
+                drive_items = sheets_service.get_recent_drive_images(limit=120)
+            else:
+                ttl_val = 15 if folder_id in (PROMPTS_MUEBLES_DRIVE_ID, SUBIR_DRIVE_ID) else 900
+                drive_items = sheets_service.get_drive_folder_files(
+                    folder_id,
+                    recursive=recursive,
+                    max_depth=3,
+                    ttl=ttl_val,
+                )
     except Exception:
-        return []
+        drive_items = []
+    return local_items + [d for d in drive_items if d["name"].strip().upper() not in seen]
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -198,10 +234,13 @@ def _resolve_mueble_selector(ck: int) -> Tuple[List[bytes], List[str]]:
     if eff_fid and drive_items and sel_drive_name and not sel_drive_name.startswith("🛋️ Mueble Drive"):
         clean_target = sel_drive_name.split(" [", 1)[0].strip().upper()
         match = next((x for x in drive_items if x["name"].strip().upper() == clean_target), None)
-        if match and match.get("id"):
-            raw_b = load_drive_file_cached(match["id"])
-            if raw_b:
-                return [raw_b], [match.get("filename") or f"{match['name']}.jpg"]
+        if match:
+            if match.get("local_path") and os.path.exists(match["local_path"]):
+                return [Path(match["local_path"]).read_bytes()], [match.get("filename") or f"{match['name']}.jpg"]
+            if match.get("id"):
+                raw_b = load_drive_file_cached(match["id"])
+                if raw_b:
+                    return [raw_b], [match.get("filename") or f"{match['name']}.jpg"]
 
     return [], []
 
@@ -317,8 +356,8 @@ def _render_and_publish_item_photo(
             render_2054["urls"] = sheets_service.publish_photo_and_get_urls(
                 file_bytes=render_2054["png"],
                 filename=f"{sku_code or mueble_slug}_{item.get('id', 'foto')}_2054x2054.png",
-                dest="render",
-                subfolder=sku_code or "",
+                dest="subir",
+                subfolder="",
             )
             sheets_service._drive_folder_tree_cache.clear()
         except Exception:
@@ -370,9 +409,9 @@ def _render_item(
                     label="🔗 Copiar URL 2054",
                     key=f"v7_url_cp_{idx}_{ck}_{gen_id}",
                 )
-            folder_link = u_info.get("folder_url") or f"https://drive.google.com/drive/folders/{RENDER_DRIVE_ID}"
+            folder_link = u_info.get("folder_url") or f"https://drive.google.com/drive/folders/{SUBIR_DRIVE_ID}"
             st.markdown(
-                f'<a href="{folder_link}" target="_blank" style="font-size:11px;color:#38BDF8;text-decoration:none;font-weight:600;">🖼️ Abrir carpeta RENDER en Drive ↗</a>',
+                f'<a href="{folder_link}" target="_blank" style="font-size:11px;color:#38BDF8;text-decoration:none;font-weight:600;">📥 Abrir carpeta en Drive ↗</a>',
                 unsafe_allow_html=True,
             )
     else:
@@ -868,7 +907,7 @@ button[data-baseweb="tab"] {
         with st.container(border=True):
             res = st.session_state.get("v7_result")
             if not res:
-                st.caption("👈 Elige mueble en **📂 Mi Carpeta** + **🧵 Tela** y pulsa **📸 Foto 3/4 · 2054** o **↘️ Prompt 3/4**.")
+                st.caption("👈 Elige mueble en **🛋️ PROMPTS** + **🧵 Tela** y pulsa **📸 Foto 3/4** o **↘️ Prompt 3/4**.")
                 return
 
             gen_id = int(res.get("gen_id", 0))
@@ -903,13 +942,13 @@ button[data-baseweb="tab"] {
                             use_container_width=True,
                             key=f"v7_ext_jpg_{ck}_{gen_id}",
                         )
-                        if st.button("🖼️ Guardar en RENDER + URL", use_container_width=True, key=f"v7_ext_url_{ck}_{gen_id}"):
+                        if st.button("📥 Guardar en Drive + URL", use_container_width=True, key=f"v7_ext_url_{ck}_{gen_id}"):
                             try:
                                 u_res = sheets_service.publish_photo_and_get_urls(
                                     file_bytes=fmt_img["png"],
                                     filename=f"{sku_code or mueble_slug}_2054x2054.png",
-                                    dest="render",
-                                    subfolder=sku_code or "",
+                                    dest="subir",
+                                    subfolder="",
                                 )
                                 st.session_state[f"v7_ext_u_{ck}_{gen_id}"] = u_res["direct_cdn_url"]
                             except Exception as e_u:  # noqa: BLE001

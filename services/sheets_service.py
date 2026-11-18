@@ -31,13 +31,15 @@ BUZON_DRIVE_ID = "1rwRk-bZtb8m4Hso9pCJE1A0_QiS-rqUQ"
 FOTOS_FINAL_DRIVE_ID = "1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B"
 INFO_MIA_DRIVE_ID = "1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi"
 SUBIR_DRIVE_ID = "11_rR-qhgM02Sfx9zw7uHU5AwXvTpKD4p"
-RENDER_DRIVE_ID = "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX"
+PROMPTS_MUEBLES_DRIVE_ID = "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX"
+RENDER_DRIVE_ID = PROMPTS_MUEBLES_DRIVE_ID
 
 class SheetsService:
     BUZON_DRIVE_ID = BUZON_DRIVE_ID
     FOTOS_FINAL_DRIVE_ID = FOTOS_FINAL_DRIVE_ID
     INFO_MIA_DRIVE_ID = INFO_MIA_DRIVE_ID
     SUBIR_DRIVE_ID = SUBIR_DRIVE_ID
+    PROMPTS_MUEBLES_DRIVE_ID = PROMPTS_MUEBLES_DRIVE_ID
     RENDER_DRIVE_ID = RENDER_DRIVE_ID
 
     def __init__(self):
@@ -613,13 +615,19 @@ class SheetsService:
             print(f"[SheetsService] Error obteniendo fotos recientes de Drive: {e}")
             return []
 
-    def get_drive_folder_files(self, folder_id: str, recursive: bool = True, max_depth: int = 4) -> List[Dict[str, str]]:
+    def get_drive_folder_files(
+        self,
+        folder_id: str,
+        recursive: bool = True,
+        max_depth: int = 4,
+        ttl: int = 1800,
+    ) -> List[Dict[str, str]]:
         """Obtiene de forma ultra-rápida las imágenes de una carpeta de Google Drive (BFS por lotes + caché en memoria)."""
         if not folder_id:
             return []
         cache_key = f"{folder_id}:{int(recursive)}:{max_depth}"
         cached = self._drive_folder_tree_cache.get(cache_key)
-        if cached and (time.time() - cached[0]) < 1800:
+        if cached and (time.time() - cached[0]) < ttl:
             return list(cached[1])
 
         self.ensure_connected()

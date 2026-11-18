@@ -45,17 +45,13 @@ def main():
         <style>
         section[data-testid="stSidebar"],
         div[data-testid="collapsedControl"],
-        button[kind="header"] {
-            display: none !important;
-        }
+        button[kind="header"],
         header[data-testid="stHeader"] {
-            height: 0px !important;
-            min-height: 0px !important;
-            background: transparent !important;
+            display: none !important;
         }
         .block-container {
             max-width: 100% !important;
-            padding: 0.7rem 0.55rem 0.5rem 0.55rem !important;
+            padding: 0.35rem 0.55rem 0.5rem 0.55rem !important;
         }
         .top-nav-links {
             display: flex;
@@ -86,7 +82,7 @@ def main():
         }
         @media (max-width: 640px) {
             .block-container {
-                padding: 1.15rem 0.35rem 0.45rem 0.35rem !important;
+                padding: 0.35rem 0.35rem 0.45rem 0.35rem !important;
             }
             .top-nav-links {
                 justify-content: flex-start !important;
@@ -115,27 +111,23 @@ def main():
         unsafe_allow_html=True,
     )
 
-    c_brand, c_ver, c_links = st.columns([0.55, 0.52, 3.93], vertical_alignment="center")
-    with c_brand:
-        st.markdown(
-            '<div style="font-size:13px;font-weight:800;color:#38BDF8;white-space:nowrap;">🤖 Estudio</div>',
-            unsafe_allow_html=True,
-        )
+    c_ver, c_links = st.columns([0.85, 4.15], vertical_alignment="center")
     with c_ver:
-        version = st.selectbox(
+        ver_raw = st.selectbox(
             "Versión:",
-            ["V7", "V6", "V5", "V4", "V3", "V2", "V1"],
+            ["🤖 V7", "V6", "V5", "V4", "V3", "V2", "V1"],
             index=0,
             key="sidebar_version",
             label_visibility="collapsed",
         )
+        version = "V7" if "V7" in ver_raw else ver_raw
     with c_links:
         st.markdown(
             """
             <div class="top-nav-links">
-                <a class="folder-pill" href="https://drive.google.com/drive/folders/1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi" target="_blank">📂 Mi Carpeta</a>
+                <a class="folder-pill" href="https://drive.google.com/drive/folders/1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX" target="_blank">🛋️ PROMPTS</a>
+                <a class="folder-pill" href="https://drive.google.com/drive/folders/1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi" target="_blank">📂 Info mía</a>
                 <a class="folder-pill" href="https://drive.google.com/drive/folders/11_rR-qhgM02Sfx9zw7uHU5AwXvTpKD4p" target="_blank">📥 SUBIR</a>
-                <a class="folder-pill" href="https://drive.google.com/drive/folders/1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX" target="_blank">🖼️ RENDER</a>
                 <a href="https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849" target="_blank">📊 Sheets</a>
                 <a href="https://app-1-3y7y.onrender.com/" target="_blank">🚀 Odoo</a>
                 <a href="https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/" target="_blank">⚡ AI Studio</a>
