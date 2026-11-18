@@ -27,7 +27,7 @@ FOLDER_TELAS_DRIVE_ID = "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
 FOLDER_MADERAS_DRIVE_ID = "1Jq2u1A6-xKi1YigUYSIzLauUww_RJ5Lx"
 
 FURNITURE_FOLDER_CHOICES: Dict[str, str] = {
-    "📁 Todas (RENDER · SUBIR · Cotiz.)": "ALL",
+    "📁 Todas las carpetas": "ALL",
     "🛋️ RENDER": "RENDER",
     "📥 SUBIR": "SUBIR",
     "💰 Cotización": "COTIZACION",
@@ -227,14 +227,93 @@ def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
     return data, names
 
 
-def _resolve_mueble_selector(ck: int, folder_key: str = "ALL") -> Tuple[List[bytes], List[str]]:
+def _load_catalog_item_bytes(item: Dict[str, str]) -> Optional[bytes]:
+    if not item:
+        return None
+    if item.get("local_path") and os.path.exists(item["local_path"]):
+        try:
+            return Path(item["local_path"]).read_bytes()
+        except Exception:
+            return None
+    if item.get("id"):
+        return load_drive_file_cached(item["id"])
+    return None
+
+
+def filter_catalog_photos_by_name(
+    items: List[Dict[str, str]],
+    query: str = "",
+    active_names_upper: Optional[set] = None,
+) -> List[Dict[str, str]]:
+    """Filtra fotos cargadas en catálogo por nombre/archivo/carpeta (sin acentos ni mayúsculas)."""
+    active_set = active_names_upper or set()
+    q_norm = sheets_service._norm_drive_name(query.replace("_", " ").replace("-", " "))
+    tokens = [t for t in q_norm.split(" ") if t]
+
+    if not tokens:
+        return sorted(
+            items,
+            key=lambda x: (
+                0 if x.get("name", "").strip().upper() in active_set else 1,
+                x.get("name", "").upper(),
+            ),
+        )
+
+    scored: List[Tuple[int, str, Dict[str, str]]] = []
+    for it in items:
+        name_raw = it.get("name", "")
+        fname_raw = it.get("filename", "")
+        src_raw = it.get("source", "")
+        sub_raw = it.get("subcarpeta", "")
+        name_norm = sheets_service._norm_drive_name(name_raw.replace("_", " ").replace("-", " "))
+        haystack = sheets_service._norm_drive_name(
+            f"{name_raw} {fname_raw} {src_raw} {sub_raw}".replace("_", " ").replace("-", " ")
+        )
+        if all(tok in haystack for tok in tokens):
+            is_active = 0 if name_raw.strip().upper() in active_set else 1
+            if name_norm == q_norm:
+                rank = 0
+            elif name_norm.startswith(tokens[0]):
+                rank = 1
+            elif q_norm in name_norm:
+                rank = 2
+            else:
+                rank = 3
+            scored.append((is_active * 10 + rank, name_raw.upper(), it))
+
+    scored.sort(key=lambda x: (x[0], x[1]))
+    return [x[2] for x in scored]
+
+
+def _pick_catalog_photo_cb(ck: int, kind: str, item: Dict[str, str]) -> None:
+    """Callback del menú flotante para cargar una foto buscada por nombre."""
+    st.session_state[f"v7_picked_{kind}_{ck}"] = dict(item)
+    st.session_state[f"v7_apply_pick_{kind}_{ck}"] = True
+    cur_sig = st.session_state.get(f"v7_cur_up_sig_{kind}_{ck}")
+    if cur_sig:
+        st.session_state[f"v7_ign_up_{kind}_{ck}"] = cur_sig
+
+
+def _resolve_mueble_selector(ck: int, folder_key: str = "ALL") -> Tuple[List[bytes], List[str], str]:
     tick = int(st.session_state.get("v7_render_tick", 0))
-    catalog_items = cargar_muebles_v7(folder_key, tick)
+    catalog_items = list(cargar_muebles_v7(folder_key, tick))
+    picked_item = st.session_state.get(f"v7_picked_mueble_{ck}")
+    if isinstance(picked_item, dict) and picked_item.get("name"):
+        p_name_up = picked_item["name"].strip().upper()
+        p_src = picked_item.get("source", "")
+        exists = any(
+            x.get("name", "").strip().upper() == p_name_up and x.get("source", "") == p_src
+            for x in catalog_items
+        )
+        if not exists:
+            catalog_items = [picked_item] + catalog_items
+
     show_source = folder_key == "ALL"
     first_opt = f"🛋️ Mueble ({len(catalog_items)})..."
 
     display_map: Dict[str, Dict[str, str]] = {}
     options: List[str] = [first_opt]
+    picked_target_lbl: Optional[str] = None
     for item in catalog_items:
         src = item.get("source", "")
         base_lbl = f"{item['name']} · [{src}]" if (show_source and src) else item["name"]
@@ -245,14 +324,27 @@ def _resolve_mueble_selector(ck: int, folder_key: str = "ALL") -> Tuple[List[byt
             suffix += 1
         display_map[lbl] = item
         options.append(lbl)
+        if (
+            isinstance(picked_item, dict)
+            and picked_target_lbl is None
+            and item.get("name", "").strip().upper() == picked_item.get("name", "").strip().upper()
+            and (not picked_item.get("source") or item.get("source", "") == picked_item.get("source", ""))
+        ):
+            picked_target_lbl = lbl
+
+    sb_key = f"v7_sb_mueble_{ck}"
+    if st.session_state.get(f"v7_apply_pick_mueble_{ck}") and picked_target_lbl:
+        st.session_state[sb_key] = picked_target_lbl
+        st.session_state[f"v7_apply_pick_mueble_{ck}"] = False
+    elif st.session_state.get(sb_key) not in options:
+        st.session_state[sb_key] = first_opt
 
     c_sel, c_up = st.columns([2.15, 0.95], gap="small", vertical_alignment="center")
     with c_sel:
         sel_name = st.selectbox(
             "Mueble",
             options,
-            index=0,
-            key=f"v7_sb_mueble_{ck}",
+            key=sb_key,
             label_visibility="collapsed",
         )
     with c_up:
@@ -265,35 +357,56 @@ def _resolve_mueble_selector(ck: int, folder_key: str = "ALL") -> Tuple[List[byt
         )
 
     if up_mueble:
-        return _read_files(up_mueble)
+        ub, un = _read_files(up_mueble)
+        up_sig = "|".join(f"{n}:{len(b)}" for n, b in zip(un, ub))
+        st.session_state[f"v7_cur_up_sig_mueble_{ck}"] = up_sig
+        if up_sig != st.session_state.get(f"v7_ign_up_mueble_{ck}"):
+            return ub, un, "Upload"
+    else:
+        st.session_state[f"v7_cur_up_sig_mueble_{ck}"] = ""
 
     if sel_name and sel_name in display_map:
         match = display_map[sel_name]
-        if match.get("local_path") and os.path.exists(match["local_path"]):
-            return [Path(match["local_path"]).read_bytes()], [match.get("filename") or f"{match['name']}.jpg"]
-        if match.get("id"):
-            raw_b = load_drive_file_cached(match["id"])
-            if raw_b:
-                return [raw_b], [match.get("filename") or f"{match['name']}.jpg"]
-    return [], []
+        raw_b = _load_catalog_item_bytes(match)
+        if raw_b:
+            return [raw_b], [match.get("filename") or f"{match['name']}.jpg"], match.get("source") or "RENDER"
+    return [], [], ""
 
 
 def _resolve_material_selector(
     kind: str,
     ck: int,
     catalog_items: List[Dict[str, str]],
-) -> Tuple[Optional[bytes], str]:
+) -> Tuple[Optional[bytes], str, str]:
     is_wood = kind == "wood"
     lbl = "🪵 Madera" if is_wood else "🧵 Tela"
-    options = [f"{lbl} ({len(catalog_items)})..."] + [item["name"] for item in catalog_items]
+    items_list = list(catalog_items)
+    picked_item = st.session_state.get(f"v7_picked_{kind}_{ck}")
+    if isinstance(picked_item, dict) and picked_item.get("name"):
+        p_up = picked_item["name"].strip().upper()
+        if not any(x.get("name", "").strip().upper() == p_up for x in items_list):
+            items_list = [picked_item] + items_list
+
+    first_opt = f"{lbl} ({len(items_list)})..."
+    options = [first_opt] + [item["name"] for item in items_list]
+
+    sb_key = f"v7_sb_{kind}_{ck}"
+    if st.session_state.get(f"v7_apply_pick_{kind}_{ck}") and isinstance(picked_item, dict):
+        target_name = next(
+            (x["name"] for x in items_list if x["name"].strip().upper() == picked_item.get("name", "").strip().upper()),
+            first_opt,
+        )
+        st.session_state[sb_key] = target_name
+        st.session_state[f"v7_apply_pick_{kind}_{ck}"] = False
+    elif st.session_state.get(sb_key) not in options:
+        st.session_state[sb_key] = first_opt
 
     c_sel, c_up = st.columns([2.15, 0.95], gap="small", vertical_alignment="center")
     with c_sel:
         sel_name = st.selectbox(
             lbl,
             options,
-            index=0,
-            key=f"v7_sb_{kind}_{ck}",
+            key=sb_key,
             label_visibility="collapsed",
         )
     with c_up:
@@ -305,36 +418,45 @@ def _resolve_material_selector(
         )
 
     if up_file:
-        return up_file.getvalue(), getattr(up_file, "name", lbl)
+        ub = up_file.getvalue()
+        uname = getattr(up_file, "name", lbl)
+        up_sig = f"{uname}:{len(ub)}"
+        st.session_state[f"v7_cur_up_sig_{kind}_{ck}"] = up_sig
+        if up_sig != st.session_state.get(f"v7_ign_up_{kind}_{ck}"):
+            return ub, uname, "Upload"
+    else:
+        st.session_state[f"v7_cur_up_sig_{kind}_{ck}"] = ""
 
-    if sel_name and sel_name != options[0]:
-        match = next((x for x in catalog_items if x["name"].upper() == sel_name.upper()), None)
+    if sel_name and sel_name != first_opt:
+        match = next((x for x in items_list if x["name"].upper() == sel_name.upper()), None)
         if match:
-            if match.get("local_path") and os.path.exists(match["local_path"]):
-                return Path(match["local_path"]).read_bytes(), sel_name
-            if match.get("id"):
-                loaded = load_drive_file_cached(match["id"])
-                if loaded:
-                    return loaded, sel_name
-    return None, ""
+            loaded = _load_catalog_item_bytes(match)
+            if loaded:
+                src = "Local" if match.get("local_path") else "Drive"
+                return loaded, sel_name, src
+    return None, "", ""
 
 
-def _render_mini_thumbs(thumbs: List[Tuple[str, bytes]]) -> None:
-    """Muestra miniaturas muy pequeñas (44×44 px) en una tira horizontal limpia."""
+def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]]) -> None:
+    """Muestra miniaturas muy pequeñas (38×38 px) indicando cuáles fotos están cargadas."""
     if not thumbs:
         return
     cards: List[str] = []
-    for lbl, raw_b in thumbs:
+    for lbl, raw_b, badge in thumbs:
         t_bytes = make_thumbnail_bytes(raw_b, max_dim=96)
         if not t_bytes:
             continue
         b64 = base64.b64encode(t_bytes).decode("ascii")
-        safe_lbl = (lbl or "")[:14].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe_lbl = (lbl or "")[:18].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe_badge = (badge or "Cargada")[:14].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         cards.append(
-            f'<div style="display:flex;align-items:center;gap:5px;background:#1E293B;border:1px solid #334155;'
-            f'border-radius:6px;padding:2px 6px 2px 3px;">'
+            f'<div style="display:flex;align-items:center;gap:5px;background:#1E293B;border:1px solid #0284C7;'
+            f'border-radius:6px;padding:2px 6px 2px 3px;" title="{safe_badge}: {safe_lbl}">'
             f'<img src="data:image/jpeg;base64,{b64}" style="width:38px;height:38px;object-fit:cover;border-radius:4px;display:block;" />'
-            f'<span style="font-size:10px;color:#CBD5E1;max-width:78px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_lbl}</span>'
+            f'<div style="display:flex;flex-direction:column;line-height:1.15;">'
+            f'<span style="font-size:9px;color:#38BDF8;font-weight:700;white-space:nowrap;">✅ {safe_badge}</span>'
+            f'<span style="font-size:10px;color:#F8FAFC;max-width:95px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_lbl}</span>'
+            f'</div>'
             f'</div>'
         )
     if cards:
@@ -342,6 +464,207 @@ def _render_mini_thumbs(thumbs: List[Tuple[str, bytes]]) -> None:
             f'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:2px;">{"".join(cards)}</div>',
             unsafe_allow_html=True,
         )
+
+
+def _render_floating_photo_menu(
+    ck: int,
+    loaded_entries: List[Dict[str, Any]],
+    all_muebles: List[Dict[str, str]],
+    all_telas: List[Dict[str, str]],
+    all_maderas: List[Dict[str, str]],
+) -> None:
+    """Menú flotante (popover) con buscador de fotos por nombre y estado de fotos cargadas."""
+    n_loaded = len(loaded_entries)
+    total_cat = len(all_muebles) + len(all_telas) + len(all_maderas)
+    if n_loaded > 0:
+        pop_label = f"🔍 Fotos · ✅ {n_loaded} cargada{'s' if n_loaded != 1 else ''}"
+    else:
+        pop_label = f"🔍 Buscar foto ({total_cat})"
+
+    with st.popover(pop_label, use_container_width=True):
+        # 1. FOTOS CARGADAS ACTUALMENTE EN EL ESTUDIO
+        loaded_html_parts: List[str] = []
+        slots_status = {"mueble": False, "fabric": False, "wood": False}
+        active_names_upper = set()
+
+        for entry in loaded_entries:
+            slots_status[entry.get("kind", "mueble")] = True
+            e_name = str(entry.get("name") or "Foto").strip()
+            active_names_upper.add(os.path.splitext(e_name)[0].strip().upper())
+            active_names_upper.add(e_name.upper())
+            e_role = str(entry.get("role") or "Foto")
+            e_src = str(entry.get("source") or "Cargada")
+            raw_b = entry.get("bytes") or b""
+            t_bytes = make_thumbnail_bytes(raw_b, max_dim=96) if raw_b else b""
+            img_tag = ""
+            if t_bytes:
+                b64 = base64.b64encode(t_bytes).decode("ascii")
+                img_tag = (
+                    f'<img src="data:image/jpeg;base64,{b64}" '
+                    f'style="width:38px;height:38px;object-fit:cover;border-radius:4px;flex-shrink:0;" />'
+                )
+            safe_name = e_name[:28].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            safe_role = e_role.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            safe_src = e_src.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            loaded_html_parts.append(
+                f'<div style="display:flex;align-items:center;gap:6px;background:#0F172A;border:1px solid #0284C7;'
+                f'border-radius:6px;padding:3px 7px;min-width:120px;">'
+                f'{img_tag}'
+                f'<div style="display:flex;flex-direction:column;line-height:1.2;overflow:hidden;">'
+                f'<span style="font-size:9.5px;color:#4ADE80;font-weight:700;">✅ {safe_role} · [{safe_src}]</span>'
+                f'<span style="font-size:10.5px;color:#F8FAFC;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_name}</span>'
+                f'</div></div>'
+            )
+
+        missing_chips: List[str] = []
+        for k_slot, lbl_slot in (("mueble", "🛋️ Mueble"), ("fabric", "🧵 Tela"), ("wood", "🪵 Madera")):
+            if not slots_status.get(k_slot):
+                missing_chips.append(
+                    f'<span style="font-size:9.5px;color:#94A3B8;background:#1E293B;border:1px dashed #334155;'
+                    f'border-radius:999px;padding:1px 7px;">⚪ {lbl_slot}: sin cargar</span>'
+                )
+
+        n_ren = sum(1 for x in all_muebles if x.get("source") == "RENDER")
+        n_sub = sum(1 for x in all_muebles if x.get("source") == "SUBIR")
+        n_cot = sum(1 for x in all_muebles if x.get("source") == "Cotización")
+
+        status_block = (
+            f'<div style="margin-bottom:4px;">'
+            f'<div style="font-size:10.5px;font-weight:700;color:#7DD3FC;margin-bottom:3px;">'
+            f'📌 Fotos cargadas activas ({n_loaded})</div>'
+            + (
+                f'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:4px;">{"".join(loaded_html_parts)}</div>'
+                if loaded_html_parts
+                else ""
+            )
+            + (
+                f'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px;">{"".join(missing_chips)}</div>'
+                if missing_chips
+                else ""
+            )
+            + f'<div style="font-size:9.5px;color:#94A3B8;background:#0F172A;border:1px solid #1E293B;border-radius:5px;padding:2px 6px;">'
+            f'📂 En carpetas: <b>RENDER</b> ({n_ren}) · <b>SUBIR</b> ({n_sub}) · <b>Cotización</b> ({n_cot}) · '
+            f'<b>Telas</b> ({len(all_telas)}) · <b>Maderas</b> ({len(all_maderas)})</div>'
+            f'</div>'
+        )
+        st.markdown(status_block, unsafe_allow_html=True)
+
+        # 2. BUSCADOR DE FOTOS POR NOMBRE
+        c_q, c_cat = st.columns([1.85, 1.15], gap="small", vertical_alignment="center")
+        with c_q:
+            q_text = st.text_input(
+                "Buscar foto por nombre",
+                placeholder="🔎 Buscar foto por nombre...",
+                key=f"v7_pop_q_{ck}",
+                label_visibility="collapsed",
+            )
+        with c_cat:
+            cat_filter = st.selectbox(
+                "Categoría",
+                [
+                    "📁 Todas",
+                    "🛋️ Muebles",
+                    "🛋️ RENDER",
+                    "📥 SUBIR",
+                    "💰 Cotización",
+                    "🧵 Telas",
+                    "🪵 Maderas",
+                ],
+                key=f"v7_pop_cat_{ck}",
+                label_visibility="collapsed",
+            )
+
+        pool: List[Dict[str, str]] = []
+        if cat_filter in ("📁 Todas", "🛋️ Muebles", "🛋️ RENDER", "📥 SUBIR", "💰 Cotización"):
+            for m in all_muebles:
+                src = m.get("source") or "RENDER"
+                if cat_filter == "🛋️ RENDER" and src != "RENDER":
+                    continue
+                if cat_filter == "📥 SUBIR" and src != "SUBIR":
+                    continue
+                if cat_filter == "💰 Cotización" and src != "Cotización":
+                    continue
+                item_m = dict(m)
+                item_m["kind"] = "mueble"
+                item_m["source"] = src
+                item_m["badge"] = f"🛋️ {src}"
+                pool.append(item_m)
+        if cat_filter in ("📁 Todas", "🧵 Telas"):
+            for t in all_telas:
+                item_t = dict(t)
+                item_t["kind"] = "fabric"
+                item_t["source"] = "Telas"
+                item_t["badge"] = "🧵 Tela"
+                pool.append(item_t)
+        if cat_filter in ("📁 Todas", "🪵 Maderas"):
+            for w in all_maderas:
+                item_w = dict(w)
+                item_w["kind"] = "wood"
+                item_w["source"] = "Maderas"
+                item_w["badge"] = "🪵 Madera"
+                pool.append(item_w)
+
+        matches = filter_catalog_photos_by_name(pool, q_text, active_names_upper)
+
+        if q_text.strip() and len(q_text.strip()) >= 2 and len(matches) < 5:
+            try:
+                if sheets_service.ensure_connected():
+                    live_hits = sheets_service.search_drive_images_live(
+                        query_text=q_text.strip(),
+                        limit=12,
+                        folder_id=FOLDER_MUEBLES_RENDER_DRIVE_ID,
+                    )
+                    seen_ids = {x.get("id") for x in matches if x.get("id")}
+                    for lh in live_hits:
+                        if lh.get("id") and lh["id"] not in seen_ids:
+                            seen_ids.add(lh["id"])
+                            clean_nm = os.path.splitext(lh.get("name", ""))[0].strip() or lh.get("name", "Foto")
+                            matches.append({
+                                "id": lh["id"],
+                                "name": clean_nm,
+                                "filename": lh.get("name", f"{clean_nm}.jpg"),
+                                "source": "Drive",
+                                "kind": "mueble",
+                                "badge": "☁️ Drive",
+                            })
+            except Exception:
+                pass
+
+        st.caption(
+            f"🔎 {len(matches)} resultado{'s' if len(matches) != 1 else ''}"
+            + (f" para «{q_text.strip()}»" if q_text.strip() else " disponibles en catálogo")
+        )
+
+        with st.container(height=210, border=True):
+            if not matches:
+                st.caption("No se encontraron fotos con ese nombre.")
+            else:
+                for idx_m, it in enumerate(matches[:45]):
+                    it_name = it.get("name", "Foto")
+                    it_badge = it.get("badge", "📁 Foto")
+                    it_kind = it.get("kind", "mueble")
+                    is_loaded = (
+                        it_name.strip().upper() in active_names_upper
+                        or (it.get("filename", "").strip().upper() in active_names_upper)
+                    )
+                    r_info, r_btn = st.columns([2.7, 1.0], gap="small", vertical_alignment="center")
+                    with r_info:
+                        status_icon = "✅ " if is_loaded else ""
+                        st.markdown(
+                            f'<div style="font-size:10.5px;line-height:1.25;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+                            f'<span style="color:#38BDF8;font-weight:700;">{it_badge}</span> · '
+                            f'<span style="color:{"#4ADE80" if is_loaded else "#F8FAFC"};font-weight:{"700" if is_loaded else "500"};">'
+                            f'{status_icon}{it_name}</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with r_btn:
+                        st.button(
+                            "✅ Cargada" if is_loaded else "➕ Cargar",
+                            key=f"v7_pick_{it_kind}_{idx_m}_{ck}",
+                            use_container_width=True,
+                            on_click=_pick_catalog_photo_cb,
+                            args=(ck, it_kind, it),
+                        )
 
 
 def _clear_v7_form(ck: int) -> None:
@@ -355,6 +678,11 @@ def _clear_v7_form(ck: int) -> None:
         "v7_batch_",
         "v7_clone_",
         "v7_ext2054_",
+        "v7_picked_",
+        "v7_apply_pick_",
+        "v7_ign_up_",
+        "v7_cur_up_sig_",
+        "v7_pop_",
         "sku_",
         "field_",
     )
@@ -489,6 +817,23 @@ button[data-baseweb="tab"] {
     font-size: 11px !important;
     min-height: 26px !important;
 }
+div[data-testid="stPopover"] > div > button {
+    border: 1px solid #0284C7 !important;
+    background: linear-gradient(135deg, rgba(2,132,199,0.18), rgba(15,23,42,0.92)) !important;
+    color: #7DD3FC !important;
+}
+div[data-testid="stPopover"] > div > button:hover {
+    border-color: #38BDF8 !important;
+    color: #FFFFFF !important;
+}
+div[data-baseweb="popover"] > div {
+    min-width: min(410px, 94vw) !important;
+    max-width: min(460px, 96vw) !important;
+    background-color: #1E293B !important;
+    border: 1px solid #0284C7 !important;
+    border-radius: 10px !important;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.7) !important;
+}
 @media (max-width: 640px) {
     .stButton > button,
     .stDownloadButton > button {
@@ -568,16 +913,49 @@ button[data-baseweb="tab"] {
     # =====================================================================
     m_bytes: List[bytes] = []
     m_names: List[str] = []
+    m_source: str = ""
     batch_views_files: List[Tuple[str, bytes]] = []
     wood_bytes: Optional[bytes] = None
     wood_name: str = ""
+    wood_source: str = ""
     fabric_bytes: Optional[bytes] = None
     fabric_name: str = ""
+    fabric_source: str = ""
+
+    tick = int(st.session_state.get("v7_render_tick", 0))
+    all_muebles_cat = cargar_muebles_v7("ALL", tick)
+    all_telas_cat = cargar_telas_v7()
+    all_maderas_cat = cargar_maderas_v7()
 
     col_work, col_out = st.columns([1.18, 1.32], gap="small")
 
     with col_work:
         with st.container(border=True):
+            folder_labels = list(FURNITURE_FOLDER_CHOICES.keys())
+            if st.session_state.get("v7_keep_folder") not in folder_labels:
+                st.session_state["v7_keep_folder"] = folder_labels[0]
+
+            c_dir, c_pop, c_ref = st.columns([1.85, 1.95, 0.52], gap="small", vertical_alignment="center")
+            with c_dir:
+                folder_label = st.selectbox(
+                    "Carpeta de fotos",
+                    folder_labels,
+                    key="v7_keep_folder",
+                    label_visibility="collapsed",
+                )
+                folder_key = FURNITURE_FOLDER_CHOICES[folder_label]
+            with c_ref:
+                if st.button(
+                    "🔄",
+                    use_container_width=True,
+                    key=f"v7_btn_refresh_{ck}",
+                    help="Actualizar fotos de RENDER, SUBIR y Cotización",
+                ):
+                    sheets_service._drive_folder_tree_cache.clear()
+                    sheets_service._resolved_folder_ids.clear()
+                    st.session_state["v7_render_tick"] = tick + 1
+                    st.rerun()
+
             if mode == "vistas_tela":
                 st.caption("🖼️ Vistas")
                 up_views = st.file_uploader(
@@ -589,7 +967,7 @@ button[data-baseweb="tab"] {
                 )
                 vb, vn = _read_files(up_views)
                 batch_views_files = list(zip(vn, vb))
-                fabric_bytes, fabric_name = _resolve_material_selector("fabric", ck, cargar_telas_v7())
+                fabric_bytes, fabric_name, fabric_source = _resolve_material_selector("fabric", ck, all_telas_cat)
             elif mode == "clonar_color":
                 u1, u2 = st.columns(2, gap="small")
                 with u1:
@@ -602,6 +980,8 @@ button[data-baseweb="tab"] {
                         label_visibility="collapsed",
                     )
                     m_bytes, m_names = _read_files(up_ref_color)
+                    if m_bytes:
+                        m_source = "Upload"
                 with u2:
                     st.caption("🖼️ Vistas")
                     up_views = st.file_uploader(
@@ -614,36 +994,54 @@ button[data-baseweb="tab"] {
                     vb, vn = _read_files(up_views)
                     batch_views_files = list(zip(vn, vb))
             else:
-                folder_labels = list(FURNITURE_FOLDER_CHOICES.keys())
-                if st.session_state.get("v7_keep_folder") not in folder_labels:
-                    st.session_state["v7_keep_folder"] = folder_labels[0]
-
-                c_dir, c_ref = st.columns([4.2, 0.8], gap="small", vertical_alignment="center")
-                with c_dir:
-                    folder_label = st.selectbox(
-                        "Carpeta de fotos",
-                        folder_labels,
-                        key="v7_keep_folder",
-                        label_visibility="collapsed",
-                    )
-                    folder_key = FURNITURE_FOLDER_CHOICES[folder_label]
-                with c_ref:
-                    if st.button(
-                        "🔄",
-                        use_container_width=True,
-                        key=f"v7_btn_refresh_{ck}",
-                        help="Actualizar fotos de RENDER, SUBIR y Cotización",
-                    ):
-                        sheets_service._drive_folder_tree_cache.clear()
-                        sheets_service._resolved_folder_ids.clear()
-                        st.session_state["v7_render_tick"] = int(st.session_state.get("v7_render_tick", 0)) + 1
-                        st.rerun()
-
-                m_bytes, m_names = _resolve_mueble_selector(ck, folder_key)
+                m_bytes, m_names, m_source = _resolve_mueble_selector(ck, folder_key)
                 if mode != "material" or material_mode in ("fabric_only", "dual"):
-                    fabric_bytes, fabric_name = _resolve_material_selector("fabric", ck, cargar_telas_v7())
+                    fabric_bytes, fabric_name, fabric_source = _resolve_material_selector("fabric", ck, all_telas_cat)
                 if mode != "material" or material_mode in ("wood_only", "dual"):
-                    wood_bytes, wood_name = _resolve_material_selector("wood", ck, cargar_maderas_v7())
+                    wood_bytes, wood_name, wood_source = _resolve_material_selector("wood", ck, all_maderas_cat)
+
+            loaded_entries: List[Dict[str, Any]] = []
+            for nm, raw in zip(m_names, m_bytes):
+                loaded_entries.append({
+                    "kind": "mueble",
+                    "role": "🛋️ Mueble",
+                    "name": nm,
+                    "source": m_source or "RENDER",
+                    "bytes": raw,
+                })
+            if fabric_bytes:
+                loaded_entries.append({
+                    "kind": "fabric",
+                    "role": "🧵 Tela",
+                    "name": fabric_name or "Tela",
+                    "source": fabric_source or "Telas",
+                    "bytes": fabric_bytes,
+                })
+            if wood_bytes:
+                loaded_entries.append({
+                    "kind": "wood",
+                    "role": "🪵 Madera",
+                    "name": wood_name or "Madera",
+                    "source": wood_source or "Maderas",
+                    "bytes": wood_bytes,
+                })
+            for vn, vb in batch_views_files:
+                loaded_entries.append({
+                    "kind": "mueble",
+                    "role": "🖼️ Vista",
+                    "name": vn,
+                    "source": "Lote",
+                    "bytes": vb,
+                })
+
+            with c_pop:
+                _render_floating_photo_menu(
+                    ck=ck,
+                    loaded_entries=loaded_entries,
+                    all_muebles=all_muebles_cat,
+                    all_telas=all_telas_cat,
+                    all_maderas=all_maderas_cat,
+                )
 
             notas = st.text_input(
                 "Notas",
@@ -676,15 +1074,15 @@ button[data-baseweb="tab"] {
                 ):
                     _clear_v7_form(ck)
 
-            thumbs: List[Tuple[str, bytes]] = []
+            thumbs: List[Tuple[str, bytes, str]] = []
             for nm, raw in zip(m_names[:2], m_bytes[:2]):
-                thumbs.append((nm, raw))
+                thumbs.append((nm, raw, f"🛋️ {m_source or 'Mueble'}"))
             if fabric_bytes:
-                thumbs.append((fabric_name or "Tela", fabric_bytes))
+                thumbs.append((fabric_name or "Tela", fabric_bytes, f"🧵 {fabric_source or 'Tela'}"))
             if wood_bytes:
-                thumbs.append((wood_name or "Madera", wood_bytes))
+                thumbs.append((wood_name or "Madera", wood_bytes, f"🪵 {wood_source or 'Madera'}"))
             for vn, vb in batch_views_files[:2]:
-                thumbs.append((vn, vb))
+                thumbs.append((vn, vb, "🖼️ Vista"))
 
             _render_mini_thumbs(thumbs)
 
