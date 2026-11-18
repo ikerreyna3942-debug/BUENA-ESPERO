@@ -1,9 +1,9 @@
 # Reglas del Proyecto: Estudio IA de Fotografía y Catálogo de Muebles
 
-1. **Interfaz en Encabezado Superior y Adaptable (Cero Menús Verticales Largos):**
-   - Mantener `initial_sidebar_state="collapsed"` y la navegación en barra superior horizontal compacta.
-   - Usar etiquetas muy cortas (1 a 3 palabras máximo) en menús, modos y botones.
-   - Garantizar adaptación responsiva (`max-width: 100%`, `clamp()`, `@media`) para monitor completo, laptop y media pantalla dividida.
+1. **Interfaz Ultra Limpia, Pequeña y de 1 Sola Línea en Encabezado:**
+   - Mantener `initial_sidebar_state="collapsed"`, navegación y controles superiores en **una sola línea horizontal pequeña** con selectores desplegables (`selectbox`), sin listas de radios grandes ni cajas duplicadas de medidas.
+   - **Cero texto extra:** no agregar banners largos, instrucciones extensas ni botones innecesarios; mantener únicamente botones muy cortos y directos (`↘️ 3/4 Der · 2054`, `🚀 Generar`, `🗑️ Borrar`).
+   - **Credenciales siempre integradas:** nunca mostrar campos ni menús de credenciales en la interfaz al usuario.
 
 2. **Comportamiento del Botón Borrar / Limpiar:**
    - Al limpiar el formulario, borrar únicamente fotos cargadas, SKU, medidas, notas y resultados generados.
