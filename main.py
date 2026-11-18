@@ -125,9 +125,7 @@ def main():
         st.markdown(
             """
             <div class="top-nav-links">
-                <a class="folder-pill" href="https://drive.google.com/drive/folders/1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX" target="_blank">🛋️ PROMPTS</a>
-                <a class="folder-pill" href="https://drive.google.com/drive/folders/1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi" target="_blank">📂 Info mía</a>
-                <a class="folder-pill" href="https://drive.google.com/drive/folders/11_rR-qhgM02Sfx9zw7uHU5AwXvTpKD4p" target="_blank">📥 SUBIR</a>
+                <a class="folder-pill" href="https://drive.google.com/drive/folders/1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX" target="_blank">📁 RENDER</a>
                 <a href="https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849" target="_blank">📊 Sheets</a>
                 <a href="https://app-1-3y7y.onrender.com/" target="_blank">🚀 Odoo</a>
                 <a href="https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/" target="_blank">⚡ AI Studio</a>
