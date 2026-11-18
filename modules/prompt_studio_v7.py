@@ -1,4 +1,5 @@
 import base64
+import concurrent.futures
 import io
 import os
 import zipfile
@@ -15,12 +16,64 @@ from services.ai_prompt_service_v7 import (
     ROOM_PRESETS,
     ai_prompt_service_v7,
 )
-from services.sheets_service import sheets_service
+from services.sheets_service import SUBIR_DRIVE_ID, sheets_service
 
 FOLDER_MUEBLES_RENDER_DRIVE_ID = "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX"
+FOLDER_MUEBLES_SUBIR_DRIVE_ID = SUBIR_DRIVE_ID
 LOCAL_RENDER_MUEBLES_DIR = Path(r"I:\Mi unidad\DOC ANIPA\Fotos general\Informacion mia\RENDER")
+LOCAL_SUBIR_MUEBLES_DIR = Path(r"G:\Mi unidad\DOC ANIPA\Fotos general\Fotos de del proyeto\SUBIR")
+LOCAL_COTIZACION_MUEBLES_DIR = Path(r"G:\Mi unidad\DOC ANIPA\Fotos general\Informacion de fotos\Cotizacipón")
 FOLDER_TELAS_DRIVE_ID = "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
 FOLDER_MADERAS_DRIVE_ID = "1Jq2u1A6-xKi1YigUYSIzLauUww_RJ5Lx"
+
+FURNITURE_FOLDER_CHOICES: Dict[str, str] = {
+    "📁 Todas (RENDER · SUBIR · Cotiz.)": "ALL",
+    "🛋️ RENDER": "RENDER",
+    "📥 SUBIR": "SUBIR",
+    "💰 Cotización": "COTIZACION",
+}
+
+_FURNITURE_FOLDER_SPECS: Dict[str, Dict[str, Any]] = {
+    "RENDER": {
+        "source": "RENDER",
+        "drive_id": FOLDER_MUEBLES_RENDER_DRIVE_ID,
+        "drive_path": None,
+        "local_rel_paths": [
+            r"Mi unidad\DOC ANIPA\Fotos general\Informacion mia\RENDER",
+        ],
+    },
+    "SUBIR": {
+        "source": "SUBIR",
+        "drive_id": FOLDER_MUEBLES_SUBIR_DRIVE_ID,
+        "drive_path": [
+            ("DOC ANIPA",),
+            ("Fotos general",),
+            ("Fotos de del proyeto", "Fotos de del proyecto", "Fotos del proyecto"),
+            ("SUBIR",),
+        ],
+        "local_rel_paths": [
+            r"Mi unidad\DOC ANIPA\Fotos general\Fotos de del proyeto\SUBIR",
+            r"Mi unidad\DOC ANIPA\Fotos general\Fotos de del proyecto\SUBIR",
+            r"Mi unidad\DOC ANIPA\Fotos general\Fotos del proyecto\SUBIR",
+        ],
+    },
+    "COTIZACION": {
+        "source": "Cotización",
+        "drive_id": "",
+        "drive_path": [
+            ("DOC ANIPA",),
+            ("Fotos general",),
+            ("Informacion de fotos", "Información de fotos"),
+            ("Cotizacipón", "Cotización", "Cotizacion"),
+        ],
+        "local_rel_paths": [
+            r"Mi unidad\DOC ANIPA\Fotos general\Informacion de fotos\Cotizacipón",
+            r"Mi unidad\DOC ANIPA\Fotos general\Informacion de fotos\Cotización",
+            r"Mi unidad\DOC ANIPA\Fotos general\Información de fotos\Cotizacipón",
+            r"Mi unidad\DOC ANIPA\Fotos general\Información de fotos\Cotización",
+        ],
+    },
+}
 
 IMG_TYPES = ["png", "jpg", "jpeg", "webp", "bmp", "heic", "tiff"]
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff"}
@@ -32,7 +85,7 @@ MATERIAL_MODES = {
 }
 
 
-def _scan_local_dir(target_dir: Path, recursive: bool = False) -> List[Dict[str, str]]:
+def _scan_local_dir(target_dir: Path, recursive: bool = False, source_label: str = "") -> List[Dict[str, str]]:
     items: List[Dict[str, str]] = []
     if not target_dir.exists():
         return items
@@ -45,33 +98,96 @@ def _scan_local_dir(target_dir: Path, recursive: bool = False) -> List[Dict[str,
             if key in seen:
                 continue
             seen.add(key)
-            items.append({
+            item: Dict[str, str] = {
                 "id": "",
                 "name": clean_name,
                 "filename": f.name,
                 "local_path": str(f),
-            })
+            }
+            if source_label:
+                item["source"] = source_label
+            items.append(item)
     return items
+
+
+def _candidate_local_dirs(folder_key: str) -> List[Path]:
+    dirs: List[Path] = []
+    if folder_key == "RENDER":
+        dirs.append(LOCAL_RENDER_MUEBLES_DIR)
+    elif folder_key == "SUBIR":
+        dirs.append(LOCAL_SUBIR_MUEBLES_DIR)
+    elif folder_key == "COTIZACION":
+        dirs.append(LOCAL_COTIZACION_MUEBLES_DIR)
+
+    if os.name == "nt":
+        spec = _FURNITURE_FOLDER_SPECS.get(folder_key, {})
+        for drv in ("G:", "I:", "H:", "D:", "E:", "F:"):
+            for rel in spec.get("local_rel_paths", []):
+                cand = Path(f"{drv}\\{rel}")
+                if cand not in dirs:
+                    dirs.append(cand)
+    return dirs
+
+
+def _load_single_furniture_folder(folder_key: str) -> List[Dict[str, str]]:
+    spec = _FURNITURE_FOLDER_SPECS[folder_key]
+    source_label = spec["source"]
+    local_items: List[Dict[str, str]] = []
+    seen_local = set()
+
+    for cand_dir in _candidate_local_dirs(folder_key):
+        for it in _scan_local_dir(cand_dir, recursive=True, source_label=source_label):
+            k = it["name"].strip().upper()
+            if k not in seen_local:
+                seen_local.add(k)
+                local_items.append(it)
+
+    drive_items: List[Dict[str, str]] = []
+    try:
+        if sheets_service.ensure_connected():
+            drive_id = spec.get("drive_id", "")
+            if spec.get("drive_path"):
+                drive_id = sheets_service.find_drive_folder_by_path(
+                    spec["drive_path"],
+                    fallback_id=drive_id,
+                )
+            if drive_id:
+                raw_drive = sheets_service.get_drive_folder_files(
+                    drive_id,
+                    recursive=True,
+                    max_depth=3,
+                    ttl=15,
+                )
+                for d in raw_drive:
+                    item_copy = dict(d)
+                    item_copy["source"] = source_label
+                    drive_items.append(item_copy)
+    except Exception:
+        drive_items = []
+
+    return local_items + [d for d in drive_items if d["name"].strip().upper() not in seen_local]
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def cargar_muebles_v7(folder_key: str = "ALL", refresh_tick: int = 0) -> List[Dict[str, str]]:
+    """Lee muebles de RENDER, SUBIR y Cotización (local G:/I: + Google Drive) en paralelo."""
+    _ = refresh_tick
+    keys = ["RENDER", "SUBIR", "COTIZACION"] if folder_key == "ALL" else [folder_key]
+    if len(keys) == 1:
+        return _load_single_furniture_folder(keys[0])
+
+    merged: List[Dict[str, str]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(keys)) as ex:
+        results = list(ex.map(_load_single_furniture_folder, keys))
+    for chunk in results:
+        merged.extend(chunk)
+    return merged
 
 
 @st.cache_data(ttl=15, show_spinner=False)
 def cargar_muebles_render_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
-    """Lee únicamente la carpeta RENDER (local + Google Drive 1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX)."""
-    _ = refresh_tick
-    local_items = _scan_local_dir(LOCAL_RENDER_MUEBLES_DIR, recursive=True)
-    seen = {x["name"].strip().upper() for x in local_items}
-    drive_items: List[Dict[str, str]] = []
-    try:
-        if sheets_service.ensure_connected():
-            drive_items = sheets_service.get_drive_folder_files(
-                FOLDER_MUEBLES_RENDER_DRIVE_ID,
-                recursive=True,
-                max_depth=3,
-                ttl=10,
-            )
-    except Exception:
-        drive_items = []
-    return local_items + [d for d in drive_items if d["name"].strip().upper() not in seen]
+    """Compatibilidad: lee la carpeta RENDER (local + Google Drive 1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX)."""
+    return cargar_muebles_v7("RENDER", refresh_tick)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -111,45 +227,54 @@ def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
     return data, names
 
 
-def _resolve_mueble_render_selector(ck: int) -> Tuple[List[bytes], List[str]]:
+def _resolve_mueble_selector(ck: int, folder_key: str = "ALL") -> Tuple[List[bytes], List[str]]:
     tick = int(st.session_state.get("v7_render_tick", 0))
-    catalog_items = cargar_muebles_render_v7(tick)
-    first_opt = f"🛋️ RENDER ({len(catalog_items)})..."
-    refresh_opt = "🔄 Actualizar carpeta RENDER"
-    options = [first_opt] + [item["name"] for item in catalog_items] + [refresh_opt]
+    catalog_items = cargar_muebles_v7(folder_key, tick)
+    show_source = folder_key == "ALL"
+    first_opt = f"🛋️ Mueble ({len(catalog_items)})..."
 
-    sel_name = st.selectbox(
-        "Mueble RENDER",
-        options,
-        index=0,
-        key=f"v7_sb_mueble_{ck}",
-        label_visibility="collapsed",
-    )
-    if sel_name == refresh_opt:
-        sheets_service._drive_folder_tree_cache.clear()
-        st.session_state["v7_render_tick"] = tick + 1
-        st.session_state[f"v7_sb_mueble_{ck}"] = first_opt
-        st.rerun()
+    display_map: Dict[str, Dict[str, str]] = {}
+    options: List[str] = [first_opt]
+    for item in catalog_items:
+        src = item.get("source", "")
+        base_lbl = f"{item['name']} · [{src}]" if (show_source and src) else item["name"]
+        lbl = base_lbl
+        suffix = 2
+        while lbl in display_map:
+            lbl = f"{base_lbl} ({suffix})"
+            suffix += 1
+        display_map[lbl] = item
+        options.append(lbl)
 
-    up_mueble = st.file_uploader(
-        "Subir mueble",
-        type=IMG_TYPES,
-        accept_multiple_files=True,
-        key=f"v7_mueble_{ck}",
-        label_visibility="collapsed",
-    )
+    c_sel, c_up = st.columns([2.15, 0.95], gap="small", vertical_alignment="center")
+    with c_sel:
+        sel_name = st.selectbox(
+            "Mueble",
+            options,
+            index=0,
+            key=f"v7_sb_mueble_{ck}",
+            label_visibility="collapsed",
+        )
+    with c_up:
+        up_mueble = st.file_uploader(
+            "Subir mueble",
+            type=IMG_TYPES,
+            accept_multiple_files=True,
+            key=f"v7_mueble_{ck}",
+            label_visibility="collapsed",
+        )
+
     if up_mueble:
         return _read_files(up_mueble)
 
-    if sel_name and sel_name not in (first_opt, refresh_opt):
-        match = next((x for x in catalog_items if x["name"].strip().upper() == sel_name.strip().upper()), None)
-        if match:
-            if match.get("local_path") and os.path.exists(match["local_path"]):
-                return [Path(match["local_path"]).read_bytes()], [match.get("filename") or f"{sel_name}.jpg"]
-            if match.get("id"):
-                raw_b = load_drive_file_cached(match["id"])
-                if raw_b:
-                    return [raw_b], [match.get("filename") or f"{sel_name}.jpg"]
+    if sel_name and sel_name in display_map:
+        match = display_map[sel_name]
+        if match.get("local_path") and os.path.exists(match["local_path"]):
+            return [Path(match["local_path"]).read_bytes()], [match.get("filename") or f"{match['name']}.jpg"]
+        if match.get("id"):
+            raw_b = load_drive_file_cached(match["id"])
+            if raw_b:
+                return [raw_b], [match.get("filename") or f"{match['name']}.jpg"]
     return [], []
 
 
@@ -161,19 +286,23 @@ def _resolve_material_selector(
     is_wood = kind == "wood"
     lbl = "🪵 Madera" if is_wood else "🧵 Tela"
     options = [f"{lbl} ({len(catalog_items)})..."] + [item["name"] for item in catalog_items]
-    sel_name = st.selectbox(
-        lbl,
-        options,
-        index=0,
-        key=f"v7_sb_{kind}_{ck}",
-        label_visibility="collapsed",
-    )
-    up_file = st.file_uploader(
-        lbl,
-        type=IMG_TYPES,
-        key=f"v7_up_{kind}_{ck}",
-        label_visibility="collapsed",
-    )
+
+    c_sel, c_up = st.columns([2.15, 0.95], gap="small", vertical_alignment="center")
+    with c_sel:
+        sel_name = st.selectbox(
+            lbl,
+            options,
+            index=0,
+            key=f"v7_sb_{kind}_{ck}",
+            label_visibility="collapsed",
+        )
+    with c_up:
+        up_file = st.file_uploader(
+            lbl,
+            type=IMG_TYPES,
+            key=f"v7_up_{kind}_{ck}",
+            label_visibility="collapsed",
+        )
 
     if up_file:
         return up_file.getvalue(), getattr(up_file, "name", lbl)
@@ -298,16 +427,20 @@ def render_prompt_studio_v7() -> None:
 div[data-testid="stPopover"] > div > button {
     font-size: 11px !important;
     font-weight: 600 !important;
-    min-height: 28px !important;
-    height: 28px !important;
-    padding: 1px 6px !important;
-    border-radius: 5px !important;
+    min-height: 30px !important;
+    height: 30px !important;
+    padding: 2px 8px !important;
+    border-radius: 6px !important;
     white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    box-sizing: border-box !important;
+    max-width: 100% !important;
 }
 div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div {
-    min-height: 28px !important;
-    height: 28px !important;
+    min-height: 30px !important;
+    height: 30px !important;
     font-size: 11px !important;
     padding-top: 0px !important;
     padding-bottom: 0px !important;
@@ -318,8 +451,10 @@ textarea {
     font-size: 11px !important;
 }
 section[data-testid="stFileUploaderDropzone"] {
-    padding: 2px 6px !important;
-    min-height: 28px !important;
+    padding: 0px !important;
+    min-height: 30px !important;
+    border: none !important;
+    background: transparent !important;
 }
 section[data-testid="stFileUploaderDropzone"] svg,
 section[data-testid="stFileUploaderDropzone"] small,
@@ -328,17 +463,26 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
     display: none !important;
 }
 section[data-testid="stFileUploaderDropzone"] button {
-    font-size: 10.5px !important;
-    min-height: 24px !important;
-    height: 24px !important;
-    padding: 0px 8px !important;
+    font-size: 11px !important;
+    min-height: 30px !important;
+    height: 30px !important;
+    padding: 2px 8px !important;
     width: 100% !important;
+    margin: 0px !important;
+    border-radius: 6px !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+div[data-testid="stHorizontalBlock"] {
+    gap: 0.45rem !important;
 }
 div[data-testid="stVerticalBlock"] > div {
-    gap: 0.25rem !important;
+    gap: 0.30rem !important;
 }
 div[data-testid="stVerticalBlockBorderWrapper"] > div {
-    padding: 6px 8px !important;
+    padding: 8px 10px !important;
 }
 button[data-baseweb="tab"] {
     padding: 2px 8px !important;
@@ -349,10 +493,10 @@ button[data-baseweb="tab"] {
     .stButton > button,
     .stDownloadButton > button {
         font-size: 10.5px !important;
-        padding: 1px 4px !important;
+        padding: 2px 6px !important;
     }
     div[data-testid="stVerticalBlockBorderWrapper"] > div {
-        padding: 5px 6px !important;
+        padding: 6px 6px !important;
     }
 }
 </style>
@@ -420,7 +564,7 @@ button[data-baseweb="tab"] {
             medidas_final = sku["medidas"]
 
     # =====================================================================
-    # ÁREA PRINCIPAL: INSUMOS (CARPETA RENDER) | PROMPTS
+    # ÁREA PRINCIPAL: INSUMOS (RENDER · SUBIR · COTIZACIÓN) | PROMPTS
     # =====================================================================
     m_bytes: List[bytes] = []
     m_names: List[str] = []
@@ -430,27 +574,24 @@ button[data-baseweb="tab"] {
     fabric_bytes: Optional[bytes] = None
     fabric_name: str = ""
 
-    col_work, col_out = st.columns([1.02, 1.48], gap="small")
+    col_work, col_out = st.columns([1.18, 1.32], gap="small")
 
     with col_work:
         with st.container(border=True):
             if mode == "vistas_tela":
-                u1, u2 = st.columns(2)
-                with u1:
-                    st.caption("🖼️ Vistas")
-                    up_views = st.file_uploader(
-                        "Vistas",
-                        type=IMG_TYPES,
-                        accept_multiple_files=True,
-                        key=f"v7_batch_views_{ck}",
-                        label_visibility="collapsed",
-                    )
-                    vb, vn = _read_files(up_views)
-                    batch_views_files = list(zip(vn, vb))
-                with u2:
-                    fabric_bytes, fabric_name = _resolve_material_selector("fabric", ck, cargar_telas_v7())
+                st.caption("🖼️ Vistas")
+                up_views = st.file_uploader(
+                    "Vistas",
+                    type=IMG_TYPES,
+                    accept_multiple_files=True,
+                    key=f"v7_batch_views_{ck}",
+                    label_visibility="collapsed",
+                )
+                vb, vn = _read_files(up_views)
+                batch_views_files = list(zip(vn, vb))
+                fabric_bytes, fabric_name = _resolve_material_selector("fabric", ck, cargar_telas_v7())
             elif mode == "clonar_color":
-                u1, u2 = st.columns(2)
+                u1, u2 = st.columns(2, gap="small")
                 with u1:
                     st.caption("🎨 Color base")
                     up_ref_color = st.file_uploader(
@@ -473,15 +614,36 @@ button[data-baseweb="tab"] {
                     vb, vn = _read_files(up_views)
                     batch_views_files = list(zip(vn, vb))
             else:
-                u_m, u_f, u_w = st.columns(3)
-                with u_m:
-                    m_bytes, m_names = _resolve_mueble_render_selector(ck)
-                with u_f:
-                    if mode != "material" or material_mode in ("fabric_only", "dual"):
-                        fabric_bytes, fabric_name = _resolve_material_selector("fabric", ck, cargar_telas_v7())
-                with u_w:
-                    if mode != "material" or material_mode in ("wood_only", "dual"):
-                        wood_bytes, wood_name = _resolve_material_selector("wood", ck, cargar_maderas_v7())
+                folder_labels = list(FURNITURE_FOLDER_CHOICES.keys())
+                if st.session_state.get("v7_keep_folder") not in folder_labels:
+                    st.session_state["v7_keep_folder"] = folder_labels[0]
+
+                c_dir, c_ref = st.columns([4.2, 0.8], gap="small", vertical_alignment="center")
+                with c_dir:
+                    folder_label = st.selectbox(
+                        "Carpeta de fotos",
+                        folder_labels,
+                        key="v7_keep_folder",
+                        label_visibility="collapsed",
+                    )
+                    folder_key = FURNITURE_FOLDER_CHOICES[folder_label]
+                with c_ref:
+                    if st.button(
+                        "🔄",
+                        use_container_width=True,
+                        key=f"v7_btn_refresh_{ck}",
+                        help="Actualizar fotos de RENDER, SUBIR y Cotización",
+                    ):
+                        sheets_service._drive_folder_tree_cache.clear()
+                        sheets_service._resolved_folder_ids.clear()
+                        st.session_state["v7_render_tick"] = int(st.session_state.get("v7_render_tick", 0)) + 1
+                        st.rerun()
+
+                m_bytes, m_names = _resolve_mueble_selector(ck, folder_key)
+                if mode != "material" or material_mode in ("fabric_only", "dual"):
+                    fabric_bytes, fabric_name = _resolve_material_selector("fabric", ck, cargar_telas_v7())
+                if mode != "material" or material_mode in ("wood_only", "dual"):
+                    wood_bytes, wood_name = _resolve_material_selector("wood", ck, cargar_maderas_v7())
 
             notas = st.text_input(
                 "Notas",
@@ -492,7 +654,7 @@ button[data-baseweb="tab"] {
 
             # 3 BOTONES CON SENTIDO CLARO:
             # 1) Generar el modo elegido arriba | 2) 3/4 Derecha sin sombra (2054) | 3) Borrar (sin mover el modo)
-            b_go, b_34, b_clr = st.columns(3)
+            b_go, b_34, b_clr = st.columns([1.15, 1.25, 0.85], gap="small")
             with b_go:
                 go = st.button(
                     f"🚀 {mode_label}",
@@ -672,13 +834,13 @@ button[data-baseweb="tab"] {
         with st.container(border=True):
             res = st.session_state.get("v7_result")
             if not res:
-                st.caption(f"👈 Elige mueble en **🛋️ RENDER** + **🧵 Tela** y pulsa **🚀 {mode_label}** o **↘️ 3/4 Derecha**.")
+                st.caption(f"👈 Elige mueble (**RENDER / SUBIR / Cotización**) + **🧵 Tela** y pulsa **🚀 {mode_label}** o **↘️ 3/4 Derecha**.")
                 return
 
             gen_id = int(res.get("gen_id", 0))
             mueble_slug = res.get("mueble_name", "mueble")
 
-            h_name, h_2054, h_zip = st.columns([1.6, 0.9, 0.8], vertical_alignment="center")
+            h_name, h_2054, h_zip = st.columns([1.45, 0.95, 0.80], gap="small", vertical_alignment="center")
             with h_name:
                 st.markdown(f"**{mueble_slug}**")
             with h_2054:

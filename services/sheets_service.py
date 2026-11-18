@@ -1,8 +1,9 @@
-﻿import os
+import os
 import re
 import json
 import time
 import threading
+import unicodedata
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import io
@@ -62,6 +63,7 @@ class SheetsService:
         self._fn_catalogs_by_type: Optional[Dict[str, Dict[str, str]]] = None
         self._drive_link_cache: Dict[str, str] = {}
         self._drive_folder_tree_cache: Dict[str, tuple] = {}
+        self._resolved_folder_ids: Dict[str, str] = {}
         self._sheet_name_datos_general: Optional[str] = None
         self._sheet_name_fotos_norm: Optional[str] = None
         self._sku_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
@@ -158,6 +160,7 @@ class SheetsService:
         self._fn_catalogs_by_type = None
         self._drive_link_cache.clear()
         self._drive_folder_tree_cache.clear()
+        self._resolved_folder_ids.clear()
         self._sheet_name_datos_general = None
         self._sheet_name_fotos_norm = None
         self._sku_catalog_cache = None
@@ -614,6 +617,91 @@ class SheetsService:
         except Exception as e:
             print(f"[SheetsService] Error obteniendo fotos recientes de Drive: {e}")
             return []
+
+    @staticmethod
+    def _norm_drive_name(name: str) -> str:
+        raw = unicodedata.normalize("NFKD", str(name or "").strip())
+        stripped = "".join(ch for ch in raw if not unicodedata.combining(ch))
+        return re.sub(r"\s+", " ", stripped).strip().lower()
+
+    def find_drive_folder_by_path(
+        self,
+        path_levels: List[tuple],
+        fallback_id: str = "",
+    ) -> str:
+        """Resuelve dinámicamente el folderId de Drive recorriendo niveles con tolerancia a acentos/alias."""
+        if not path_levels:
+            return fallback_id
+        cache_key = "|".join(",".join(lvl) for lvl in path_levels)
+        if cache_key in self._resolved_folder_ids:
+            return self._resolved_folder_ids[cache_key] or fallback_id
+
+        self.ensure_connected()
+        if not self.drive_service:
+            return fallback_id
+
+        folder_mime = "application/vnd.google-apps.folder"
+        try:
+            root_aliases = [self._norm_drive_name(a) for a in path_levels[0] if a]
+            first_term = str(path_levels[0][0]).replace("\\", "\\\\").replace("'", "\\'")
+            res = self.drive_service.files().list(
+                q=f"mimeType='{folder_mime}' and name contains '{first_term}' and trashed=false",
+                fields="files(id,name)",
+                pageSize=50,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            ).execute()
+            current_ids = [
+                f["id"]
+                for f in res.get("files", [])
+                if self._norm_drive_name(f.get("name", "")) in root_aliases
+            ]
+            if not current_ids:
+                current_ids = [f["id"] for f in res.get("files", []) if f.get("id")]
+
+            for level_aliases in path_levels[1:]:
+                if not current_ids:
+                    break
+                norm_aliases = [self._norm_drive_name(a) for a in level_aliases if a]
+                parent_clause = " or ".join(f"'{pid}' in parents" for pid in current_ids[:15])
+                child_res = self.drive_service.files().list(
+                    q=f"({parent_clause}) and mimeType='{folder_mime}' and trashed=false",
+                    fields="files(id,name)",
+                    pageSize=200,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute()
+                children = child_res.get("files", [])
+                exact_ids = [
+                    f["id"]
+                    for f in children
+                    if self._norm_drive_name(f.get("name", "")) in norm_aliases
+                ]
+                if not exact_ids:
+                    exact_ids = [
+                        f["id"]
+                        for f in children
+                        if any(
+                            alias and (
+                                alias in self._norm_drive_name(f.get("name", ""))
+                                or self._norm_drive_name(f.get("name", "")) in alias
+                            )
+                            for alias in norm_aliases
+                        )
+                    ]
+                current_ids = exact_ids
+
+            resolved = current_ids[0] if current_ids else ""
+            if resolved:
+                self._resolved_folder_ids[cache_key] = resolved
+                return resolved
+        except Exception as e:
+            print(f"[SheetsService] Error resolviendo ruta de carpeta Drive ({cache_key}): {e}")
+
+        if fallback_id:
+            self._resolved_folder_ids[cache_key] = fallback_id
+            return fallback_id
+        return ""
 
     def get_drive_folder_files(
         self,
