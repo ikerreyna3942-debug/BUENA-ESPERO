@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import sys
 from pathlib import Path
@@ -5,6 +6,20 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
+
+# Cargar .env local (ignorado en Git) con prioridad sobre variables antiguas del sistema
+_env_file = BASE_DIR / ".env"
+if _env_file.exists():
+    try:
+        for _line in _env_file.read_text(encoding="utf-8").splitlines():
+            _s = _line.strip()
+            if _s and not _s.startswith("#") and "=" in _s:
+                _k, _v = _s.split("=", 1)
+                _val = _v.strip().strip('"').strip("'")
+                if _k.strip() and _val:
+                    os.environ[_k.strip()] = _val
+    except Exception:
+        pass
 
 try:
     st.set_page_config(
