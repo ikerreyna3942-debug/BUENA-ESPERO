@@ -551,6 +551,58 @@ def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]]) -> None:
         )
 
 
+@st.cache_data(ttl=3600, max_entries=256, show_spinner=False)
+def _load_drive_thumb_cached(file_id: str, thumbnail_link: str = "") -> Optional[bytes]:
+    if not file_id:
+        return None
+    return sheets_service.get_drive_thumbnail_bytes(file_id, thumbnail_link)
+
+
+def _get_search_preview_src(
+    item: Dict[str, str],
+    max_dim: int = 320,
+    allow_network: bool = True,
+) -> str:
+    """Devuelve un data-URI base64 (o thumbnailLink directo) para visualizar una foto del catálogo al buscarla."""
+    if not item:
+        return ""
+    loc_path = item.get("local_path", "")
+    if loc_path and os.path.exists(loc_path):
+        try:
+            raw_b = Path(loc_path).read_bytes()
+            t_bytes = make_thumbnail_bytes(raw_b, max_dim=max_dim)
+            if t_bytes:
+                return f"data:image/jpeg;base64,{base64.b64encode(t_bytes).decode('ascii')}"
+        except Exception:
+            pass
+
+    f_id = item.get("id", "")
+    t_link = (item.get("thumbnailLink") or "").strip()
+    if f_id:
+        mem_bytes = (
+            sheets_service._drive_file_bytes_cache.get(f"thumb:{f_id}")
+            or sheets_service._drive_file_bytes_cache.get(f_id)
+        )
+        if mem_bytes:
+            t_bytes = make_thumbnail_bytes(mem_bytes, max_dim=max_dim)
+            if t_bytes:
+                return f"data:image/jpeg;base64,{base64.b64encode(t_bytes).decode('ascii')}"
+        if allow_network:
+            net_bytes = _load_drive_thumb_cached(f_id, t_link)
+            if net_bytes:
+                t_bytes = make_thumbnail_bytes(net_bytes, max_dim=max_dim)
+                if t_bytes:
+                    return f"data:image/jpeg;base64,{base64.b64encode(t_bytes).decode('ascii')}"
+        elif t_link:
+            return t_link
+    return ""
+
+
+def _preview_catalog_photo_cb(ck: int, item: Dict[str, str]) -> None:
+    """Callback del botón 👁️ para visualizar en grande una foto en el buscador."""
+    st.session_state[f"v7_preview_item_{ck}"] = dict(item)
+
+
 @st.cache_data(ttl=600, max_entries=64, show_spinner=False)
 def _search_drive_live_cached(query_str: str) -> List[Dict[str, str]]:
     try:
@@ -572,7 +624,7 @@ def _render_floating_photo_menu(
     all_telas: List[Dict[str, str]],
     all_maderas: List[Dict[str, str]],
 ) -> None:
-    """Menú flotante (popover) con buscador de fotos por nombre y estado de fotos cargadas."""
+    """Menú flotante (popover) con buscador de fotos por nombre, visualizador de foto y estado de fotos cargadas."""
     n_loaded = len(loaded_entries)
     total_cat = len(all_muebles) + len(all_telas) + len(all_maderas)
     if n_loaded > 0:
@@ -715,15 +767,95 @@ def _render_floating_photo_menu(
                     "source": "Drive",
                     "kind": "mueble",
                     "badge": "☁️ Drive",
+                    "thumbnailLink": lh.get("thumbnailLink", ""),
                 })
+
+        # 3. VISUALIZADOR DE FOTO BUSCADA (automático al escribir nombre o al pulsar 👁️)
+        explicit_prev = st.session_state.get(f"v7_preview_item_{ck}")
+        preview_target: Optional[Dict[str, str]] = None
+        if q_text.strip() and matches:
+            if isinstance(explicit_prev, dict) and any(
+                x.get("name") == explicit_prev.get("name") and x.get("source") == explicit_prev.get("source")
+                for x in matches
+            ):
+                preview_target = explicit_prev
+            else:
+                preview_target = matches[0]
+        elif isinstance(explicit_prev, dict) and explicit_prev.get("name"):
+            preview_target = explicit_prev
+
+        if preview_target:
+            prev_src = _get_search_preview_src(preview_target, max_dim=360, allow_network=True)
+            p_name = preview_target.get("name", "Foto")
+            p_badge = preview_target.get("badge", "📁 Foto")
+            p_kind = preview_target.get("kind", "mueble")
+            p_fname = preview_target.get("filename") or f"{p_name}.jpg"
+            p_is_loaded = (
+                p_name.strip().upper() in active_names_upper
+                or p_fname.strip().upper() in active_names_upper
+            )
+            safe_pname = p_name[:34].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            safe_pbadge = p_badge.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            safe_pfname = p_fname[:36].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            img_box = (
+                f'<img class="selected-photo-thumb" src="{prev_src}" '
+                f'style="width:132px;height:132px;object-fit:cover;border-radius:8px;border:1px solid #38BDF8;'
+                f'background:#020617;flex-shrink:0;transition:transform 0.18s ease;" />'
+                if prev_src
+                else (
+                    '<div style="width:132px;height:132px;border-radius:8px;border:1px dashed #334155;'
+                    'background:#0F172A;display:flex;align-items:center;justify-content:center;'
+                    'font-size:10px;color:#64748B;flex-shrink:0;">🖼️ Sin vista previa</div>'
+                )
+            )
+            pv_col_img, pv_col_act = st.columns([2.25, 1.05], gap="small", vertical_alignment="center")
+            with pv_col_img:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;background:#0F172A;border:1px solid #0284C7;'
+                    f'border-radius:9px;padding:6px;margin:2px 0;">'
+                    f'{img_box}'
+                    f'<div style="display:flex;flex-direction:column;gap:3px;overflow:hidden;line-height:1.25;">'
+                    f'<span style="font-size:10px;color:#38BDF8;font-weight:700;">👁️ Vista previa · {safe_pbadge}</span>'
+                    f'<span style="font-size:12px;color:#F8FAFC;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_pname}</span>'
+                    f'<span style="font-size:9.5px;color:#94A3B8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_pfname}</span>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+            with pv_col_act:
+                st.button(
+                    "✅ Cargada" if p_is_loaded else "➕ Cargar foto",
+                    key=f"v7_pick_prev_{p_kind}_{ck}",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_pick_catalog_photo_cb,
+                    args=(ck, p_kind, preview_target),
+                )
+
+        # Pre-cargar miniaturas en paralelo de los primeros 6 resultados cuando el usuario escribe una búsqueda
+        if q_text.strip() and matches:
+            top_to_warm = [
+                m for m in matches[:6]
+                if m.get("id")
+                and f"thumb:{m['id']}" not in sheets_service._drive_file_bytes_cache
+                and m["id"] not in sheets_service._drive_file_bytes_cache
+            ]
+            if top_to_warm:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(top_to_warm))) as ex:
+                    for _ in ex.map(
+                        lambda m: sheets_service.get_drive_thumbnail_bytes(
+                            m["id"], m.get("thumbnailLink", "")
+                        ),
+                        top_to_warm,
+                    ):
+                        pass
 
         st.caption(
             f"🔎 {len(matches)} resultado{'s' if len(matches) != 1 else ''}"
-            + (f" para «{q_text.strip()}»" if q_text.strip() else " disponibles en catálogo")
+            + (f" para «{q_text.strip()}»" if q_text.strip() else " disponibles en catálogo (pulsa 👁️ para visualizar)")
         )
 
         max_rows = 35 if q_text.strip() else 24
-        with st.container(height=210, border=True):
+        with st.container(height=225, border=True):
             if not matches:
                 st.caption("No se encontraron fotos con ese nombre.")
             else:
@@ -735,15 +867,37 @@ def _render_floating_photo_menu(
                         it_name.strip().upper() in active_names_upper
                         or (it.get("filename", "").strip().upper() in active_names_upper)
                     )
-                    r_info, r_btn = st.columns([2.7, 1.0], gap="small", vertical_alignment="center")
+                    allow_net_row = bool(q_text.strip() and idx_m < 6)
+                    row_thumb_src = _get_search_preview_src(it, max_dim=140, allow_network=allow_net_row)
+                    thumb_html = (
+                        f'<img class="selected-photo-thumb" src="{row_thumb_src}" '
+                        f'style="width:44px;height:44px;object-fit:cover;border-radius:5px;border:1px solid #334155;'
+                        f'flex-shrink:0;transition:transform 0.18s ease;" />'
+                        if row_thumb_src
+                        else ""
+                    )
+                    safe_it_name = it_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                    safe_it_badge = it_badge.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                    r_info, r_eye, r_btn = st.columns([2.35, 0.45, 0.95], gap="small", vertical_alignment="center")
                     with r_info:
                         status_icon = "✅ " if is_loaded else ""
                         st.markdown(
-                            f'<div style="font-size:10.5px;line-height:1.25;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
-                            f'<span style="color:#38BDF8;font-weight:700;">{it_badge}</span> · '
+                            f'<div style="display:flex;align-items:center;gap:7px;padding:1px 0;overflow:hidden;">'
+                            f'{thumb_html}'
+                            f'<div style="font-size:10.5px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+                            f'<span style="color:#38BDF8;font-weight:700;">{safe_it_badge}</span> · '
                             f'<span style="color:{"#4ADE80" if is_loaded else "#F8FAFC"};font-weight:{"700" if is_loaded else "500"};">'
-                            f'{status_icon}{it_name}</span></div>',
+                            f'{status_icon}{safe_it_name}</span></div></div>',
                             unsafe_allow_html=True,
+                        )
+                    with r_eye:
+                        st.button(
+                            "👁️",
+                            key=f"v7_eye_{it_kind}_{idx_m}_{ck}",
+                            help=f"Visualizar {it_name}",
+                            use_container_width=True,
+                            on_click=_preview_catalog_photo_cb,
+                            args=(ck, it),
                         )
                     with r_btn:
                         st.button(
@@ -767,6 +921,7 @@ def _clear_v7_form(ck: int) -> None:
         "v7_clone_",
         "v7_ext2054_",
         "v7_picked_",
+        "v7_preview_item_",
         "v7_apply_pick_",
         "v7_ign_up_",
         "v7_cur_up_sig_",

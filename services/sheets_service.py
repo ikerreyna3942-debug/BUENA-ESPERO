@@ -4,6 +4,7 @@ import json
 import time
 import threading
 import unicodedata
+import urllib.request
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import io
@@ -434,6 +435,47 @@ class SheetsService:
                 raise RuntimeError(f"Falló la descarga autenticada de Drive: {e}") from e
             return None
 
+    def get_drive_thumbnail_bytes(self, drive_id: str, thumbnail_link: str = "") -> Optional[bytes]:
+        """Obtiene una miniatura ligera (~10-20 KB) desde Google Drive para visualización rápida en búsquedas."""
+        if not drive_id:
+            return None
+        thumb_key = f"thumb:{drive_id}"
+        cached = self._drive_file_bytes_cache.get(thumb_key) or self._drive_file_bytes_cache.get(drive_id)
+        if cached:
+            return cached
+
+        t_url = (thumbnail_link or "").strip()
+        if not t_url:
+            self.ensure_connected()
+            if self.drive_service:
+                try:
+                    with self._drive_api_lock:
+                        meta = self.drive_service.files().get(
+                            fileId=drive_id,
+                            fields="thumbnailLink",
+                            supportsAllDrives=True,
+                        ).execute()
+                    t_url = (meta.get("thumbnailLink") or "").strip()
+                except Exception:
+                    t_url = ""
+
+        if t_url:
+            # Pedir tamaño nítido (360px) manteniendo peso ultraligero (~15 KB)
+            hi_url = re.sub(r"=s\d+", "=s360", t_url)
+            try:
+                req = urllib.request.Request(hi_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=3.5) as resp:
+                    t_data = resp.read()
+                if t_data and len(t_data) > 100:
+                    if len(self._drive_file_bytes_cache) >= 256:
+                        self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
+                    self._drive_file_bytes_cache[thumb_key] = t_data
+                    return t_data
+            except Exception:
+                pass
+
+        return self.get_drive_file_bytes(drive_id)
+
     def search_drive_images_live(
         self,
         query_text: str,
@@ -457,7 +499,6 @@ class SheetsService:
             for w in words[:4]
         ]
         clauses = " and ".join(f"name contains '{word}'" for word in escaped_words)
-        folder_mime_type = "application/vnd.google-apps.folder"
         
         try:
             results = []
@@ -465,13 +506,14 @@ class SheetsService:
             
             # 1. Búsqueda directa ultra-rápida (coincidencia de nombre e imágenes)
             query = f"({clauses}) and trashed = false and (mimeType contains 'image/' or mimeType = 'application/vnd.google-apps.shortcut')"
-            response = self.drive_service.files().list(
-                q=query,
-                pageSize=limit,
-                fields="files(id,name,mimeType,webViewLink)",
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-            ).execute()
+            with self._drive_api_lock:
+                response = self.drive_service.files().list(
+                    q=query,
+                    pageSize=limit,
+                    fields="files(id,name,mimeType,webViewLink,thumbnailLink)",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute()
 
             for file in response.get("files", []):
                 file_id = file.get("id")
@@ -482,6 +524,7 @@ class SheetsService:
                     "id": file_id,
                     "name": file.get("name", ""),
                     "link": file.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view",
+                    "thumbnailLink": file.get("thumbnailLink", ""),
                 })
                 if len(results) >= limit:
                     break
@@ -851,7 +894,7 @@ class SheetsService:
                         with self._drive_api_lock:
                             res = self.drive_service.files().list(
                                 q=query,
-                                fields="nextPageToken,files(id,name,mimeType,parents)",
+                                fields="nextPageToken,files(id,name,mimeType,parents,thumbnailLink)",
                                 pageSize=1000,
                                 pageToken=page_token,
                                 supportsAllDrives=True,
@@ -876,6 +919,7 @@ class SheetsService:
                                         next_level.setdefault(f_id, []).append((r_key, name))
                             elif mime_type.startswith("image/") or name.lower().endswith(image_exts):
                                 clean_name = os.path.splitext(name)[0].strip()
+                                t_link = f.get("thumbnailLink", "")
                                 for r_key, sub_label in matched_owners:
                                     collected[r_key].append({
                                         "id": f_id,
@@ -884,6 +928,7 @@ class SheetsService:
                                         "link": f"https://drive.google.com/file/d/{f_id}/view",
                                         "subcarpeta": sub_label,
                                         "mimeType": mime_type,
+                                        "thumbnailLink": t_link,
                                     })
                         page_token = res.get("nextPageToken")
                         if not page_token:

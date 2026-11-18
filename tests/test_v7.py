@@ -187,6 +187,7 @@ from modules.prompt_studio_v7 import (  # noqa: E402
     LOCAL_SUBIR_MUEBLES_DIR,
     _build_zip as _build_zip_v7,
     _candidate_local_dirs,
+    _get_search_preview_src,
     _resolve_furniture_drive_id,
     filter_catalog_photos_by_name,
 )
@@ -219,11 +220,14 @@ _sample_cat = [
 ]
 _hits_ank = filter_catalog_photos_by_name(_sample_cat, "sillon ankara")
 _hits_active = filter_catalog_photos_by_name(_sample_cat, "", active_names_upper={"CREDENZA NÓRDICA"})
+_ss._drive_file_bytes_cache["thumb:test_prev_id"] = _fmt["jpg"]
+_prev_uri = _get_search_preview_src({"id": "test_prev_id", "name": "Sillón Ánkara"}, max_dim=180, allow_network=False)
 check(
-    "buscador de menu flotante filtra por nombre sin acentos y prioriza fotos cargadas",
+    "buscador de menu flotante filtra por nombre sin acentos, prioriza cargadas y genera vista previa visual",
     len(_hits_ank) == 1
     and _hits_ank[0]["name"] == "Sillón Ánkara"
-    and _hits_active[0]["name"] == "Credenza Nórdica",
+    and _hits_active[0]["name"] == "Credenza Nórdica"
+    and _prev_uri.startswith("data:image/jpeg;base64,"),
 )
 check(
     "format_gemini_error detecta API key filtrada (403 leaked)",
