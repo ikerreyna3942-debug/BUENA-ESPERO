@@ -281,17 +281,6 @@ class AIPromptServiceV7:
         last_err = None
         for m in models_to_try:
             try:
-                if hasattr(client, "interactions"):
-                    kwargs: Dict[str, Any] = {"model": m, "input": interaction_inputs, "timeout": 12.0}
-                    if resp_fmt is not None:
-                        kwargs["response_format"] = resp_fmt
-                    inter = client.interactions.create(**kwargs)
-
-                    class _ResWrap:
-                        text = inter.output_text or ""
-
-                    self._preferred_model = m
-                    return _ResWrap()
                 res = client.models.generate_content(model=m, contents=contents, config=config)
                 self._preferred_model = m
                 return res
@@ -2365,76 +2354,68 @@ class AIPromptServiceV7:
         client = self.get_client(key) if key else None
         last_err_msg = ""
 
-        if client and hasattr(client, "interactions") and time.time() >= self._img_quota_exhausted_until:
-            inputs: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
-            inputs.append({
-                "type": "image",
-                "data": self._pil_to_b64_jpeg(self._prepare_image(primary_bytes, max_dim=1024), quality=90),
-                "mime_type": "image/jpeg",
-            })
-            if wood_bytes:
-                inputs.append({
-                    "type": "image",
-                    "data": self._pil_to_b64_jpeg(self._prepare_image(wood_bytes, max_dim=768), quality=90),
-                    "mime_type": "image/jpeg",
-                })
-            if fabric_bytes:
-                inputs.append({
-                    "type": "image",
-                    "data": self._pil_to_b64_jpeg(self._prepare_image(fabric_bytes, max_dim=768), quality=90),
-                    "mime_type": "image/jpeg",
-                })
-            for rb in (ref_bytes or [])[:1]:
-                if rb:
-                    inputs.append({
-                        "type": "image",
-                        "data": self._pil_to_b64_jpeg(self._prepare_image(rb, max_dim=768), quality=88),
-                        "mime_type": "image/jpeg",
-                    })
-            if anchor_bytes:
-                inputs.append({
-                    "type": "image",
-                    "data": self._pil_to_b64_jpeg(self._prepare_image(anchor_bytes, max_dim=1024), quality=90),
-                    "mime_type": "image/jpeg",
-                })
+        if client and time.time() >= self._img_quota_exhausted_until:
+            try:
+                from google.genai import types
 
-            base_chain = ["gemini-nano-banana-2.1", "gemini-3-pro-image"]
-            img_models = [preferred_image_model] + [m for m in base_chain if m != preferred_image_model]
+                contents_img: List[Any] = [
+                    prompt_text,
+                    self._prepare_image(primary_bytes, max_dim=1024),
+                ]
+                if wood_bytes:
+                    contents_img.append(self._prepare_image(wood_bytes, max_dim=768))
+                if fabric_bytes:
+                    contents_img.append(self._prepare_image(fabric_bytes, max_dim=768))
+                for rb in (ref_bytes or [])[:1]:
+                    if rb:
+                        contents_img.append(self._prepare_image(rb, max_dim=768))
+                if anchor_bytes:
+                    contents_img.append(self._prepare_image(anchor_bytes, max_dim=1024))
 
-            for m in img_models:
-                try:
-                    inter = client.interactions.create(
-                        model=m,
-                        input=inputs,
-                        response_format={
-                            "type": "image",
-                            "aspect_ratio": "1:1",
-                            "image_size": "2K",
-                        },
-                        timeout=12.0,
-                    )
-                    out_img = getattr(inter, "output_image", None)
-                    data_b64 = getattr(out_img, "data", None) if out_img is not None else None
-                    if data_b64:
-                        raw_out = base64.b64decode(data_b64)
-                        formatted = self.format_image_2054_white(
-                            raw_out,
-                            target_px=2054,
-                            pure_white_border=pure_white_border,
+                base_chain = ["gemini-nano-banana-2.1", "gemini-3-pro-image"]
+                img_models = [preferred_image_model] + [m for m in base_chain if m != preferred_image_model]
+
+                for m in img_models:
+                    try:
+                        resp = client.models.generate_content(
+                            model=m,
+                            contents=contents_img,
+                            config=types.GenerateContentConfig(
+                                response_modalities=["IMAGE", "TEXT"],
+                            ),
                         )
-                        formatted["model"] = m
-                        formatted["is_fallback"] = False
-                        return formatted, None
-                except Exception as e:
-                    err_up = str(e).upper()
-                    last_err_msg = self.format_gemini_error(e)
-                    print(f"[AIPromptServiceV7] Aviso generación de imagen ({m}): {e}")
-                    if any(tok in err_up for tok in ("429", "RESOURCE_EXHAUSTED", "QUOTA")):
-                        self._img_quota_exhausted_until = time.time() + 180.0
-                        break
-                    if any(tok in err_up for tok in ("LEAKED", "API_KEY_INVALID", "API KEY NOT VALID", "401", "403")):
-                        break
-                    continue
+                        raw_out: Optional[bytes] = None
+                        for cand in getattr(resp, "candidates", None) or []:
+                            content_obj = getattr(cand, "content", None)
+                            for part in getattr(content_obj, "parts", None) or []:
+                                inl = getattr(part, "inline_data", None)
+                                data_val = getattr(inl, "data", None) if inl is not None else None
+                                if data_val:
+                                    raw_out = base64.b64decode(data_val) if isinstance(data_val, str) else bytes(data_val)
+                                    break
+                            if raw_out:
+                                break
+                        if raw_out:
+                            formatted = self.format_image_2054_white(
+                                raw_out,
+                                target_px=2054,
+                                pure_white_border=pure_white_border,
+                            )
+                            formatted["model"] = m
+                            formatted["is_fallback"] = False
+                            return formatted, None
+                    except Exception as e:
+                        err_up = str(e).upper()
+                        last_err_msg = self.format_gemini_error(e)
+                        print(f"[AIPromptServiceV7] Aviso generación de imagen ({m}): {e}")
+                        if any(tok in err_up for tok in ("429", "RESOURCE_EXHAUSTED", "QUOTA")):
+                            self._img_quota_exhausted_until = time.time() + 300.0
+                            break
+                        if any(tok in err_up for tok in ("LEAKED", "API_KEY_INVALID", "API KEY NOT VALID", "401", "403")):
+                            break
+                        continue
+            except Exception as e_outer:
+                last_err_msg = self.format_gemini_error(e_outer)
 
         if allow_flux_fallback:
             try:
@@ -2443,8 +2424,8 @@ class AIPromptServiceV7:
                 visual_prompt = (flux_fallback_prompt or prompt_text).strip()
                 raw_flux = free_image_service.generate_flux_image(
                     visual_prompt,
-                    width=1024,
-                    height=1024,
+                    width=768,
+                    height=768,
                 )
                 formatted = self.format_image_2054_white(
                     raw_flux,

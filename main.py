@@ -55,7 +55,7 @@ def main():
         }
         .block-container {
             max-width: 100% !important;
-            padding: 0.25rem 0.55rem 0.5rem 0.55rem !important;
+            padding: 0.7rem 0.55rem 0.5rem 0.55rem !important;
         }
         .top-nav-links {
             display: flex;
@@ -86,7 +86,7 @@ def main():
         }
         @media (max-width: 640px) {
             .block-container {
-                padding: 0.2rem 0.35rem 0.45rem 0.35rem !important;
+                padding: 1.15rem 0.35rem 0.45rem 0.35rem !important;
             }
             .top-nav-links {
                 justify-content: flex-start !important;
@@ -95,7 +95,7 @@ def main():
                 font-size: 9.5px;
                 padding: 2px 5px;
             }
-            /* En celular: columnas principales apiladas limpiamente, pero controles internos en cuadrícula compacta de 2 por fila */
+            /* En celular: paneles principales a 100% y controles internos compactos de 2 por fila */
             div[data-testid="stHorizontalBlock"] {
                 flex-wrap: wrap !important;
                 gap: 4px !important;
@@ -104,7 +104,8 @@ def main():
                 min-width: 100% !important;
                 flex: 1 1 100% !important;
             }
-            div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+            div[data-testid="stColumn"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+            div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
                 min-width: calc(50% - 4px) !important;
                 flex: 1 1 calc(50% - 4px) !important;
             }

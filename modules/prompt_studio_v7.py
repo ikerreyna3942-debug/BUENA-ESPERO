@@ -140,22 +140,21 @@ def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
 
 
 def _resolve_mueble_selector(ck: int) -> Tuple[List[bytes], List[str]]:
-    folder_labels = list(DRIVE_MUEBLES_FOLDERS.keys())
+    folder_labels = list(DRIVE_MUEBLES_FOLDERS.keys()) + ["🔄 Actualizar Drive"]
     if st.session_state.get("v7_keep_folder") not in folder_labels:
         st.session_state["v7_keep_folder"] = folder_labels[0]
 
-    cf_sel, cf_ref = st.columns([4.2, 1.0], vertical_alignment="center")
-    with cf_sel:
-        folder_label = st.selectbox(
-            "Carpeta Mueble",
-            folder_labels,
-            key="v7_keep_folder",
-            label_visibility="collapsed",
-        )
-    with cf_ref:
-        if st.button("🔄", key="v7_btn_ref_folder", help="Actualizar carpeta Drive", use_container_width=True):
-            sheets_service._drive_folder_tree_cache.clear()
-            st.session_state["v7_folder_tick"] = int(st.session_state.get("v7_folder_tick", 0)) + 1
+    folder_label = st.selectbox(
+        "Carpeta Mueble",
+        folder_labels,
+        key="v7_keep_folder",
+        label_visibility="collapsed",
+    )
+    if folder_label == "🔄 Actualizar Drive":
+        sheets_service._drive_folder_tree_cache.clear()
+        st.session_state["v7_folder_tick"] = int(st.session_state.get("v7_folder_tick", 0)) + 1
+        st.session_state["v7_keep_folder"] = folder_labels[0]
+        st.rerun()
 
     base_fid, is_rec = DRIVE_MUEBLES_FOLDERS[folder_label]
     if base_fid == "__CUSTOM__":
@@ -667,7 +666,7 @@ button[data-baseweb="tab"] {
             b_foto, b_p34, b_go = st.columns(3)
             with b_foto:
                 btn_foto_34 = st.button(
-                    "📸 Foto 3/4 · 2054",
+                    "📸 Foto 3/4",
                     type="primary",
                     use_container_width=True,
                     key=f"v7_btn_foto34_{ck}",
