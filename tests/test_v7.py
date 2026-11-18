@@ -175,14 +175,22 @@ with _Image.open(_io.BytesIO(_fmt_room["png"])) as _out_room:
         _out_room.size == (2054, 2054) and _out_room.getpixel((0, 0))[0] < 255,
     )
 
-# 13. Helpers de URL Drive y diagnóstico claro de API key filtrada (403 leaked)
+# 13. Helpers de URL Drive, carpetas integradas y diagnóstico claro de API key filtrada (403 leaked)
 from services.sheets_service import sheets_service as _ss  # noqa: E402
-from modules.prompt_studio_v7 import _build_zip as _build_zip_v7  # noqa: E402
+from modules.prompt_studio_v7 import DRIVE_MUEBLES_FOLDERS, _build_zip as _build_zip_v7  # noqa: E402
 
 check(
     "extract_drive_id extrae ID limpio de link Drive",
     _ss.extract_drive_id("https://drive.google.com/file/d/1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B/view?usp=sharing")
-    == "1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B",
+    == "1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B"
+    and _ss.extract_drive_id("https://drive.google.com/drive/folders/1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi")
+    == "1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi",
+)
+check(
+    "carpetas del usuario integradas (Mi Carpeta, SUBIR, RENDER)",
+    "📂 Mi Carpeta" in DRIVE_MUEBLES_FOLDERS
+    and "📥 SUBIR" in DRIVE_MUEBLES_FOLDERS
+    and "🖼️ RENDER" in DRIVE_MUEBLES_FOLDERS,
 )
 check(
     "format_gemini_error detecta API key filtrada (403 leaked)",

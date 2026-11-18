@@ -21,18 +21,21 @@ class FreeImageService:
         if not prompt:
             return "modern luxury furniture piece, isolated on pure white background, 8k product photography"
 
-        # Eliminar bloques de sistema y markdown
+        # Eliminar bloques de sistema, referencias de ranuras y markdown
         text = re.sub(r'===.*?===', ' ', prompt)
         text = re.sub(r'\[.*?\]', ' ', text)
         text = re.sub(r'SYSTEM:.*?\n', ' ', text)
-        text = re.sub(r'TASK:.*?\n', ' ', text)
-        text = re.sub(r'Negative Prompt:.*', ' ', text, flags=re.IGNORECASE)
-        text = re.sub(r'--[a-z0-9]+\s+[^\s]+', ' ', text) # eliminar flags como --ar 1:1 --v 6.1
+        text = re.sub(r'TASK:\s*', ' ', text)
+        text = re.sub(r'ATTACHED REFERENCE IMAGES.*?(?=\n\n|\Z)', ' ', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'Image\s+\d+\s*\([^)]*\)\s*:?', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'Image\s+\d+', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'(?:Negative Prompt|Exclude|Avoid):.*', ' ', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'--[a-z0-9]+\s+[^\s]+', ' ', text)
 
         lines = text.split("\n")
         cleaned_phrases = []
         for line in lines:
-            line_str = line.strip()
+            line_str = line.strip().lstrip("-•* ").strip()
             if not line_str or line_str.startswith("#") or line_str.startswith("```"):
                 continue
             cleaned_phrases.append(line_str)
@@ -40,13 +43,13 @@ class FreeImageService:
         full_clean = " ".join(cleaned_phrases)
         full_clean = re.sub(r'\s+', ' ', full_clean).strip()
 
-        # Limitar longitud para evitar URLs excesivas
-        if len(full_clean) > 350:
-            full_clean = full_clean[:350]
+        # Limitar longitud preservando geometría, ángulo y textura de tela/madera
+        if len(full_clean) > 650:
+            full_clean = full_clean[:650]
 
-        # Garantizar palabras clave de calidad comercial y fondo blanco
-        if "white background" not in full_clean.lower():
-            full_clean += ", isolated on solid pure white background #FFFFFF"
+        # Garantizar palabras clave de calidad comercial y fondo blanco sin sombras
+        if "white background" not in full_clean.lower() and "#ffffff" not in full_clean.lower():
+            full_clean += ", isolated on solid pure white background #FFFFFF, zero shadows"
         if "photography" not in full_clean.lower() and "render" not in full_clean.lower():
             full_clean += ", 8k hyper-realistic commercial studio photography"
 

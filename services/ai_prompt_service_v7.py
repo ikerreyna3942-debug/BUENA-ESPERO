@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image, ImageOps
@@ -171,6 +172,8 @@ class AIPromptServiceV7:
         self.default_api_key = self._builtin_key
         self._clients: Dict[str, Any] = {}
         self._preferred_model: Optional[str] = None
+        self._img_quota_exhausted_until: float = 0.0
+        self.last_image_error: Optional[str] = None
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
@@ -506,6 +509,53 @@ class AIPromptServiceV7:
         except Exception as e:
             print(f"[AIPromptServiceV7] Error analyzing furniture: {e}")
             return fallback
+
+    def analyze_all_parallel(
+        self,
+        furniture_bytes: Optional[List[bytes]] = None,
+        wood_bytes: Optional[bytes] = None,
+        wood_name: str = "",
+        fabric_bytes: Optional[bytes] = None,
+        fabric_name: str = "",
+        notas_ia: str = "",
+        skip_furniture: bool = False,
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Ejecuta en paralelo el análisis de visión de mueble, tela y madera (~1.1s total)."""
+        f_ana: Dict[str, Any] = {}
+        w_ana: Optional[Dict[str, Any]] = None
+        t_ana: Optional[Dict[str, Any]] = None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+            fut_f = (
+                ex.submit(
+                    self.analyze_furniture_for_enhancement,
+                    furniture_bytes=furniture_bytes,
+                    wood_bytes=[wood_bytes] if wood_bytes else None,
+                    fabric_bytes=[fabric_bytes] if fabric_bytes else None,
+                    notas_usuario=notas_ia,
+                )
+                if (furniture_bytes and not skip_furniture)
+                else None
+            )
+            fut_w = (
+                ex.submit(self.analyze_material, wood_bytes, material_type="wood", sample_name=wood_name)
+                if wood_bytes
+                else None
+            )
+            fut_t = (
+                ex.submit(self.analyze_material, fabric_bytes, material_type="fabric", sample_name=fabric_name)
+                if fabric_bytes
+                else None
+            )
+
+            if fut_f is not None:
+                f_ana = fut_f.result()
+            if fut_w is not None:
+                w_ana = fut_w.result()
+            if fut_t is not None:
+                t_ana = fut_t.result()
+
+        return f_ana, w_ana, t_ana
 
     # ------------------------------------------------------------------
     # PERFIL, DIMENSIONES Y DETECCIÓN DE SUB-CATEGORÍA
@@ -2299,88 +2349,115 @@ class AIPromptServiceV7:
         pure_white_border: bool = True,
         preferred_image_model: str = "gemini-nano-banana-2.1",
         api_key: Optional[str] = None,
+        flux_fallback_prompt: str = "",
+        allow_flux_fallback: bool = True,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
-        Motor universal de generación directa de fotografías de catálogo en 2054×2054 px
-        usando Gemini Nano Banana (gemini-nano-banana-2.1 / gemini-3-pro-image).
-        Retorna (dict_imagen_2054, mensaje_error_opcional).
+        Motor universal de generación directa de fotografías de catálogo en 2054×2054 px:
+        1) Intenta Gemini Nano Banana multimodal (clonado 1:1 de píxeles de mueble + tela en casco).
+        2) Si la API key está en capa gratuita sin cuota de imagen (429), entra al instante al
+           motor gratuito FLUX alimentado con el análisis visual exacto de Gemini Vision.
         """
-        key = self.get_api_key(api_key)
-        if not key:
-            return None, "No hay GEMINI_API_KEY configurada. Agrégala en '🔑 API Key' arriba."
         if not primary_bytes:
             return None, "Falta la imagen base para generar la fotografía."
-        client = self.get_client(key)
-        if not client or not hasattr(client, "interactions"):
-            return None, "El SDK google-genai actual no soporta interactions.create."
 
-        inputs: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
-        inputs.append({
-            "type": "image",
-            "data": self._pil_to_b64_jpeg(self._prepare_image(primary_bytes, max_dim=1024), quality=90),
-            "mime_type": "image/jpeg",
-        })
-        if wood_bytes:
-            inputs.append({
-                "type": "image",
-                "data": self._pil_to_b64_jpeg(self._prepare_image(wood_bytes, max_dim=768), quality=90),
-                "mime_type": "image/jpeg",
-            })
-        if fabric_bytes:
-            inputs.append({
-                "type": "image",
-                "data": self._pil_to_b64_jpeg(self._prepare_image(fabric_bytes, max_dim=768), quality=90),
-                "mime_type": "image/jpeg",
-            })
-        for rb in (ref_bytes or [])[:1]:
-            if rb:
-                inputs.append({
-                    "type": "image",
-                    "data": self._pil_to_b64_jpeg(self._prepare_image(rb, max_dim=768), quality=88),
-                    "mime_type": "image/jpeg",
-                })
-        if anchor_bytes:
-            inputs.append({
-                "type": "image",
-                "data": self._pil_to_b64_jpeg(self._prepare_image(anchor_bytes, max_dim=1024), quality=90),
-                "mime_type": "image/jpeg",
-            })
-
-        base_chain = ["gemini-nano-banana-2.1", "gemini-3-pro-image", "gemini-3.1-flash-lite-image"]
-        img_models = [preferred_image_model] + [m for m in base_chain if m != preferred_image_model]
+        key = self.get_api_key(api_key)
+        client = self.get_client(key) if key else None
         last_err_msg = ""
 
-        for m in img_models:
-            try:
-                inter = client.interactions.create(
-                    model=m,
-                    input=inputs,
-                    response_format={
+        if client and hasattr(client, "interactions") and time.time() >= self._img_quota_exhausted_until:
+            inputs: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
+            inputs.append({
+                "type": "image",
+                "data": self._pil_to_b64_jpeg(self._prepare_image(primary_bytes, max_dim=1024), quality=90),
+                "mime_type": "image/jpeg",
+            })
+            if wood_bytes:
+                inputs.append({
+                    "type": "image",
+                    "data": self._pil_to_b64_jpeg(self._prepare_image(wood_bytes, max_dim=768), quality=90),
+                    "mime_type": "image/jpeg",
+                })
+            if fabric_bytes:
+                inputs.append({
+                    "type": "image",
+                    "data": self._pil_to_b64_jpeg(self._prepare_image(fabric_bytes, max_dim=768), quality=90),
+                    "mime_type": "image/jpeg",
+                })
+            for rb in (ref_bytes or [])[:1]:
+                if rb:
+                    inputs.append({
                         "type": "image",
-                        "aspect_ratio": "1:1",
-                        "image_size": "2K",
-                    },
-                    timeout=18.0,
-                )
-                out_img = getattr(inter, "output_image", None)
-                data_b64 = getattr(out_img, "data", None) if out_img is not None else None
-                if data_b64:
-                    raw_out = base64.b64decode(data_b64)
-                    formatted = self.format_image_2054_white(
-                        raw_out,
-                        target_px=2054,
-                        pure_white_border=pure_white_border,
-                    )
-                    formatted["model"] = m
-                    return formatted, None
-            except Exception as e:
-                last_err_msg = self.format_gemini_error(e)
-                print(f"[AIPromptServiceV7] Aviso generación de imagen ({m}): {e}")
-                if any(tok in str(e).upper() for tok in ("LEAKED", "API_KEY_INVALID", "API KEY NOT VALID", "401", "403")):
-                    break
-                continue
+                        "data": self._pil_to_b64_jpeg(self._prepare_image(rb, max_dim=768), quality=88),
+                        "mime_type": "image/jpeg",
+                    })
+            if anchor_bytes:
+                inputs.append({
+                    "type": "image",
+                    "data": self._pil_to_b64_jpeg(self._prepare_image(anchor_bytes, max_dim=1024), quality=90),
+                    "mime_type": "image/jpeg",
+                })
 
-        return None, (last_err_msg or "No se recibió imagen de salida desde Gemini API.")
+            base_chain = ["gemini-nano-banana-2.1", "gemini-3-pro-image"]
+            img_models = [preferred_image_model] + [m for m in base_chain if m != preferred_image_model]
+
+            for m in img_models:
+                try:
+                    inter = client.interactions.create(
+                        model=m,
+                        input=inputs,
+                        response_format={
+                            "type": "image",
+                            "aspect_ratio": "1:1",
+                            "image_size": "2K",
+                        },
+                        timeout=12.0,
+                    )
+                    out_img = getattr(inter, "output_image", None)
+                    data_b64 = getattr(out_img, "data", None) if out_img is not None else None
+                    if data_b64:
+                        raw_out = base64.b64decode(data_b64)
+                        formatted = self.format_image_2054_white(
+                            raw_out,
+                            target_px=2054,
+                            pure_white_border=pure_white_border,
+                        )
+                        formatted["model"] = m
+                        formatted["is_fallback"] = False
+                        return formatted, None
+                except Exception as e:
+                    err_up = str(e).upper()
+                    last_err_msg = self.format_gemini_error(e)
+                    print(f"[AIPromptServiceV7] Aviso generación de imagen ({m}): {e}")
+                    if any(tok in err_up for tok in ("429", "RESOURCE_EXHAUSTED", "QUOTA")):
+                        self._img_quota_exhausted_until = time.time() + 180.0
+                        break
+                    if any(tok in err_up for tok in ("LEAKED", "API_KEY_INVALID", "API KEY NOT VALID", "401", "403")):
+                        break
+                    continue
+
+        if allow_flux_fallback:
+            try:
+                from services.free_image_service import free_image_service
+
+                visual_prompt = (flux_fallback_prompt or prompt_text).strip()
+                raw_flux = free_image_service.generate_flux_image(
+                    visual_prompt,
+                    width=1024,
+                    height=1024,
+                )
+                formatted = self.format_image_2054_white(
+                    raw_flux,
+                    target_px=2054,
+                    pure_white_border=pure_white_border,
+                )
+                formatted["model"] = "flux-studio-fallback"
+                formatted["is_fallback"] = True
+                return formatted, None
+            except Exception as e_flux:
+                last_err_msg = f"{last_err_msg} | Respaldo FLUX: {e_flux}".strip(" |")
+
+        return None, (last_err_msg or "No se recibió imagen de salida.")
 
     def generate_image_34_derecha_2054(
         self,

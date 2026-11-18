@@ -15,7 +15,7 @@ from services.ai_prompt_service_v7 import (
     ROOM_PRESETS,
     ai_prompt_service_v7,
 )
-from services.sheets_service import sheets_service
+from services.sheets_service import RENDER_DRIVE_ID, sheets_service
 
 FOLDER_TELAS_DRIVE_ID = "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
 FOLDER_MADERAS_DRIVE_ID = "1Jq2u1A6-xKi1YigUYSIzLauUww_RJ5Lx"
@@ -26,6 +26,21 @@ MATERIAL_MODES = {
     "Solo tela": "fabric_only",
     "Solo madera": "wood_only",
     "Tela + madera": "dual",
+}
+
+DRIVE_MUEBLES_FOLDERS: Dict[str, Tuple[str, bool]] = {
+    "📂 Mi Carpeta": ("1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi", False),
+    "📥 SUBIR": ("11_rR-qhgM02Sfx9zw7uHU5AwXvTpKD4p", True),
+    "🖼️ RENDER": ("1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX", True),
+    "⚡ Recientes": ("__RECENT__", False),
+    "📤 Subida / Buzón": ("1rwRk-bZtb8m4Hso9pCJE1A0_QiS-rqUQ", False),
+    "🏠 Interior": ("1jFGFpOocxQs-Wbq9pMgegB_ard-dUZDr", True),
+    "🌿 Exterior": ("12D1gz_RfQj5Z2biGyIZwFH02PiagOPCD", True),
+    "🏭 Proveedores": ("1GU3Xvy5NofNw0KjWbiz4A4aVy3ozFPKy", True),
+    "🚀 Fotos Odoo": ("1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B", False),
+    "🛋️ Individuales": ("1VlGaVWddTZdt0FLRIOrQAUmoK_LTNXlq", True),
+    "💻 Solo local": ("", False),
+    "🔗 Link carpeta...": ("__CUSTOM__", True),
 }
 
 
@@ -51,7 +66,7 @@ def _scan_local_maderas() -> List[Dict[str, str]]:
     return items
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def cargar_maderas_v7(include_drive: bool = True) -> List[Dict[str, str]]:
     local_maderas = _scan_local_maderas()
     seen = {m["name"].upper() for m in local_maderas}
@@ -65,7 +80,7 @@ def cargar_maderas_v7(include_drive: bool = True) -> List[Dict[str, str]]:
     return local_maderas + [m for m in drive_maderas if m["name"].strip().upper() not in seen]
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def cargar_telas_v7() -> List[Dict[str, str]]:
     try:
         if sheets_service.ensure_connected():
@@ -73,6 +88,43 @@ def cargar_telas_v7() -> List[Dict[str, str]]:
     except Exception:
         pass
     return []
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def cargar_muebles_drive_v7(folder_id: str, recursive: bool, refresh_tick: int = 0) -> List[Dict[str, str]]:
+    _ = refresh_tick
+    if not folder_id:
+        return []
+    try:
+        if not sheets_service.ensure_connected():
+            return []
+        if folder_id == "__RECENT__":
+            return sheets_service.get_recent_drive_images(limit=120)
+        return sheets_service.get_drive_folder_files(folder_id, recursive=recursive, max_depth=3)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_insumos_sku_v7(
+    sku_code: str,
+    foto_mueble_nom: str,
+    foto_tela_nom: str,
+    foto_madera_nom: str,
+) -> Dict[str, Dict[str, Any]]:
+    if not sku_code:
+        return {}
+    if not any([foto_mueble_nom, foto_tela_nom, foto_madera_nom]):
+        return {}
+    try:
+        return sheets_service.fetch_sku_assets_from_drive({
+            "sku": sku_code,
+            "foto_mueble_nom": foto_mueble_nom,
+            "foto_tela_nom": foto_tela_nom,
+            "foto_madera_nom": foto_madera_nom,
+        })
+    except Exception:
+        return {}
 
 
 def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
@@ -85,6 +137,74 @@ def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
         data.append(f.getvalue() if hasattr(f, "getvalue") else f.read())
         names.append(getattr(f, "name", "foto.jpg"))
     return data, names
+
+
+def _resolve_mueble_selector(ck: int) -> Tuple[List[bytes], List[str]]:
+    folder_labels = list(DRIVE_MUEBLES_FOLDERS.keys())
+    if st.session_state.get("v7_keep_folder") not in folder_labels:
+        st.session_state["v7_keep_folder"] = folder_labels[0]
+
+    cf_sel, cf_ref = st.columns([4.2, 1.0], vertical_alignment="center")
+    with cf_sel:
+        folder_label = st.selectbox(
+            "Carpeta Mueble",
+            folder_labels,
+            key="v7_keep_folder",
+            label_visibility="collapsed",
+        )
+    with cf_ref:
+        if st.button("🔄", key="v7_btn_ref_folder", help="Actualizar carpeta Drive", use_container_width=True):
+            sheets_service._drive_folder_tree_cache.clear()
+            st.session_state["v7_folder_tick"] = int(st.session_state.get("v7_folder_tick", 0)) + 1
+
+    base_fid, is_rec = DRIVE_MUEBLES_FOLDERS[folder_label]
+    if base_fid == "__CUSTOM__":
+        raw_link = st.text_input(
+            "Link carpeta",
+            placeholder="🔗 Pega URL o ID de carpeta Drive",
+            key="v7_keep_custom_folder",
+            label_visibility="collapsed",
+        )
+        eff_fid = sheets_service.extract_drive_id(raw_link)
+    else:
+        eff_fid = base_fid
+
+    drive_items: List[Dict[str, str]] = []
+    sel_drive_name = ""
+    if eff_fid:
+        tick = int(st.session_state.get("v7_folder_tick", 0))
+        drive_items = cargar_muebles_drive_v7(eff_fid, is_rec, tick)
+        opts = [f"🛋️ Mueble Drive ({len(drive_items)})..."] + [
+            f"{it['name']} [{it['subcarpeta']}]" if it.get("subcarpeta") and it["subcarpeta"] != "Drive Nube" else it["name"]
+            for it in drive_items
+        ]
+        sel_drive_name = st.selectbox(
+            "Foto Drive",
+            opts,
+            index=0,
+            key=f"v7_sb_mueble_drv_{ck}",
+            label_visibility="collapsed",
+        )
+
+    up_mueble = st.file_uploader(
+        "Subir mueble",
+        type=IMG_TYPES,
+        accept_multiple_files=True,
+        key=f"v7_mueble_{ck}",
+        label_visibility="collapsed",
+    )
+    if up_mueble:
+        return _read_files(up_mueble)
+
+    if eff_fid and drive_items and sel_drive_name and not sel_drive_name.startswith("🛋️ Mueble Drive"):
+        clean_target = sel_drive_name.split(" [", 1)[0].strip().upper()
+        match = next((x for x in drive_items if x["name"].strip().upper() == clean_target), None)
+        if match and match.get("id"):
+            raw_b = load_drive_file_cached(match["id"])
+            if raw_b:
+                return [raw_b], [match.get("filename") or f"{match['name']}.jpg"]
+
+    return [], []
 
 
 def _resolve_material_selector(
@@ -175,13 +295,55 @@ def _build_zip(res: Dict[str, Any], include_images: bool = False) -> bytes:
     return buf.getvalue()
 
 
-def _render_item(item: Dict[str, Any], idx: int, ck: int, gen_id: int, mueble_slug: str) -> None:
+def _render_and_publish_item_photo(
+    item: Dict[str, Any],
+    primary_bytes: bytes,
+    wood_bytes: Optional[bytes],
+    fabric_bytes: Optional[bytes],
+    mueble_slug: str,
+    sku_code: str,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    white_border = item.get("id") != "vista_entorno_cliente"
+    render_2054, err_msg = ai_prompt_service_v7.generate_catalog_photo(
+        prompt_text=item.get("google_ai_studio", ""),
+        primary_bytes=primary_bytes,
+        wood_bytes=wood_bytes,
+        fabric_bytes=fabric_bytes,
+        pure_white_border=white_border,
+        flux_fallback_prompt=item.get("chatgpt_dalle3", "") or item.get("midjourney_v6", ""),
+        allow_flux_fallback=True,
+    )
+    if render_2054:
+        try:
+            render_2054["urls"] = sheets_service.publish_photo_and_get_urls(
+                file_bytes=render_2054["png"],
+                filename=f"{sku_code or mueble_slug}_{item.get('id', 'foto')}_2054x2054.png",
+                dest="render",
+                subfolder=sku_code or "",
+            )
+            sheets_service._drive_folder_tree_cache.clear()
+        except Exception:
+            pass
+        item["generated_photo"] = render_2054
+    return render_2054, err_msg
+
+
+def _render_item(
+    item: Dict[str, Any],
+    idx: int,
+    ck: int,
+    gen_id: int,
+    mueble_slug: str,
+    sku_code: str,
+    res: Dict[str, Any],
+) -> None:
     gen_photo = item.get("generated_photo")
     if isinstance(gen_photo, dict) and gen_photo.get("png"):
-        c_img, c_act = st.columns([1.0, 1.0], vertical_alignment="center")
+        c_img, c_act = st.columns([1.05, 0.95], vertical_alignment="center")
         with c_img:
             st.image(gen_photo["jpg"], use_container_width=True)
         with c_act:
+            st.caption("✅ Foto `2054×2054 px` lista")
             fname_base = f"{mueble_slug}_{item['id']}_2054x2054"
             d_p, d_j = st.columns(2)
             with d_p:
@@ -206,23 +368,52 @@ def _render_item(item: Dict[str, Any], idx: int, ck: int, gen_id: int, mueble_sl
             if u_info.get("direct_cdn_url"):
                 render_copy_button(
                     u_info["direct_cdn_url"],
-                    label="🔗 Copiar URL",
+                    label="🔗 Copiar URL 2054",
                     key=f"v7_url_cp_{idx}_{ck}_{gen_id}",
                 )
+            folder_link = u_info.get("folder_url") or f"https://drive.google.com/drive/folders/{RENDER_DRIVE_ID}"
+            st.markdown(
+                f'<a href="{folder_link}" target="_blank" style="font-size:11px;color:#38BDF8;text-decoration:none;font-weight:600;">🖼️ Abrir carpeta RENDER en Drive ↗</a>',
+                unsafe_allow_html=True,
+            )
+    else:
+        if st.button(
+            f"📸 Generar Foto 2054 ({item.get('short_name', 'Vista')})",
+            type="primary",
+            use_container_width=True,
+            key=f"v7_make_photo_{idx}_{ck}_{gen_id}",
+        ):
+            prim_b = res.get("primary_bytes")
+            if not prim_b:
+                st.error("⚠️ Falta imagen base.")
+            else:
+                with st.spinner("Generando foto 2054×2054 y guardando en RENDER..."):
+                    _, err_p = _render_and_publish_item_photo(
+                        item=item,
+                        primary_bytes=prim_b,
+                        wood_bytes=res.get("wood_bytes"),
+                        fabric_bytes=res.get("fabric_bytes"),
+                        mueble_slug=mueble_slug,
+                        sku_code=sku_code,
+                    )
+                    if err_p and not item.get("generated_photo"):
+                        st.warning(err_p)
+                    else:
+                        st.rerun()
 
     t_ais, t_dal, t_mj = st.tabs(["AI Studio", "ChatGPT", "Midjourney"])
     with t_ais:
         txt = item.get("google_ai_studio", "")
         render_copy_button(txt, label="📋 Copiar", key=f"v7_cp_ais_{idx}_{ck}_{gen_id}")
-        st.text_area("Prompt", txt, height=185, key=f"v7_ais_{idx}_{ck}_{gen_id}", label_visibility="collapsed")
+        st.text_area("Prompt", txt, height=150, key=f"v7_ais_{idx}_{ck}_{gen_id}", label_visibility="collapsed")
     with t_dal:
         txt = item.get("chatgpt_dalle3", "")
         render_copy_button(txt, label="📋 Copiar", key=f"v7_cp_dal_{idx}_{ck}_{gen_id}")
-        st.text_area("Prompt", txt, height=185, key=f"v7_dal_{idx}_{ck}_{gen_id}", label_visibility="collapsed")
+        st.text_area("Prompt", txt, height=150, key=f"v7_dal_{idx}_{ck}_{gen_id}", label_visibility="collapsed")
     with t_mj:
         txt = item.get("midjourney_v6", "")
         render_copy_button(txt, label="📋 Copiar", key=f"v7_cp_mj_{idx}_{ck}_{gen_id}")
-        st.text_area("Prompt", txt, height=120, key=f"v7_mj_{idx}_{ck}_{gen_id}", label_visibility="collapsed")
+        st.text_area("Prompt", txt, height=110, key=f"v7_mj_{idx}_{ck}_{gen_id}", label_visibility="collapsed")
 
 
 def render_prompt_studio_v7() -> None:
@@ -233,37 +424,69 @@ def render_prompt_studio_v7() -> None:
     st.markdown(
         """
 <style>
-/* Interfaz ultra limpia, pequeña y compacta */
-.stButton > button {
-    font-size: 12px !important;
+/* Micro-compacto adaptable a escritorio y celular */
+.stButton > button,
+.stDownloadButton > button,
+div[data-testid="stPopover"] > div > button {
+    font-size: 11px !important;
     font-weight: 600 !important;
-    min-height: 32px !important;
-    height: 32px !important;
-    padding: 2px 8px !important;
-    border-radius: 6px !important;
+    min-height: 28px !important;
+    height: 28px !important;
+    padding: 1px 6px !important;
+    border-radius: 5px !important;
+    white-space: nowrap !important;
 }
 div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div {
-    min-height: 32px !important;
-    font-size: 12px !important;
+    min-height: 28px !important;
+    height: 28px !important;
+    font-size: 11px !important;
+    padding-top: 0px !important;
+    padding-bottom: 0px !important;
 }
 div[data-baseweb="select"] span,
-input {
-    font-size: 12px !important;
+input,
+textarea {
+    font-size: 11px !important;
 }
+/* Uploaders ultra pequeños (solo botón compacto, sin caja gigante ni texto extra) */
 section[data-testid="stFileUploaderDropzone"] {
-    padding: 4px 8px !important;
-    min-height: 42px !important;
+    padding: 2px 6px !important;
+    min-height: 28px !important;
 }
+section[data-testid="stFileUploaderDropzone"] svg,
 section[data-testid="stFileUploaderDropzone"] small,
-section[data-testid="stFileUploaderDropzone"] span[data-testid="stMarkdownContainer"] {
+section[data-testid="stFileUploaderDropzone"] span[data-testid="stMarkdownContainer"],
+div[data-testid="stFileUploaderDropzoneInstructions"] {
     display: none !important;
 }
+section[data-testid="stFileUploaderDropzone"] button {
+    font-size: 10.5px !important;
+    min-height: 24px !important;
+    height: 24px !important;
+    padding: 0px 8px !important;
+    width: 100% !important;
+}
 div[data-testid="stVerticalBlock"] > div {
-    gap: 0.35rem !important;
+    gap: 0.25rem !important;
 }
 div[data-testid="stVerticalBlockBorderWrapper"] > div {
-    padding: 8px 10px !important;
+    padding: 6px 8px !important;
+}
+button[data-baseweb="tab"] {
+    padding: 2px 8px !important;
+    font-size: 11px !important;
+    min-height: 26px !important;
+}
+@media (max-width: 640px) {
+    .stButton > button,
+    .stDownloadButton > button {
+        font-size: 10.5px !important;
+        padding: 1px 4px !important;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        padding: 5px 6px !important;
+    }
 }
 </style>
 """,
@@ -271,7 +494,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
     )
 
     # =====================================================================
-    # ENCABEZADO DE 1 SOLA LÍNEA PEQUEÑA Y LIMPIA
+    # ENCABEZADO DE 1 SOLA LÍNEA PEQUEÑA Y ADAPTABLE A CELULAR
     # =====================================================================
     with st.container(border=True):
         mode_labels = list(MODES.values())
@@ -285,9 +508,9 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
         needs_sub = cur_mode_preview in ("vista_suelta", "material", "entorno")
 
         if needs_sub:
-            h_mode, h_sub, h_sku, h_clr = st.columns([0.95, 0.95, 2.7, 0.55], vertical_alignment="center")
+            h_mode, h_sub, h_sku, h_clr = st.columns([0.9, 0.9, 2.8, 0.52], vertical_alignment="center")
         else:
-            h_mode, h_sku, h_clr = st.columns([1.15, 3.45, 0.55], vertical_alignment="center")
+            h_mode, h_sku, h_clr = st.columns([1.05, 3.55, 0.52], vertical_alignment="center")
             h_sub = None
 
         with h_mode:
@@ -328,10 +551,11 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
             sku_code = (sku.get("sku") or "").strip().upper()
             tipo = sku["tipo_mueble"]
             medidas_final = sku["medidas"]
+            sku_loaded = sku.get("data_loaded") or {}
 
         with h_clr:
             if st.button("🗑️ Borrar", use_container_width=True, key="v7_btn_clear"):
-                # Limpia fotos, SKU, notas y salida SIN mover el modo ni sub-opción activa
+                # Limpia fotos, SKU, notas y salida SIN mover modo, sub-opción ni carpeta activa
                 clear_prefixes = (
                     "v7_result",
                     "v7_render_2054",
@@ -351,7 +575,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                 st.rerun()
 
     # =====================================================================
-    # ÁREA PRINCIPAL LIMPIA (IZQUIERDA: INSUMOS | DERECHA: SALIDA)
+    # ÁREA PRINCIPAL (IZQUIERDA: CARPETAS E INSUMOS | DERECHA: FOTO + PROMPTS)
     # =====================================================================
     m_bytes: List[bytes] = []
     m_names: List[str] = []
@@ -361,7 +585,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
     fabric_bytes: Optional[bytes] = None
     fabric_name: str = ""
 
-    col_work, col_out = st.columns([1.05, 1.45], gap="small")
+    col_work, col_out = st.columns([1.02, 1.48], gap="small")
 
     with col_work:
         with st.container(border=True):
@@ -404,17 +628,9 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                     vb, vn = _read_files(up_views)
                     batch_views_files = list(zip(vn, vb))
             else:
-                u_m, u_f, u_w = st.columns(3)
+                u_m, u_f, u_w = st.columns([1.2, 1.0, 1.0])
                 with u_m:
-                    st.markdown("<div style='font-size:11.5px;font-weight:600;height:32px;display:flex;align-items:center;'>🛋️ Mueble</div>", unsafe_allow_html=True)
-                    up_mueble = st.file_uploader(
-                        "Mueble",
-                        type=IMG_TYPES,
-                        accept_multiple_files=True,
-                        key=f"v7_mueble_{ck}",
-                        label_visibility="collapsed",
-                    )
-                    m_bytes, m_names = _read_files(up_mueble)
+                    m_bytes, m_names = _resolve_mueble_selector(ck)
                 with u_f:
                     if mode != "material" or material_mode in ("fabric_only", "dual"):
                         fabric_bytes, fabric_name = _resolve_material_selector("fabric", ck, cargar_telas_v7())
@@ -422,21 +638,45 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                     if mode != "material" or material_mode in ("wood_only", "dual"):
                         wood_bytes, wood_name = _resolve_material_selector("wood", ck, cargar_maderas_v7())
 
+                # Auto-jalar fotos vinculadas al SKU en Google Drive si no se eligió reemplazo manual
+                if sku_code and sku_loaded and (not m_bytes or not fabric_bytes or not wood_bytes):
+                    sku_assets = cargar_insumos_sku_v7(
+                        sku_code,
+                        str(sku_loaded.get("foto_mueble_nom", "")),
+                        str(sku_loaded.get("foto_tela_nom", "")),
+                        str(sku_loaded.get("foto_madera_nom", "")),
+                    )
+                    if not m_bytes and "mueble" in sku_assets:
+                        m_bytes = [sku_assets["mueble"]["bytes"]]
+                        m_names = [sku_assets["mueble"]["filename"]]
+                    if not fabric_bytes and "tela" in sku_assets and (mode != "material" or material_mode in ("fabric_only", "dual")):
+                        fabric_bytes = sku_assets["tela"]["bytes"]
+                        fabric_name = sku_assets["tela"]["name"]
+                    if not wood_bytes and "madera" in sku_assets and (mode != "material" or material_mode in ("wood_only", "dual")):
+                        wood_bytes = sku_assets["madera"]["bytes"]
+                        wood_name = sku_assets["madera"]["name"]
+
             notas = st.text_input(
                 "Notas",
                 key=f"v7_notas_{ck}",
-                placeholder="📝 Notas (opcional)",
+                placeholder="📝 Notas opcionales",
                 label_visibility="collapsed",
             )
 
-            # Solo 2 botones limpios y muy cortos
-            b_34, b_go = st.columns(2)
-            with b_34:
-                btn_34_2054 = st.button(
-                    "↘️ 3/4 Der · 2054",
+            # 3 botones ultra cortos: Foto 2054 directa | Prompt 3/4 rápido (~1s) | Generar Modo (~1s)
+            b_foto, b_p34, b_go = st.columns(3)
+            with b_foto:
+                btn_foto_34 = st.button(
+                    "📸 Foto 3/4 · 2054",
                     type="primary",
                     use_container_width=True,
-                    key=f"v7_btn_34_2054_{ck}",
+                    key=f"v7_btn_foto34_{ck}",
+                )
+            with b_p34:
+                btn_prompt_34 = st.button(
+                    "↘️ Prompt 3/4",
+                    use_container_width=True,
+                    key=f"v7_btn_p34_{ck}",
                 )
             with b_go:
                 go = st.button(
@@ -447,28 +687,29 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
 
             thumbs: List[Tuple[str, bytes]] = []
             for nm, raw in zip(m_names[:2], m_bytes[:2]):
-                thumbs.append((nm[:14], raw))
+                thumbs.append((nm[:12], raw))
             if fabric_bytes:
-                thumbs.append(((fabric_name or "Tela")[:14], fabric_bytes))
+                thumbs.append(((fabric_name or "Tela")[:12], fabric_bytes))
             if wood_bytes:
-                thumbs.append(((wood_name or "Madera")[:14], wood_bytes))
+                thumbs.append(((wood_name or "Madera")[:12], wood_bytes))
             for vn, vb in batch_views_files[:2]:
-                thumbs.append((vn[:14], vb))
+                thumbs.append((vn[:12], vb))
 
             if thumbs:
                 t_cols = st.columns(len(thumbs))
                 for tc, (lbl, raw_b) in zip(t_cols, thumbs):
                     with tc:
-                        render_preview_image(raw_b, caption=lbl, max_dim=140)
+                        render_preview_image(raw_b, caption=lbl, max_dim=115)
 
-        # ------------------------------------------------------------------ EJECUCIÓN 1: 3/4 DERECHA · 2054×2054
-        if btn_34_2054:
+        # ------------------------------------------------------------------ EJECUCIÓN A: 3/4 DERECHA · 2054×2054 (FOTO O PROMPT RÁPIDO)
+        if btn_foto_34 or btn_prompt_34:
             target_furn_bytes = m_bytes or ([batch_views_files[0][1]] if batch_views_files else [])
             target_furn_names = m_names or ([batch_views_files[0][0]] if batch_views_files else [])
             if not target_furn_bytes:
-                st.error("⚠️ Sube la foto del mueble.")
+                st.error("⚠️ Elige o sube la foto del mueble.")
             else:
-                with st.spinner("Generando 3/4 Derecha · 2054×2054..."):
+                spin_txt = "Generando Foto 2054×2054 y guardando en RENDER..." if btn_foto_34 else "Generando Prompt 3/4..."
+                with st.spinner(spin_txt):
                     try:
                         name = sku_code or (target_furn_names[0].rsplit(".", 1)[0] if target_furn_names else "Mueble")
                         notas_ia = "\n".join(
@@ -478,19 +719,13 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                                 notas.strip(),
                             ] if p
                         )
-                        f_ana = ai_prompt_service_v7.analyze_furniture_for_enhancement(
+                        f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
                             furniture_bytes=target_furn_bytes,
-                            wood_bytes=[wood_bytes] if wood_bytes else None,
-                            fabric_bytes=[fabric_bytes] if fabric_bytes else None,
-                            notas_usuario=notas_ia,
-                        )
-                        w_ana = (
-                            ai_prompt_service_v7.analyze_material(wood_bytes, material_type="wood", sample_name=wood_name)
-                            if wood_bytes else None
-                        )
-                        t_ana = (
-                            ai_prompt_service_v7.analyze_material(fabric_bytes, material_type="fabric", sample_name=fabric_name)
-                            if fabric_bytes else None
+                            wood_bytes=wood_bytes,
+                            wood_name=wood_name,
+                            fabric_bytes=fabric_bytes,
+                            fabric_name=fabric_name,
+                            notas_ia=notas_ia,
                         )
                         res = ai_prompt_service_v7.build_34_derecha_2054_prompts(
                             furniture_name=name,
@@ -504,24 +739,18 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                             fabric_label=fabric_name,
                         )
 
-                        render_2054, _ = ai_prompt_service_v7.generate_catalog_photo(
-                            prompt_text=res["items"][0]["google_ai_studio"],
-                            primary_bytes=target_furn_bytes[0],
-                            wood_bytes=wood_bytes,
-                            fabric_bytes=fabric_bytes,
-                            pure_white_border=True,
-                        )
-                        if render_2054:
-                            try:
-                                render_2054["urls"] = sheets_service.publish_photo_and_get_urls(
-                                    file_bytes=render_2054["png"],
-                                    filename=f"{name}_3_4_derecha_2054x2054.png",
-                                    dest="buzon",
-                                    subfolder=sku_code or name,
-                                )
-                            except Exception:
-                                pass
-                            res["items"][0]["generated_photo"] = render_2054
+                        render_2054 = None
+                        if btn_foto_34:
+                            render_2054, err_img = _render_and_publish_item_photo(
+                                item=res["items"][0],
+                                primary_bytes=target_furn_bytes[0],
+                                wood_bytes=wood_bytes,
+                                fabric_bytes=fabric_bytes,
+                                mueble_slug=name,
+                                sku_code=sku_code,
+                            )
+                            if err_img and not render_2054:
+                                st.warning(err_img)
 
                         ref_imgs = list(zip(target_furn_names, target_furn_bytes))
                         if wood_bytes:
@@ -535,12 +764,15 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                         res["gen_id"] = gen_id
                         res["mueble_name"] = name
                         res["ref_images"] = ref_imgs
+                        res["primary_bytes"] = target_furn_bytes[0]
+                        res["wood_bytes"] = wood_bytes
+                        res["fabric_bytes"] = fabric_bytes
                         res["render_2054"] = render_2054
                         st.session_state["v7_result"] = res
                     except Exception as e:  # noqa: BLE001
                         st.error(f"❌ {e}")
 
-        # ------------------------------------------------------------------ EJECUCIÓN 2: MODO SELECCIONADO
+        # ------------------------------------------------------------------ EJECUCIÓN B: MODO SELECCIONADO (~1 SEG EN PARALELO)
         if go:
             err = None
             if mode == "vistas_tela":
@@ -553,7 +785,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                     err = "⚠️ Sube color base y vistas."
             else:
                 if not m_bytes:
-                    err = "⚠️ Sube la foto del mueble."
+                    err = "⚠️ Elige o sube la foto del mueble."
                 elif mode == "material" and material_mode in ("wood_only", "dual") and not wood_bytes:
                     err = "⚠️ Selecciona madera."
                 elif mode == "material" and material_mode in ("fabric_only", "dual") and not fabric_bytes:
@@ -576,21 +808,15 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                                 notas.strip(),
                             ] if p
                         )
-                        f_ana: Dict[str, Any] = {}
-                        if mode not in ("vistas_tela", "clonar_color"):
-                            f_ana = ai_prompt_service_v7.analyze_furniture_for_enhancement(
-                                furniture_bytes=m_bytes,
-                                wood_bytes=[wood_bytes] if wood_bytes else None,
-                                fabric_bytes=[fabric_bytes] if fabric_bytes else None,
-                                notas_usuario=notas_ia,
-                            )
-                        w_ana = (
-                            ai_prompt_service_v7.analyze_material(wood_bytes, material_type="wood", sample_name=wood_name)
-                            if wood_bytes else None
-                        )
-                        t_ana = (
-                            ai_prompt_service_v7.analyze_material(fabric_bytes, material_type="fabric", sample_name=fabric_name)
-                            if fabric_bytes else None
+                        skip_f = mode in ("vistas_tela", "clonar_color")
+                        f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
+                            furniture_bytes=m_bytes,
+                            wood_bytes=wood_bytes,
+                            wood_name=wood_name,
+                            fabric_bytes=fabric_bytes,
+                            fabric_name=fabric_name,
+                            notas_ia=notas_ia,
+                            skip_furniture=skip_f,
                         )
                         batch_ref = fabric_bytes if mode == "vistas_tela" else (m_bytes[0] if mode == "clonar_color" else None)
 
@@ -622,34 +848,38 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                         for vn, vb in batch_views_files:
                             ref_imgs.append((vn, vb))
 
+                        prim_b = m_bytes[0] if m_bytes else (batch_views_files[0][1] if batch_views_files else None)
                         gen_key = f"v7_gen_id_{ck}"
                         gen_id = int(st.session_state.get(gen_key, 0)) + 1
                         st.session_state[gen_key] = gen_id
                         res["gen_id"] = gen_id
                         res["mueble_name"] = name
                         res["ref_images"] = ref_imgs
+                        res["primary_bytes"] = prim_b
+                        res["wood_bytes"] = wood_bytes
+                        res["fabric_bytes"] = fabric_bytes
                         st.session_state["v7_result"] = res
                     except Exception as e:  # noqa: BLE001
                         st.error(f"❌ {e}")
 
     # =====================================================================
-    # COLUMNA DERECHA: SALIDA LIMPIA SIN TEXTO EXTRA
+    # COLUMNA DERECHA: FOTO 2054 + URL + PROMPTS
     # =====================================================================
     with col_out:
         with st.container(border=True):
             res = st.session_state.get("v7_result")
             if not res:
-                st.caption("👈 Sube foto y pulsa **↘️ 3/4 Der · 2054** o **🚀 Generar**.")
+                st.caption("👈 Elige mueble en **📂 Mi Carpeta** + **🧵 Tela** y pulsa **📸 Foto 3/4 · 2054** o **↘️ Prompt 3/4**.")
                 return
 
             gen_id = int(res.get("gen_id", 0))
             mueble_slug = res.get("mueble_name", "mueble")
 
-            h_name, h_2054, h_zip = st.columns([1.6, 0.9, 0.9], vertical_alignment="center")
+            h_name, h_2054, h_zip = st.columns([1.5, 0.95, 0.85], vertical_alignment="center")
             with h_name:
                 st.markdown(f"**{mueble_slug}**")
             with h_2054:
-                with st.popover("📐 2054px", use_container_width=True):
+                with st.popover("📐 2054 + URL", use_container_width=True):
                     ext_up = st.file_uploader(
                         "2054",
                         type=IMG_TYPES,
@@ -674,13 +904,13 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                             use_container_width=True,
                             key=f"v7_ext_jpg_{ck}_{gen_id}",
                         )
-                        if st.button("🔗 URL Drive", use_container_width=True, key=f"v7_ext_url_{ck}_{gen_id}"):
+                        if st.button("🖼️ Guardar en RENDER + URL", use_container_width=True, key=f"v7_ext_url_{ck}_{gen_id}"):
                             try:
                                 u_res = sheets_service.publish_photo_and_get_urls(
                                     file_bytes=fmt_img["png"],
                                     filename=f"{sku_code or mueble_slug}_2054x2054.png",
-                                    dest="buzon",
-                                    subfolder=sku_code or mueble_slug,
+                                    dest="render",
+                                    subfolder=sku_code or "",
                                 )
                                 st.session_state[f"v7_ext_u_{ck}_{gen_id}"] = u_res["direct_cdn_url"]
                             except Exception as e_u:  # noqa: BLE001
@@ -703,6 +933,6 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
                 tabs = st.tabs([f"{i['icon']} {i['short_name']}" for i in items])
                 for idx, (tab, item) in enumerate(zip(tabs, items)):
                     with tab:
-                        _render_item(item, idx, ck, gen_id, mueble_slug)
+                        _render_item(item, idx, ck, gen_id, mueble_slug, sku_code, res)
             elif items:
-                _render_item(items[0], 0, ck, gen_id, mueble_slug)
+                _render_item(items[0], 0, ck, gen_id, mueble_slug, sku_code, res)

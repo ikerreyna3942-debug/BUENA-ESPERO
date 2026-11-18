@@ -55,37 +55,58 @@ def main():
         }
         .block-container {
             max-width: 100% !important;
-            padding: 0.35rem 0.75rem 0.6rem 0.75rem !important;
+            padding: 0.25rem 0.55rem 0.5rem 0.55rem !important;
         }
         .top-nav-links {
             display: flex;
             flex-wrap: wrap;
             align-items: center;
             justify-content: flex-end;
-            gap: 4px;
+            gap: 3px;
         }
         .top-nav-links a {
             background: #1E293B;
             border: 1px solid #334155;
             color: #CBD5E1 !important;
             text-decoration: none !important;
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 600;
-            padding: 2px 7px;
+            padding: 2px 6px;
             border-radius: 999px;
             white-space: nowrap;
+            line-height: 1.25;
+        }
+        .top-nav-links a.folder-pill {
+            border-color: #0284C7;
+            color: #7DD3FC !important;
         }
         .top-nav-links a:hover {
             border-color: #38BDF8;
-            color: #38BDF8 !important;
+            color: #FFFFFF !important;
         }
         @media (max-width: 640px) {
+            .block-container {
+                padding: 0.2rem 0.35rem 0.45rem 0.35rem !important;
+            }
+            .top-nav-links {
+                justify-content: flex-start !important;
+            }
+            .top-nav-links a {
+                font-size: 9.5px;
+                padding: 2px 5px;
+            }
+            /* En celular: columnas principales apiladas limpiamente, pero controles internos en cuadrícula compacta de 2 por fila */
             div[data-testid="stHorizontalBlock"] {
                 flex-wrap: wrap !important;
+                gap: 4px !important;
             }
             div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
                 min-width: 100% !important;
                 flex: 1 1 100% !important;
+            }
+            div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+                min-width: calc(50% - 4px) !important;
+                flex: 1 1 calc(50% - 4px) !important;
             }
         }
         </style>
@@ -93,10 +114,10 @@ def main():
         unsafe_allow_html=True,
     )
 
-    c_brand, c_ver, c_links = st.columns([0.75, 0.65, 3.6], vertical_alignment="center")
+    c_brand, c_ver, c_links = st.columns([0.55, 0.52, 3.93], vertical_alignment="center")
     with c_brand:
         st.markdown(
-            '<div style="font-size:15px;font-weight:800;color:#38BDF8;white-space:nowrap;">🤖 Estudio</div>',
+            '<div style="font-size:13px;font-weight:800;color:#38BDF8;white-space:nowrap;">🤖 Estudio</div>',
             unsafe_allow_html=True,
         )
     with c_ver:
@@ -111,12 +132,14 @@ def main():
         st.markdown(
             """
             <div class="top-nav-links">
+                <a class="folder-pill" href="https://drive.google.com/drive/folders/1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi" target="_blank">📂 Mi Carpeta</a>
+                <a class="folder-pill" href="https://drive.google.com/drive/folders/11_rR-qhgM02Sfx9zw7uHU5AwXvTpKD4p" target="_blank">📥 SUBIR</a>
+                <a class="folder-pill" href="https://drive.google.com/drive/folders/1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX" target="_blank">🖼️ RENDER</a>
                 <a href="https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849" target="_blank">📊 Sheets</a>
                 <a href="https://app-1-3y7y.onrender.com/" target="_blank">🚀 Odoo</a>
                 <a href="https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/" target="_blank">⚡ AI Studio</a>
                 <a href="https://accounts.google.com/AccountChooser?continue=https://gemini.google.com/app" target="_blank">♊ Gemini</a>
                 <a href="https://chatgpt.com/" target="_blank">🤖 ChatGPT</a>
-                <a href="https://drive.google.com/drive/folders/1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B" target="_blank">📁 Drive</a>
             </div>
             """,
             unsafe_allow_html=True,

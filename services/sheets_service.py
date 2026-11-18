@@ -29,10 +29,16 @@ except Exception as e:
 DEFAULT_SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg")
 BUZON_DRIVE_ID = "1rwRk-bZtb8m4Hso9pCJE1A0_QiS-rqUQ"
 FOTOS_FINAL_DRIVE_ID = "1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B"
+INFO_MIA_DRIVE_ID = "1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi"
+SUBIR_DRIVE_ID = "11_rR-qhgM02Sfx9zw7uHU5AwXvTpKD4p"
+RENDER_DRIVE_ID = "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX"
 
 class SheetsService:
     BUZON_DRIVE_ID = BUZON_DRIVE_ID
     FOTOS_FINAL_DRIVE_ID = FOTOS_FINAL_DRIVE_ID
+    INFO_MIA_DRIVE_ID = INFO_MIA_DRIVE_ID
+    SUBIR_DRIVE_ID = SUBIR_DRIVE_ID
+    RENDER_DRIVE_ID = RENDER_DRIVE_ID
 
     def __init__(self):
         self.scopes = [
@@ -45,6 +51,9 @@ class SheetsService:
         self.spreadsheet_id = DEFAULT_SPREADSHEET_ID
         self.buzon_drive_id = BUZON_DRIVE_ID
         self.fotos_final_drive_id = FOTOS_FINAL_DRIVE_ID
+        self.info_mia_drive_id = INFO_MIA_DRIVE_ID
+        self.subir_drive_id = SUBIR_DRIVE_ID
+        self.render_drive_id = RENDER_DRIVE_ID
         self.connection_status = "Desconectado"
         self._fn_catalog: Optional[Dict[str, str]] = None
         self._drive_catalog: Optional[Dict[str, str]] = None  # FIX: inicializado para evitar AttributeError
@@ -604,52 +613,74 @@ class SheetsService:
             print(f"[SheetsService] Error obteniendo fotos recientes de Drive: {e}")
             return []
 
-    def get_drive_folder_files(self, folder_id: str, recursive: bool = True) -> List[Dict[str, str]]:
-        """Obtiene la lista de imágenes desde una carpeta específica de Google Drive (con soporte recursivo para subcarpetas)."""
+    def get_drive_folder_files(self, folder_id: str, recursive: bool = True, max_depth: int = 4) -> List[Dict[str, str]]:
+        """Obtiene de forma ultra-rápida las imágenes de una carpeta de Google Drive (BFS por lotes + caché en memoria)."""
         if not folder_id:
             return []
+        cache_key = f"{folder_id}:{int(recursive)}:{max_depth}"
+        cached = self._drive_folder_tree_cache.get(cache_key)
+        if cached and (time.time() - cached[0]) < 1800:
+            return list(cached[1])
+
         self.ensure_connected()
         if not self.drive_service:
             return []
-        
-        def _scan(f_id: str, sub_label: str = ""):
-            items_found = []
-            page_token = None
-            try:
-                while True:
-                    res = self.drive_service.files().list(
-                        q=f"'{f_id}' in parents and trashed = false",
-                        fields="nextPageToken,files(id,name,mimeType)",
-                        pageSize=1000,
-                        pageToken=page_token,
-                        supportsAllDrives=True,
-                        includeItemsFromAllDrives=True
-                    ).execute()
-                    for f in res.get("files", []):
-                        if f.get("mimeType") == "application/vnd.google-apps.folder":
-                            if recursive:
-                                items_found.extend(_scan(f.get("id"), f.get("name")))
-                        else:
-                            name = f.get("name", "")
-                            clean_name = os.path.splitext(name)[0].strip()
-                            file_id = f.get("id", "")
-                            mime_type = f.get("mimeType", "")
-                            items_found.append({
-                                "id": file_id,
-                                "name": clean_name,
-                                "filename": name,
-                                "link": f"https://drive.google.com/file/d/{file_id}/view",
-                                "subcarpeta": sub_label,
-                                "mimeType": mime_type
-                            })
-                    page_token = res.get("nextPageToken")
-                    if not page_token:
-                        break
-            except Exception as e:
-                print(f"[SheetsService] Error escaneando carpeta {f_id}: {e}")
-            return items_found
 
-        all_files = _scan(folder_id)
+        image_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff", ".gif")
+        folder_mime = "application/vnd.google-apps.folder"
+        all_files: List[Dict[str, str]] = []
+        current_level: Dict[str, str] = {folder_id: ""}
+        depth = 0
+
+        while current_level and depth <= max_depth:
+            parent_ids = list(current_level.keys())
+            next_level: Dict[str, str] = {}
+            for start in range(0, len(parent_ids), 25):
+                batch_ids = parent_ids[start:start + 25]
+                parent_clause = " or ".join(f"'{pid}' in parents" for pid in batch_ids)
+                query = f"({parent_clause}) and trashed = false"
+                page_token = None
+                try:
+                    while True:
+                        res = self.drive_service.files().list(
+                            q=query,
+                            fields="nextPageToken,files(id,name,mimeType,parents)",
+                            pageSize=1000,
+                            pageToken=page_token,
+                            supportsAllDrives=True,
+                            includeItemsFromAllDrives=True,
+                        ).execute()
+                        for f in res.get("files", []):
+                            f_id = f.get("id", "")
+                            name = f.get("name", "")
+                            mime_type = f.get("mimeType", "")
+                            if not f_id or not name or name.startswith("."):
+                                continue
+                            if mime_type == folder_mime:
+                                if recursive and depth < max_depth:
+                                    next_level[f_id] = name
+                            elif mime_type.startswith("image/") or name.lower().endswith(image_exts):
+                                parents = f.get("parents") or []
+                                sub_label = next((current_level[p] for p in parents if p in current_level), "")
+                                clean_name = os.path.splitext(name)[0].strip()
+                                all_files.append({
+                                    "id": f_id,
+                                    "name": clean_name,
+                                    "filename": name,
+                                    "link": f"https://drive.google.com/file/d/{f_id}/view",
+                                    "subcarpeta": sub_label,
+                                    "mimeType": mime_type,
+                                })
+                        page_token = res.get("nextPageToken")
+                        if not page_token:
+                            break
+                except Exception as e:
+                    print(f"[SheetsService] Error escaneando lote de carpeta {folder_id}: {e}")
+            if not recursive:
+                break
+            current_level = next_level
+            depth += 1
+
         seen_ids = set()
         unique_files = []
         for f in all_files:
@@ -657,7 +688,8 @@ class SheetsService:
                 seen_ids.add(f["id"])
                 unique_files.append(f)
         unique_files.sort(key=lambda x: x["name"].upper())
-        return unique_files
+        self._drive_folder_tree_cache[cache_key] = (time.time(), unique_files)
+        return list(unique_files)
 
     # =========================================================================
     # OPERACIONES DE BUZÓN (STAGING) Y GESTIÓN DE ARCHIVOS DRIVE (MILESTONE 1)
@@ -1621,10 +1653,13 @@ class SheetsService:
 
     @staticmethod
     def extract_drive_id(url_or_id: str) -> str:
-        """Extrae el fileId limpio desde un enlace de Google Drive o devuelve el ID directo."""
+        """Extrae el fileId o folderId limpio desde un enlace de Google Drive o devuelve el ID directo."""
         if not url_or_id:
             return ""
         val = str(url_or_id).strip()
+        mf = re.search(r"/folders/([a-zA-Z0-9_-]{15,})", val)
+        if mf:
+            return mf.group(1)
         m = re.search(r"/d/([a-zA-Z0-9_-]{15,})", val)
         if m:
             return m.group(1)
@@ -1715,15 +1750,23 @@ class SheetsService:
         if not self.drive_service:
             raise RuntimeError("Google Drive no está conectado.")
 
-        if dest == "final":
+        dest_norm = (dest or "render").strip().lower()
+        if dest_norm == "render":
+            target_parent = self.render_drive_id
+        elif dest_norm == "subir":
+            target_parent = self.subir_drive_id
+        elif dest_norm == "final":
             target_parent = self.fotos_final_drive_id
-            if subfolder and subfolder.strip():
-                for part in [p for p in subfolder.replace("\\", "/").split("/") if p]:
-                    folder_id = self.get_or_create_drive_folder(target_parent, part)
-                    if folder_id:
-                        target_parent = folder_id
+        elif dest_norm == "info_mia":
+            target_parent = self.info_mia_drive_id
         else:
             target_parent = self.buzon_drive_id
+
+        if subfolder and subfolder.strip() and dest_norm in ("final", "render"):
+            for part in [p for p in subfolder.replace("\\", "/").split("/") if p]:
+                folder_id = self.get_or_create_drive_folder(target_parent, part)
+                if folder_id:
+                    target_parent = folder_id
 
         ext = os.path.splitext(filename)[1].lower().replace(".", "") or "png"
         mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
@@ -1747,6 +1790,7 @@ class SheetsService:
             raise RuntimeError("Google Drive no devolvió un ID de archivo.")
 
         self._drive_link_cache.clear()
+        self._drive_folder_tree_cache.clear()
         try:
             self.drive_service.permissions().create(
                 fileId=file_id,
@@ -1759,6 +1803,7 @@ class SheetsService:
         return {
             "file_id": file_id,
             "filename": filename,
+            "folder_url": f"https://drive.google.com/drive/folders/{target_parent}",
             "drive_view_url": f"https://drive.google.com/file/d/{file_id}/view",
             "direct_cdn_url": f"https://lh3.googleusercontent.com/d/{file_id}=s2054",
             "download_url": f"https://drive.google.com/uc?export=download&id={file_id}",

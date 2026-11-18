@@ -26,15 +26,15 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
     )
 
     html_code = f"""
-    <div style="display:flex;align-items:center;gap:10px;margin:4px 0 8px 0;font-family:sans-serif;">
+    <div style="display:flex;align-items:center;gap:6px;margin:2px 0 4px 0;font-family:sans-serif;">
         <button id="{btn_id}" style="
             background:linear-gradient(135deg,#0284c7,#0ea5e9);
-            color:#ffffff;border:none;padding:7px 14px;border-radius:6px;
-            font-size:13px;font-weight:600;cursor:pointer;
-            box-shadow:0 2px 6px rgba(2,132,199,0.35);transition:transform 0.1s ease;
+            color:#ffffff;border:none;padding:4px 10px;border-radius:5px;
+            font-size:11.5px;font-weight:600;cursor:pointer;
+            box-shadow:0 1px 4px rgba(2,132,199,0.3);transition:transform 0.1s ease;
         ">{safe_label}</button>
-        <span id="{msg_id}" style="font-size:12px;color:#4ade80;font-weight:600;display:none;">
-            ✅ ¡Copiado!
+        <span id="{msg_id}" style="font-size:11px;color:#4ade80;font-weight:600;display:none;">
+            ✅ Copiado
         </span>
     </div>
     <script>
@@ -80,7 +80,7 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
     }})();
     </script>
     """
-    components.html(html_code, height=44)
+    components.html(html_code, height=32)
 
 
 @st.cache_data(max_entries=64, show_spinner=False)
