@@ -209,5 +209,71 @@ with _zf.ZipFile(_io.BytesIO(_zip_bytes), "r") as _z:
         and any(n.startswith("insumos/") for n in _names),
     )
 
+# 14. Motor híbrido V1 + V7 para hacer tela (material fabric_only / dual / velvet guard / batch)
+r_mat_v17 = build(
+    "material",
+    "SOFA",
+    "220 cm frente x 95 cm fondo x 82 cm alto",
+    material_mode="fabric_only",
+    fabric_label="BOUCLE SAL Y PIMIENTA",
+    fabric_analysis={
+        "name": "Heathered Salt-and-Pepper Bouclé",
+        "color_description": "marfil cálido con motas gris carbón",
+        "texture_detail": "dense nubby loops over cool grey under-weave",
+        "light_interaction": "soft matte textile",
+    },
+    furniture_analysis={"camera_angle": "eye-level 3/4 view facing right", "geometric_structure": "curved 3-seater sofa"},
+)
+p_mat = r_mat_v17["items"][0]["google_ai_studio"]
+check(
+    "V1+V7 material tela: estructura V1 + casco V7 + Image 1 tela",
+    p_mat.startswith("INSTRUCTION:")
+    and "GENERATE:" in p_mat
+    and "CAMERA CONSTRAINT: You MUST lock the camera to eye-level 3/4 view facing right" in p_mat
+    and "EL CASCO COMPLETO" in p_mat
+    and "97%" in p_mat
+    and "Negative Prompt:" in p_mat
+    and "generic fabric, solid color, flat texture" in p_mat
+    and r_mat_v17["items"][0]["attachment_guide"][0].startswith("Image 1: Muestra de tela"),
+)
+
+r_velvet = build(
+    "material",
+    "SILLON",
+    "85 cm frente x 85 cm fondo x 78 cm alto",
+    material_mode="fabric_only",
+    fabric_label="TERCIOPELO ESMERALDA",
+    fabric_analysis={
+        "name": "Emerald Velvet",
+        "color_description": "verde esmeralda profundo",
+        "texture_detail": "plush directional velvet pile",
+        "light_interaction": "directional velvet sheen",
+    },
+)
+check(
+    "V1+V7 velvet guard: no excluye velvet cuando la tela elegida es terciopelo",
+    "velvet" not in r_velvet["items"][0]["google_ai_studio"].split("Negative Prompt:")[-1].lower(),
+)
+
+r_vt_ana = build(
+    "vistas_tela",
+    "SOFA",
+    "210 cm frente x 90 cm fondo x 80 cm alto",
+    fabric_label="BOUCLE SAL",
+    fabric_analysis={
+        "name": "Heathered Bouclé",
+        "color_description": "arena con hilos taupe",
+        "texture_detail": "tightly twisted bouclé loops",
+        "light_interaction": "matte",
+    },
+    batch_ref_bytes=b"fake_fabric",
+    batch_views=[("frente.jpg", b"v1")],
+)
+check(
+    "V1+V7 vistas_tela inyecta análisis de tela en lote",
+    "tightly twisted bouclé loops" in r_vt_ana["items"][0]["google_ai_studio"]
+    and "INSTRUCTION:" in r_vt_ana["items"][0]["google_ai_studio"],
+)
+
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)

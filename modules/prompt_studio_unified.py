@@ -86,7 +86,8 @@ def render_prompt_studio_unified():
         """
 <style>
 .uni-title { font-size:15px; font-weight:700; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:8px; }
-.stButton > button { white-space:normal !important; font-size:13px !important; font-weight:600 !important; height:auto !important; min-height:42px !important; }
+.stButton > button,
+.stDownloadButton > button { white-space:normal !important; font-size:13px !important; font-weight:600 !important; height:auto !important; min-height:42px !important; padding:8px 10px !important; line-height:1.25 !important; }
 </style>
 """,
         unsafe_allow_html=True,

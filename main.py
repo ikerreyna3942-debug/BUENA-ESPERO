@@ -80,6 +80,46 @@ def main():
             border-color: #38BDF8;
             color: #FFFFFF !important;
         }
+        /* Botones consistentes y sin recortes en todas las versiones (V1–V7) */
+        .stButton > button,
+        .stDownloadButton > button,
+        div[data-testid="stPopover"] button {
+            white-space: normal !important;
+            word-break: normal !important;
+            overflow-wrap: break-word !important;
+            height: auto !important;
+            min-height: 36px !important;
+            line-height: 1.25 !important;
+            padding: 6px 10px !important;
+            border-radius: 7px !important;
+            font-size: 12.5px !important;
+            font-weight: 600 !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+        }
+        .stButton > button p,
+        .stDownloadButton > button p,
+        div[data-testid="stPopover"] button p {
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: unset !important;
+            line-height: 1.25 !important;
+            margin: 0 !important;
+        }
+        section[data-testid="stFileUploaderDropzone"] {
+            box-sizing: border-box !important;
+            max-width: 100% !important;
+        }
+        section[data-testid="stFileUploaderDropzone"] > span {
+            max-width: 100% !important;
+            min-width: 0 !important;
+        }
+        section[data-testid="stFileUploaderDropzone"] button {
+            max-width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+            overflow: hidden !important;
+        }
         @media (max-width: 640px) {
             .block-container {
                 padding: 0.35rem 0.35rem 0.45rem 0.35rem !important;
@@ -90,6 +130,13 @@ def main():
             .top-nav-links a {
                 font-size: 9.5px;
                 padding: 2px 5px;
+            }
+            .stButton > button,
+            .stDownloadButton > button,
+            div[data-testid="stPopover"] button {
+                font-size: 12px !important;
+                min-height: 36px !important;
+                padding: 6px 8px !important;
             }
             /* En celular: paneles principales a 100% y controles internos compactos de 2 por fila */
             div[data-testid="stHorizontalBlock"] {

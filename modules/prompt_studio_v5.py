@@ -18,7 +18,8 @@ def render_prompt_studio_v5():
 .studio-card { background-color: #283548; border: 1px solid #475569; border-radius: 12px; padding: 18px; height: 100%; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
 .studio-card-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 8px; }
 .casilla-badge { display: inline-block; background: #3B82F6; color: white; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 6px; }
-.stButton > button {
+.stButton > button,
+.stDownloadButton > button {
     white-space: normal !important;
     word-break: normal !important;
     font-size: 13px !important;
@@ -26,6 +27,7 @@ def render_prompt_studio_v5():
     padding: 8px 10px !important;
     height: auto !important;
     min-height: 42px !important;
+    line-height: 1.25 !important;
 }
 </style>
 """, unsafe_allow_html=True)

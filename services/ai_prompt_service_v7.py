@@ -346,8 +346,10 @@ class AIPromptServiceV7:
                 light_interaction="soft matte textile light absorption without synthetic glare",
             ).model_dump()
             instructions = (
-                "Analyze this upholstery fabric sample with precision: identify weave family, exact color tone and undertones "
-                "(without generic hex codes), yarn thickness/density, and light interaction (matte, velvet sheen, etc.)."
+                "Analyze this upholstery fabric sample with surgical precision for luxury furniture photography: "
+                "identify the weave family, exact hue, undertones, AND multi-tone flecks/threads (color_description), "
+                "exact weave structure, yarn thickness, and under-weave contrast in English (texture_detail, e.g. 'dense nubby loops over cool grey under-weave'), "
+                "and surface light response (light_interaction: Matte, Soft matte textile, Directional sheen, or Semi-gloss satin)."
             )
         elif is_wood:
             default_material = MaterialAnalysisV7(
@@ -378,7 +380,7 @@ class AIPromptServiceV7:
             client = self.get_client(key)
             if not client:
                 return default_material
-            img = self._prepare_image(sample_bytes, max_dim=512)
+            img = self._prepare_image(sample_bytes, max_dim=1024 if is_fabric else 768)
             res = self._call_gemini(
                 client=client,
                 contents=[f"You are an expert luxury furniture materials engineer. {instructions}", img],
@@ -447,17 +449,17 @@ class AIPromptServiceV7:
             actual_imgs: List[Image.Image] = []
             for fb in (furniture_bytes if isinstance(furniture_bytes, list) else [furniture_bytes])[:2]:
                 if fb:
-                    actual_imgs.append(self._prepare_image(fb, max_dim=512))
+                    actual_imgs.append(self._prepare_image(fb, max_dim=768))
 
             wood_imgs: List[Image.Image] = []
             for wb in (wood_bytes or [])[:1]:
                 if wb:
-                    wood_imgs.append(self._prepare_image(wb, max_dim=512))
+                    wood_imgs.append(self._prepare_image(wb, max_dim=768))
 
             fab_imgs: List[Image.Image] = []
             for tb in (fabric_bytes or [])[:1]:
                 if tb:
-                    fab_imgs.append(self._prepare_image(tb, max_dim=512))
+                    fab_imgs.append(self._prepare_image(tb, max_dim=1024))
 
             ref_imgs: List[Image.Image] = []
             for rb in (reference_bytes or [])[:1]:
@@ -467,8 +469,10 @@ class AIPromptServiceV7:
             prompt = (
                 "You are an expert furniture visualizer and commercial product photographer. "
                 "Analyze the furniture photo(s) (and any attached material swatches) to produce a concise, accurate "
-                "3D geometric & material specification: item type/style, exact structural joinery/legs/silhouette, "
-                "observed camera angle, lighting, wood species/finish, and upholstery weave/color."
+                "3D geometric & camera specification: item type/style, EXACT camera_angle and framing "
+                "(e.g. 'strict eye-level 3/4 view facing right', 'horizontal side profile'), "
+                "exact geometric_structure (silhouette, cushions, seams, folds, legs/base), "
+                "lighting_direction, wood_and_finish_analysis, and upholstery_analysis."
             )
             if wood_imgs:
                 prompt += "\nA wood sample image is attached as ground truth for all wooden components."
@@ -935,6 +939,31 @@ class AIPromptServiceV7:
             "anchor_idx": anchor_idx,
         }
 
+    @staticmethod
+    def _fabric_negative_terms(fa: Optional[Dict[str, Any]] = None, fabric_label: str = "") -> str:
+        """Términos negativos probados de V1 para evitar tela plana, gamuza o pérdida de tramado."""
+        fa = fa or {}
+        combined = f"{fabric_label} {fa.get('name', '')} {fa.get('texture_detail', '')}".lower()
+        base = [
+            "generic fabric",
+            "solid color",
+            "flat texture",
+            "loss of weave pattern",
+            "melted textures",
+            "oversized macro weave",
+            "leftover old fabric on casco",
+            "color shift",
+            "altered geometry",
+            "perspective distortion",
+        ]
+        if not any(w in combined for w in ("suede", "gamuza")):
+            base.append("suede")
+        if not any(w in combined for w in ("velvet", "terciopelo", "pana")):
+            base.append("velvet")
+        if not any(w in combined for w in ("leather", "piel", "cuero", "nubuck")):
+            base.append("leather")
+        return ", ".join(base)
+
     def _build_material_lock_text(
         self,
         profile: Dict[str, Any],
@@ -960,7 +989,7 @@ class AIPromptServiceV7:
             ais_parts.append(
                 f"- MONOLITHIC WOOD FINISH LOCK (from {src} — '{w_name}'): Apply this exact timber species, {w_color}, "
                 f"{w_tex}, and {w_light} uniformly across all wooden parts ({profile['parts_str']}). "
-                "Continuous natural grain flow; zero unintended two-tone contrast or bleached patches."
+                "Ensure natural anatomical grain flow (vertical on legs, horizontal on rails); zero unintended two-tone contrast or bleached patches."
             )
             dal_parts.append(
                 f"Wooden components ({profile['parts_str']}) finished monolithically in {w_name} ({w_color}, {w_tex}, {w_light}) matching {src}."
@@ -976,24 +1005,27 @@ class AIPromptServiceV7:
 
         if has_fabric:
             f_name = fa.get("name") or "Selected Fabric Swatch"
-            f_color = fa.get("color_description") or "exact hue from the fabric swatch"
-            f_tex = fa.get("texture_detail") or "realistic woven upholstery fibers"
+            f_color = fa.get("color_description") or "exact hue, undertones, and flecks from the fabric swatch"
+            f_tex = fa.get("texture_detail") or "dense realistic woven upholstery fibers and loops"
             f_light = fa.get("light_interaction") or "soft matte textile sheen"
             src = f"Image {fabric_idx}" if fabric_idx else "the fabric swatch"
             ais_parts.append(
-                f"- FULL CASCO & CUSHIONS FABRIC TEXTURE LOCK (from {src} — '{f_name}'): "
-                f"Apply the EXACT textile weave, thread structure, {f_color}, {f_tex}, and {f_light} of {src} uniformly across "
+                f"- FULL CASCO & CUSHIONS FABRIC TEXTURE LOCK (V1+V7 from {src} — '{f_name}'): "
+                f"First, meticulously analyze the source fabric macro texture in {src} ({f_name}: {f_color}; {f_tex}; {f_light}). "
+                f"Apply this EXACT weave pattern, multi-tone thread colors/flecks, and tactile textile structure uniformly across "
                 f"100% of the upholstered body shell (EL CASCO COMPLETO: outer & inner backrest, armrests/descansabrazos, "
                 f"upholstered lower base rail/faldón, side panels, headboard/rails if bed) AND all upholstered seat/back cushions. "
-                f"Follow original seams, piping/welting, pleats, and taut upholstery tension with 0% color/hue shift. "
-                f"CRITICAL MICRO-SCALE CALIBRATION (~97% macro reduction): {src} is a close-up macro swatch — scale down the weave pattern "
-                f"~97% to realistic 1:1 furniture viewing distance so micro-threads and loops look authentic on the casco "
-                f"(NEVER oversized macro loops, NEVER flat painted color, NEVER leaving the casco in the old fabric). "
+                f"Follow original seams, piping/welting, pleats, folds, and taut upholstery tension with 0% color/hue shift. "
+                f"CRITICAL SCALING CONSTRAINT (~97% macro reduction): {src} is a close-up macro swatch — you MUST scale down this macro texture "
+                f"dramatically (approx. 97% reduction) so the final result looks like realistic, finely woven fabric viewed from furniture distance, "
+                f"explicitly retaining dense micro-thread details on both the casco and cushions without turning into a flat solid color, suede/velvet, "
+                f"or an oversized pattern, and NEVER leaving any part of the casco in the old fabric. "
                 f"Strictly protect all non-upholstered parts (exposed wooden legs, wooden plinths/frames, metal hardware, glass, stone)."
             )
             dal_parts.append(
                 f"100% of the upholstered body shell (casco: backrest, armrests, upholstered base rail/sides) AND all cushions crafted uniformly in "
-                f"{f_name} ({f_color}, {f_tex}, {f_light}) matching {src} with ~97% macro-to-furniture weave scale reduction, preserving original seams, piping, and non-upholstered wood/metal parts."
+                f"{f_name} (weave: {f_tex}; colors/flecks: {f_color}; finish: {f_light}) matching {src} with approx. 97% macro-to-furniture scale reduction, "
+                "explicitly retaining dense micro-thread weave without turning into flat solid color, preserving original seams, piping, folds, and non-upholstered wood/metal parts."
             )
         elif not has_wood:
             # Ya cubierto arriba por la preservación integral de Image 1
@@ -1151,6 +1183,8 @@ class AIPromptServiceV7:
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
 
+        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label)}" if has_fabric else ""
+
         prompt_ais = (
             f"[COMMERCIAL PRODUCT PHOTOGRAPHY · {meta['label'].upper()}]\n"
             f"TASK: Generate ONE standalone high-resolution commercial catalog photograph of '{furn_item}' ('{furniture_name}') "
@@ -1166,7 +1200,7 @@ class AIPromptServiceV7:
             f"- BACKGROUND: {bg_ais}\n"
             f"- PHOTOGRAPHY: Shot on 100MP medium-format camera, 80mm prime lens at f/11, balanced 5400K softbox studio lighting, edge-to-edge tack-sharp micro-texture.\n\n"
             f"Exclude: collage, split screen, multiple objects, text, labels, watermark, CGI plastic sheen"
-            f"{', ground shadows, drop shadows, floor reflections, grey backdrop' if white_bg_enabled else ''}{profile['neg_add']}."
+            f"{', ground shadows, drop shadows, floor reflections, grey backdrop' if white_bg_enabled else ''}{fab_neg}{profile['neg_add']}."
         )
 
         prompt_dal = (
@@ -1175,7 +1209,7 @@ class AIPromptServiceV7:
             f"Materials: {mat_dal}\n"
             f"Structure & Proportions: {profile['geometry_rule']} {profile['dimensions_rule']}{anchor_dal}{notes_dal}\n"
             f"Studio & Lighting: Set against a {bg_dal}. Balanced 5400K commercial studio lighting, 80mm f/11 medium-format clarity.\n"
-            f"Avoid: collage, text, watermarks, CGI plastic look{', shadows, reflections, room interior' if white_bg_enabled else ''}{profile['neg_add']}."
+            f"Avoid: collage, text, watermarks, CGI plastic look{', shadows, reflections, room interior' if white_bg_enabled else ''}{fab_neg}{profile['neg_add']}."
         )
 
         prompt_mj = (
@@ -1401,73 +1435,157 @@ class AIPromptServiceV7:
         user_notes_clean: str,
         white_bg_enabled: bool,
         classic_numbering: bool,
+        camera_angle: str = "",
     ) -> Dict[str, Any]:
+        _ = classic_numbering
         has_wood = material_mode in ("wood_only", "dual")
         has_fabric = material_mode in ("fabric_only", "dual")
-        slots = self._build_image_slots(
-            furn_item=furn_item,
-            has_wood=has_wood,
-            wood_label=wood_label,
-            has_fabric=has_fabric,
-            fabric_label=fabric_label,
-            has_ref=False,
-            include_anchor=False,
-            classic_numbering=classic_numbering,
-        )
-        mat_ais, mat_dal = self._build_material_lock_text(
-            profile=profile,
-            furn_item=furn_item,
-            existing_mats=existing_mats,
-            wa=wa,
-            fa=fa,
-            wood_idx=slots["wood_idx"],
-            fabric_idx=slots["fabric_idx"],
-            has_wood=has_wood,
-            has_fabric=has_fabric,
-        )
 
-        bg_ais = (
-            "Pure seamless solid white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, and 0% floor reflections."
-            if white_bg_enabled
-            else "Preserve the original background lighting and natural scene while replacing ONLY the target material(s)."
-        )
-        bg_dal = (
-            "pure seamless solid white background (#FFFFFF) with zero ground shadows and zero reflections"
-            if white_bg_enabled
-            else "keep the original scene lighting and background intact"
-        )
-        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
-        notes_dal = f" Mandatory notes: {user_notes_clean}." if user_notes_clean else ""
-        dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
-        mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
+        # Orden probado de V1: primero las muestras macro (Tela / Madera) y al final el mueble objetivo
+        slot_lines: List[str] = []
+        guide: List[str] = []
+        idx = 1
+        fabric_idx: Optional[int] = None
+        wood_idx: Optional[int] = None
 
-        prompt_ais = (
-            "[COMMERCIAL MATERIAL REPLACEMENT · 8K STUDIO PHOTOGRAPHY]\n"
-            f"TASK: Re-render '{furn_item}' ('{furniture_name}') from Image 1 applying exact material replacement with zero geometry drift.\n\n"
-            f"{slots['header_block']}\n\n"
-            "MATERIAL & GEOMETRY LOCK:\n"
-            f"{mat_ais}\n"
-            f"- GEOMETRY LOCK: {profile['geometry_rule']}{dim_ais}{mirror_ais}{notes_ais}\n\n"
-            "CAMERA & STUDIO:\n"
-            "- Keep the exact camera angle and framing from Image 1 (or clean centered studio framing).\n"
-            f"- BACKGROUND: {bg_ais}\n"
-            "- OPTICS: 100MP medium-format camera, 80mm f/11, 5400K soft diffuse studio light, razor-sharp macro texture.\n\n"
-            f"Exclude: altered silhouette, altered legs, wrong material tone, CGI plastic look, text, watermark"
-            f"{', shadows, reflections, room' if white_bg_enabled else ''}{profile['neg_add']}."
+        if has_fabric:
+            fabric_idx = idx
+            slot_lines.append(
+                f"- Image {fabric_idx} (FABRIC SWATCH GROUND TRUTH): Source fabric macro texture, exact weave pattern, multi-tone flecks, and color ({fabric_label})."
+            )
+            guide.append(f"Image {fabric_idx}: Muestra de tela ({fabric_label})")
+            idx += 1
+        if has_wood:
+            wood_idx = idx
+            slot_lines.append(
+                f"- Image {wood_idx} (WOOD SAMPLE GROUND TRUTH): Exact wood species, continuous grain flow, and stain tone ({wood_label})."
+            )
+            guide.append(f"Image {wood_idx}: Muestra de madera ({wood_label})")
+            idx += 1
+
+        furn_idx = idx
+        slot_lines.append(
+            f"- Image {furn_idx} (TARGET FURNITURE PIECE): Original '{furn_item}' ('{furniture_name}') — preserve exact silhouette, seams, folds, and camera angle."
         )
+        guide.append(f"Image {furn_idx}: Foto original del mueble")
+        header_block = "ATTACHED IMAGES:\n" + "\n".join(slot_lines)
+
+        f_name = fa.get("name") or fabric_label or "Selected Fabric Swatch"
+        f_color = fa.get("color_description") or "true-to-life chromatic profile, undertones, and flecks from sample"
+        f_texture = fa.get("texture_detail") or "dense textured loops and realistic yarn weave"
+        f_light = fa.get("light_interaction") or "soft matte textile sheen"
+
+        w_name = wa.get("name") or wood_label or "Selected Wood Sample"
+        w_color = wa.get("color_description") or "natural timber tone from sample"
+        w_texture = wa.get("texture_detail") or "natural anatomical wood grain flow"
+        w_light = wa.get("light_interaction") or "soft satin-matte timber sheen"
+
+        cam_lock = (camera_angle or "").strip() or "the exact same camera angle and framing as the original photo"
+        dim_line = f" SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
+        mirror_line = f" {profile['mirror_optics']}" if profile["mirror_optics"] else ""
+        notes_ais = f"\n\nUSER SPECIAL DIRECTIVES: {user_notes_clean}" if user_notes_clean else ""
+        notes_dal = f" Mandatory user directives: {user_notes_clean}." if user_notes_clean else ""
+
+        if white_bg_enabled:
+            scene_str = (
+                f"Strictly preserve the exact shape, structural geometry ({geom_struct}), contours, seams, piping, folds, and proportions of the furniture in Image {furn_idx}. "
+                f"{profile['geometry_rule']}{dim_line}{mirror_line} "
+                f"CAMERA CONSTRAINT: You MUST lock the camera to {cam_lock}. "
+                f"ENVIRONMENT CONSTRAINT: Extract ONLY the furniture onto a pure seamless solid white background (#FFFFFF, RGB 255,255,255) centered with balanced margins; "
+                "completely eliminate ALL shadows (0% ground shadow, 0% contact shadow under legs, 0% drop shadow, 0% floor reflections), and remove harsh studio lighting glare/reflections from wood and fabric. "
+                "CRITICAL: DO NOT include any text, numbers, color names, or color palettes in the image."
+            )
+            bg_neg = "shadows, drop shadows, contact shadows, floor reflections, dark background, black background, grey background, original background, room environment,"
+            bg_dal = "pure seamless solid white background (#FFFFFF) with 0% ground/contact/drop shadows and 0% reflections"
+        else:
+            scene_str = (
+                f"Strictly preserve the exact shape, structural geometry ({geom_struct}), contours, seams, piping, folds, lighting, shadows, and surrounding background of Image {furn_idx}. "
+                f"{profile['geometry_rule']}{dim_line}{mirror_line} "
+                f"CAMERA CONSTRAINT: You MUST lock the camera to {cam_lock}. Do not alter the room or the furniture's physical design."
+            )
+            bg_neg = "changed background, altered environment, changed camera angle, top-down view,"
+            bg_dal = "keep the original scene lighting, shadows, and background intact"
+
+        fab_neg = self._fabric_negative_terms(fa, fabric_label)
+
+        if material_mode == "dual":
+            prompt_ais = (
+                f"INSTRUCTION: First, meticulously analyze the source fabric macro texture in Image {fabric_idx} ({f_name}: {f_color}; {f_texture}; {f_light}), "
+                f"the source wood macro texture in Image {wood_idx} ({w_name}: {w_color}; {w_texture}; {w_light}), "
+                f"and the target furniture piece in Image {furn_idx} ('{furn_item}').\n\n"
+                f"{header_block}\n\n"
+                f"GENERATE: Accurately replace BOTH 100% of the fabric upholstery AND all wooden components of the furniture in Image {furn_idx} "
+                f"using the exact textures analyzed from Image {fabric_idx} and Image {wood_idx}.\n\n"
+                f"GEOMETRY & SCENE CONSTRAINT: {scene_str}\n\n"
+                f"FABRIC & CASCO CONSTRAINT (FULL CASCO + CUSHIONS · 97% MACRO REDUCTION): "
+                f"Apply the precise weave pattern ({f_texture}), multi-tone thread colors/flecks ({f_color}), and surface response ({f_light}) from Image {fabric_idx} "
+                f"uniformly across 100% of the upholstered body shell (EL CASCO COMPLETO: outer & inner backrest, armrests/descansabrazos, upholstered base rail/faldón, side panels) "
+                f"AND all seat/back cushions with 0% hue shift. "
+                f"CRITICAL: You must scale down this macro texture dramatically (approx. 97% reduction) so it looks like realistic, finely woven fabric viewed from furniture distance, "
+                f"explicitly retaining dense micro-thread details on both the casco and cushions without turning into a flat solid color, leaving the casco in the old fabric, or creating an oversized pattern.\n\n"
+                f"WOOD CONSTRAINT: Apply the precise wood grain flow, pores, finish ({w_light}), and color ({w_color}) from Image {wood_idx} monolithically to all legs, frames, and wooden bases. "
+                f"Ensure the grain follows the natural anatomical direction (vertical on legs, horizontal on rails) with zero unintended two-tone contrast.{notes_ais}\n\n"
+                f"Negative Prompt:\n"
+                f"{fab_neg}, flat wood colors, bleached patches, text, watermark, poster, collage, infographic, multiple furniture pieces, {bg_neg}{profile['neg_add']}"
+            )
+            mat_dal = (
+                f"100% of the upholstered body shell (casco: backrest, armrests, upholstered base rail/sides) AND all cushions reupholstered in "
+                f"{f_name} ({f_color}; {f_texture}; {f_light}) from Image {fabric_idx} with approx. 97% macro weave scale reduction (preserving micro-threads, never flat color); "
+                f"all wooden parts finished monolithically in {w_name} ({w_color}; {w_texture}; {w_light}) from Image {wood_idx}."
+            )
+        elif material_mode == "fabric_only":
+            prompt_ais = (
+                f"INSTRUCTION: First, meticulously analyze the source fabric macro texture in Image {fabric_idx} ({f_name}: {f_color}; {f_texture}; {f_light}) "
+                f"and the target furniture piece in Image {furn_idx} ('{furn_item}').\n\n"
+                f"{header_block}\n\n"
+                f"GENERATE: Accurately replace ONLY the upholstery fabric of the furniture piece in Image {furn_idx} using the exact texture analyzed from Image {fabric_idx}.\n\n"
+                f"GEOMETRY & SCENE CONSTRAINT: {scene_str}\n\n"
+                f"MATERIAL & SCALING CONSTRAINT (FULL CASCO + CUSHIONS · 97% MACRO REDUCTION): "
+                f"Apply the precise weave pattern ({f_texture}), multi-tone thread colors/flecks ({f_color}), and textile light response ({f_light}) from Image {fabric_idx} "
+                f"uniformly across 100% of the upholstered body shell (EL CASCO COMPLETO: outer & inner backrest, armrests/descansabrazos, upholstered lower base rail/faldón, side panels, headboard/rails) "
+                f"AND all upholstered seat/back cushions, following original seams, piping, and folds with 0% color/hue shift. "
+                f"CRITICAL: You must scale down this macro texture dramatically (approx. 97% reduction). The final result must look like realistic, finely woven fabric viewed from a distance, "
+                f"explicitly retaining the dense micro-thread details on both the casco and cushions without turning into a flat, solid color, leaving the casco in the old fabric, or creating an oversized pattern. "
+                f"Strictly protect all non-upholstered parts (exposed wooden legs, wooden plinths/frames, metal hardware, glass, stone) identical to Image {furn_idx}.{notes_ais}\n\n"
+                f"Negative Prompt:\n"
+                f"{fab_neg}, altered wood legs, changed wood color, text, watermark, poster, collage, infographic, multiple furniture pieces, {bg_neg}{profile['neg_add']}"
+            )
+            mat_dal = (
+                f"100% of the upholstered body shell (casco: backrest, armrests, upholstered base rail/sides) AND all cushions reupholstered in "
+                f"{f_name} ({f_color}; {f_texture}; {f_light}) from Image {fabric_idx} with approx. 97% macro weave scale reduction (preserving micro-threads, never flat solid color); "
+                f"all exposed wooden legs, frames, and metal parts preserved strictly identical to Image {furn_idx}."
+            )
+        else:  # wood_only
+            prompt_ais = (
+                f"INSTRUCTION: First, meticulously analyze the source wood macro texture in Image {wood_idx} ({w_name}: {w_color}; {w_texture}; {w_light}) "
+                f"and the target furniture piece in Image {furn_idx} ('{furn_item}').\n\n"
+                f"{header_block}\n\n"
+                f"GENERATE: Accurately replace ONLY the wooden components ({profile['parts_str']}) of the furniture in Image {furn_idx} "
+                f"using the exact wood grain, finish, and tone analyzed from Image {wood_idx}.\n\n"
+                f"GEOMETRY & SCENE CONSTRAINT: {scene_str}\n\n"
+                f"MATERIAL CONSTRAINT: Apply the precise wood grain flow, pores, finish ({w_light}), and color ({w_color}) from Image {wood_idx} monolithically. "
+                f"Ensure the grain follows the natural anatomical direction of the furniture parts (vertical on legs, horizontal on rails) with zero two-tone contrast or bleached patches. "
+                f"Keep any upholstery, cushions, metal, stone, or glass strictly identical to Image {furn_idx}.{notes_ais}\n\n"
+                f"Negative Prompt:\n"
+                f"altered fabric, changed upholstery, color shift, flat colors, two-tone wood mismatch, changed geometry, text, watermark, {bg_neg}{profile['neg_add']}"
+            )
+            mat_dal = (
+                f"Wooden components ({profile['parts_str']}) finished monolithically in {w_name} ({w_color}; {w_texture}; {w_light}) matching Image {wood_idx}; "
+                f"all non-wooden surfaces preserved identical to Image {furn_idx}."
+            )
 
         prompt_dal = (
-            f"8K commercial product photograph of the {furn_item} ('{furniture_name}') from Image 1 with exact material replacement.\n"
+            f"Precision material-swap product photograph of the exact {furn_item} ('{furniture_name}') in Image {furn_idx} (do NOT redesign geometry or camera angle: {cam_lock}).\n"
             f"Materials: {mat_dal}\n"
-            f"Structure: {profile['geometry_rule']} {profile['dimensions_rule']}{notes_dal}\n"
-            f"Environment: {bg_dal}. 5400K commercial studio strobe lighting, 80mm f/11 sharpness.\n"
-            f"Avoid: altered geometry, mismatched material, CGI look, text, watermark{profile['neg_add']}."
+            f"Structure & Folds: Preserve exact contours, seams, piping, and folds. {profile['geometry_rule']} {profile['dimensions_rule']}{notes_dal}\n"
+            f"Background: {bg_dal}.\n"
+            f"Avoid: {fab_neg if has_fabric else 'flat colors, altered upholstery'}, altered geometry, perspective distortion, text, watermark{profile['neg_add']}."
         )
 
         prompt_mj = (
             f"Commercial catalog photography of {furn_item}, {geom_struct}, {mat_dal}, "
             f"{'pure solid white background #FFFFFF, zero shadows, ' if white_bg_enabled else ''}"
-            "80mm f/11 5400K studio lighting --ar 1:1 --v 6.1 --style raw --no CGI, altered geometry, text, watermark"
+            "--ar 1:1 --v 6.1 --style raw --no generic fabric, flat texture, suede, velvet, altered geometry, text, watermark"
         )
 
         return {
@@ -1480,7 +1598,7 @@ class AIPromptServiceV7:
             "midjourney_v6": prompt_mj,
             "checklist": CHECKLISTS["material"],
             "needs_anchor": False,
-            "attachment_guide": slots["guide"],
+            "attachment_guide": guide,
         }
 
     def _build_extraction_item(
@@ -1672,10 +1790,12 @@ class AIPromptServiceV7:
         user_notes_clean: str,
         white_bg_enabled: bool,
         ref_label: str = "",
+        fabric_analysis: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
     ) -> Dict[str, str]:
+        fa = fabric_analysis or {}
         bg_clause = (
-            "pure seamless solid white background (#FFFFFF) with 0% ground shadows and 0% reflections"
+            "pure seamless solid white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, and 0% floor reflections"
             if white_bg_enabled
             else "the exact original background and natural lighting of Image 2"
         )
@@ -1683,25 +1803,36 @@ class AIPromptServiceV7:
         dims_part = f"\n- REAL-WORLD SCALE: {medidas_texto}" if medidas_texto else ""
 
         if batch_mode == "vistas_tela":
+            f_name = fa.get("name") or ref_label or "Fabric Swatch"
+            f_color = fa.get("color_description") or "exact hue, undertones, and multi-tone flecks from Image 1"
+            f_tex = fa.get("texture_detail") or "dense realistic woven upholstery fibers and loops"
+            f_light = fa.get("light_interaction") or "soft matte textile sheen"
+            fab_neg = self._fabric_negative_terms(fa, ref_label)
+
             local_ais = (
-                f"[BATCH VIEW FABRIC APPLICATION ON FULL CASCO & CUSHIONS · {view_name}]\n"
-                f"TASK: Reupholster 100% of the upholstered body shell (el casco: backrest, armrests, lower upholstered rail/faldón, sides) AND all cushions of '{furn_item}' in Image 2 using the exact fabric color, weave, and micro-texture of Image 1 ({ref_label or 'Fabric Swatch'}).\n\n"
+                f"INSTRUCTION: First, meticulously analyze the source fabric macro texture in Image 1 ({f_name}: {f_color}; {f_tex}; {f_light}) "
+                f"and the target furniture view '{view_name}' in Image 2 ('{furn_item}').\n\n"
                 "ATTACHED IMAGES:\n"
-                f"- Image 1 (FABRIC SWATCH GROUND TRUTH): Exact color, thread thickness, and textile weave ({ref_label or 'Fabric Swatch'}).\n"
+                f"- Image 1 (FABRIC SWATCH GROUND TRUTH): Exact color, flecks, thread thickness, and textile weave ({f_name}).\n"
                 "- Image 2 (TARGET VIEW): Keep the EXACT camera angle, 3D silhouette, proportions, seams, piping, folds, and wooden/metal parts.\n\n"
-                "RULES:\n"
-                "- FULL CASCO & CUSHIONS LOCK: Apply Image 1's exact textile weave uniformly across the ENTIRE upholstered casco AND cushions of Image 2 with 0% hue shift (never leave the casco in the old fabric).\n"
-                "- MICRO-SCALE CALIBRATION (~97% reduction): Scale Image 1's close-up macro weave down ~97% to realistic 1:1 furniture thread density (never oversized loops, never flat solid paint).\n"
-                "- Keep all non-upholstered parts (wood legs, wooden base, metal) strictly identical to Image 2.\n"
-                f"- BACKGROUND: {bg_clause}.{dims_part}{notes_part}\n\n"
-                "Exclude: altered camera angle, altered geometry, leftover old fabric on casco, oversized weave, wrong fabric hue, CGI look, text, watermark."
+                f"GENERATE: Accurately replace ONLY the upholstery fabric of the furniture piece in Image 2 using the exact texture analyzed from Image 1.\n\n"
+                "GEOMETRY & SCENE CONSTRAINT: Strictly preserve the exact camera angle, shape, contours, seams, piping, folds, and non-upholstered wood/metal parts of Image 2. "
+                f"ENVIRONMENT: {bg_clause}. Do NOT include text, labels, or watermarks.{dims_part}{notes_part}\n\n"
+                "MATERIAL & SCALING CONSTRAINT (FULL CASCO + CUSHIONS · 97% MACRO REDUCTION): "
+                f"Apply the precise weave pattern ({f_tex}), multi-tone thread colors/flecks ({f_color}), and surface response ({f_light}) from Image 1 "
+                "uniformly across 100% of the upholstered body shell (EL CASCO COMPLETO: outer & inner backrest, armrests/descansabrazos, upholstered base rail/faldón, sides) "
+                "AND all cushions with 0% hue shift. "
+                "CRITICAL: Scale down this macro texture dramatically (approx. 97% reduction) so it looks like finely woven fabric from furniture distance, "
+                "explicitly retaining dense micro-thread details without turning into a flat solid color, leaving the casco in the old fabric, or creating oversized loops.\n\n"
+                f"Negative Prompt:\n{fab_neg}, altered camera angle, altered wood legs, text, watermark, collage."
             )
             vision_task = (
-                "Image 1 is a close-up FABRIC SWATCH (exact color and weave). Image 2 is a TARGET FURNITURE VIEW (exact geometry and camera angle).\n"
-                "Write a crisp, production-grade image-generation prompt commanding the model to keep Image 2's exact camera angle, "
-                "3D silhouette, seams, piping, and wooden/metal parts while reupholstering 100% of BOTH the upholstered body shell (casco: backrest, armrests, upholstered base rail) "
-                "AND all cushions using Image 1's exact weave and color (~97% macro-to-furniture scale reduction, 0% hue shift), on "
-                f"{bg_clause}."
+                f"Image 1 is a close-up FABRIC SWATCH ({f_name}: {f_color}; {f_tex}; {f_light}). "
+                f"Image 2 is a TARGET FURNITURE VIEW '{view_name}' (exact geometry and camera angle).\n"
+                "Write a surgical image-editing prompt in the exact V1+V7 style (INSTRUCTION -> GENERATE -> GEOMETRY & SCENE CONSTRAINT -> CAMERA CONSTRAINT -> "
+                "MATERIAL & SCALING CONSTRAINT -> Negative Prompt) commanding the model to lock Image 2's exact camera angle, silhouette, seams, folds, and wooden/metal parts "
+                "while replacing 100% of BOTH the upholstered casco (backrest, armrests, upholstered base rail/sides) AND all cushions with Image 1's exact weave and undertones "
+                f"(~97% macro-to-furniture reduction, 0% hue shift, never flat solid color, never suede/velvet unless specified), on {bg_clause}."
             )
         else:  # clonar_color
             local_ais = (
@@ -1727,7 +1858,7 @@ class AIPromptServiceV7:
         local_mj = (
             f"Commercial product photography of {furn_item}, preserving exact angle and geometry, "
             f"{'pure white background #FFFFFF, zero shadows, ' if white_bg_enabled else ''}"
-            "80mm f/11 --ar 1:1 --v 6.1 --style raw --no altered angle, text, watermark"
+            "80mm f/11 --ar 1:1 --v 6.1 --style raw --no altered angle, generic fabric, flat texture, text, watermark"
         )
 
         key = self.get_api_key(api_key)
@@ -1744,8 +1875,8 @@ class AIPromptServiceV7:
             client = self.get_client(key)
             if not client:
                 return {"google_ai_studio": local_ais, "chatgpt_dalle3": local_dal, "midjourney_v6": local_mj}
-            img1 = self._prepare_image(ref_bytes, max_dim=512)
-            img2 = self._prepare_image(view_bytes, max_dim=512)
+            img1 = self._prepare_image(ref_bytes, max_dim=1024 if batch_mode == "vistas_tela" else 768)
+            img2 = self._prepare_image(view_bytes, max_dim=768)
             sys_prompt = (
                 f"You are an expert commercial furniture prompt engineer.\n{vision_task}\n"
                 f"Furniture item: {furn_item}.{dims_part}{notes_part}\n"
@@ -1921,6 +2052,8 @@ class AIPromptServiceV7:
             dim_line = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
             mirror_line = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
 
+            fab_neg_master = f", {self._fabric_negative_terms(fa, f_label)}" if has_fabric else ""
+
             master_ais = (
                 "[COMMERCIAL 7-IMAGE CATALOG SERIES · TURN-BY-TURN SEQUENTIAL GENERATION]\n"
                 f"TASK: Generate a complete 7-piece commercial catalog sequence for '{furn_item}' ('{furniture_name}'): "
@@ -1944,7 +2077,7 @@ class AIPromptServiceV7:
                 f"  5. Vista 5 (Superior Cenital 90°): {angles['vista_superior_cenital']}\n"
                 f"  6. Vista 6 (Plano Técnico Isométrico): Minimalist black (#000000) CAD line art only on #FFFFFF, zero color/shading, showing ONLY: {dims_summary}.\n"
                 f"  7. Vista 7 (Entorno Casa Cliente): Wide distant 35mm interior shot {room_intro}; {companions} Deliberate contrasting room palette so the piece stands out.\n\n"
-                f"Exclude: collage, text/watermarks, ground shadows in views 1-6, CGI plastic sheen{profile['neg_add']}."
+                f"Exclude: collage, text/watermarks, ground shadows in views 1-6, CGI plastic sheen{fab_neg_master}{profile['neg_add']}."
             )
 
             master_dal = (
@@ -1990,6 +2123,7 @@ class AIPromptServiceV7:
             it = self._build_material_swap_item(
                 material_mode, furn_item, furniture_name, profile, geom_struct, existing_mats,
                 wa, fa, w_label, f_label, user_notes_clean, white_bg_enabled, classic_numbering,
+                camera_angle=ma.get("camera_angle", ""),
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2049,6 +2183,7 @@ class AIPromptServiceV7:
                     user_notes_clean=user_notes_clean,
                     white_bg_enabled=white_bg_enabled,
                     ref_label=ref_lbl,
+                    fabric_analysis=fa if mode == "vistas_tela" else None,
                     api_key=api_key,
                 )
 
@@ -2164,6 +2299,7 @@ class AIPromptServiceV7:
         notes_dal = f" Mandatory user directives: {user_notes_clean}." if user_notes_clean else ""
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
+        fab_neg_34 = f", {self._fabric_negative_terms(fa, f_label)}" if has_fabric else ""
 
         prompt_ais = (
             "[COMMERCIAL MASTER CUTOUT · 3/4 FACING RIGHT · PURE WHITE #FFFFFF · ZERO SHADOWS · 2054x2054 PX]\n"
@@ -2182,7 +2318,7 @@ class AIPromptServiceV7:
             f"- GEOMETRY RULE: {profile['geometry_rule']}{dim_ais}{mirror_ais}{notes_ais}\n"
             "- OPTICS: 100MP medium-format camera, 80mm prime lens at f/11, even shadowless 5400K wrap-around softbox lighting, tack-sharp micro-texture edge-to-edge.\n\n"
             "Exclude: ground shadow, contact shadow, drop shadow, cast shadow, under-furniture shadow, floor reflection, grey floor, studio backdrop gradient, facing left, frontal 0-degree flat angle, collage, text, watermark, CGI plastic sheen"
-            f"{profile['neg_add']}."
+            f"{fab_neg_34}{profile['neg_add']}."
         )
 
         prompt_dal = (
@@ -2191,7 +2327,7 @@ class AIPromptServiceV7:
             "Background & Zero-Shadow Rule: Pure seamless solid digital white (#FFFFFF, RGB 255,255,255) with ABSOLUTELY ZERO SHADOWS — 0% ground shadow, 0% leg contact shadow, 0% drop shadow, and 0% floor reflection.\n"
             f"Materials & Casco Texture: {mat_dal}\n"
             f"Structure & Proportions: {profile['geometry_rule']} {profile['dimensions_rule']}{notes_dal}\n"
-            f"Avoid: any shadows, contact shadow, floor line, reflections, facing left, collage, text, watermarks, CGI plastic look{profile['neg_add']}."
+            f"Avoid: any shadows, contact shadow, floor line, reflections, facing left, collage, text, watermarks, CGI plastic look{fab_neg_34}{profile['neg_add']}."
         )
 
         prompt_mj = (

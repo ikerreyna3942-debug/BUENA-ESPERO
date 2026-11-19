@@ -982,13 +982,12 @@ def render_prompt_studio():
                 st.markdown("##### ⚡ Generador In-App V1 (FLUX.1)")
                 prompt_para_render = res["prompts"].get("flux_midjourney") or res["prompts"].get("google_ai_studio") or res["prompts"].get("dalle_chatgpt", "")
                 
-                col_gen_btn, col_gen_asp = st.columns([2, 1])
+                col_gen_btn, col_gen_asp = st.columns([2, 1], vertical_alignment="bottom")
                 with col_gen_asp:
                     formato_sel = st.selectbox("Formato:", ["Apaisado (4:3)", "Cuadrado (1:1)", "Panorámico (16:9)"], key="sel_asp_v1")
                     w_r, h_r = (1024, 768) if "4:3" in formato_sel else ((1024, 1024) if "1:1" in formato_sel else (1280, 720))
                 
                 with col_gen_btn:
-                    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
                     btn_gen = st.button("🚀 Generar Render Ahora", type="primary", use_container_width=True, key="btn_flux_v1")
                 
                 if btn_gen:

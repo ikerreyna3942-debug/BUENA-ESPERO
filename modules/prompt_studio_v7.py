@@ -114,7 +114,7 @@ def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
 def _resolve_mueble_render_selector(ck: int) -> Tuple[List[bytes], List[str]]:
     tick = int(st.session_state.get("v7_render_tick", 0))
     catalog_items = cargar_muebles_render_v7(tick)
-    first_opt = f"🛋️ RENDER ({len(catalog_items)})..."
+    first_opt = f"🛋️ RENDER ({len(catalog_items)})"
     refresh_opt = "🔄 Actualizar carpeta RENDER"
     options = [first_opt] + [item["name"] for item in catalog_items] + [refresh_opt]
 
@@ -160,7 +160,7 @@ def _resolve_material_selector(
 ) -> Tuple[Optional[bytes], str]:
     is_wood = kind == "wood"
     lbl = "🪵 Madera" if is_wood else "🧵 Tela"
-    options = [f"{lbl} ({len(catalog_items)})..."] + [item["name"] for item in catalog_items]
+    options = [f"{lbl} ({len(catalog_items)})"] + [item["name"] for item in catalog_items]
     sel_name = st.selectbox(
         lbl,
         options,
@@ -270,6 +270,9 @@ def _build_zip(res: Dict[str, Any], include_images: bool = False) -> bytes:
 
 
 def _render_item(item: Dict[str, Any], idx: int, ck: int, gen_id: int) -> None:
+    guide = item.get("attachment_guide") or []
+    if guide:
+        st.caption("📎 " + " · ".join(guide))
     t_ais, t_dal, t_mj = st.tabs(["AI Studio", "ChatGPT", "Midjourney"])
     with t_ais:
         txt = item.get("google_ai_studio", "")
@@ -295,14 +298,25 @@ def render_prompt_studio_v7() -> None:
 <style>
 .stButton > button,
 .stDownloadButton > button,
-div[data-testid="stPopover"] > div > button {
+div[data-testid="stPopover"] button {
     font-size: 11px !important;
     font-weight: 600 !important;
-    min-height: 28px !important;
-    height: 28px !important;
-    padding: 1px 6px !important;
-    border-radius: 5px !important;
-    white-space: nowrap !important;
+    min-height: 30px !important;
+    height: auto !important;
+    padding: 4px 6px !important;
+    border-radius: 6px !important;
+    white-space: normal !important;
+    word-break: normal !important;
+    line-height: 1.2 !important;
+}
+.stButton > button p,
+.stDownloadButton > button p,
+div[data-testid="stPopover"] button p {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    line-height: 1.2 !important;
+    margin: 0 !important;
 }
 div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div {
@@ -312,14 +326,34 @@ div[data-baseweb="input"] > div {
     padding-top: 0px !important;
     padding-bottom: 0px !important;
 }
+div[data-baseweb="select"] > div {
+    padding-left: 5px !important;
+    padding-right: 3px !important;
+}
+div[data-baseweb="select"] > div > div:first-child {
+    padding-left: 2px !important;
+    padding-right: 0px !important;
+}
+div[data-baseweb="select"] > div > div:last-child {
+    padding-left: 0px !important;
+    padding-right: 0px !important;
+    width: 16px !important;
+    min-width: 16px !important;
+}
+div[data-baseweb="select"] svg {
+    width: 14px !important;
+    height: 14px !important;
+}
 div[data-baseweb="select"] span,
 input,
 textarea {
     font-size: 11px !important;
 }
 section[data-testid="stFileUploaderDropzone"] {
-    padding: 2px 6px !important;
-    min-height: 28px !important;
+    padding: 2px 3px !important;
+    min-height: 30px !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
 }
 section[data-testid="stFileUploaderDropzone"] svg,
 section[data-testid="stFileUploaderDropzone"] small,
@@ -327,12 +361,26 @@ section[data-testid="stFileUploaderDropzone"] span[data-testid="stMarkdownContai
 div[data-testid="stFileUploaderDropzoneInstructions"] {
     display: none !important;
 }
+section[data-testid="stFileUploaderDropzone"] > span {
+    width: 100% !important;
+    min-width: 0 !important;
+    display: flex !important;
+}
 section[data-testid="stFileUploaderDropzone"] button {
     font-size: 10.5px !important;
-    min-height: 24px !important;
-    height: 24px !important;
-    padding: 0px 8px !important;
+    min-height: 25px !important;
+    height: auto !important;
+    padding: 2px 4px !important;
     width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+}
+section[data-testid="stFileUploaderDropzone"] button span[data-testid="stIconMaterial"] {
+    font-size: 13px !important;
+    line-height: 1 !important;
 }
 div[data-testid="stVerticalBlock"] > div {
     gap: 0.25rem !important;
@@ -347,9 +395,11 @@ button[data-baseweb="tab"] {
 }
 @media (max-width: 640px) {
     .stButton > button,
-    .stDownloadButton > button {
-        font-size: 10.5px !important;
-        padding: 1px 4px !important;
+    .stDownloadButton > button,
+    div[data-testid="stPopover"] button {
+        font-size: 11px !important;
+        min-height: 32px !important;
+        padding: 4px 6px !important;
     }
     div[data-testid="stVerticalBlockBorderWrapper"] > div {
         padding: 5px 6px !important;
@@ -430,7 +480,7 @@ button[data-baseweb="tab"] {
     fabric_bytes: Optional[bytes] = None
     fabric_name: str = ""
 
-    col_work, col_out = st.columns([1.02, 1.48], gap="small")
+    col_work, col_out = st.columns([1.15, 1.35], gap="small")
 
     with col_work:
         with st.container(border=True):
@@ -473,7 +523,7 @@ button[data-baseweb="tab"] {
                     vb, vn = _read_files(up_views)
                     batch_views_files = list(zip(vn, vb))
             else:
-                u_m, u_f, u_w = st.columns(3)
+                u_m, u_f, u_w = st.columns(3, gap="small")
                 with u_m:
                     m_bytes, m_names = _resolve_mueble_render_selector(ck)
                 with u_f:
@@ -492,7 +542,7 @@ button[data-baseweb="tab"] {
 
             # 3 BOTONES CON SENTIDO CLARO:
             # 1) Generar el modo elegido arriba | 2) 3/4 Derecha sin sombra (2054) | 3) Borrar (sin mover el modo)
-            b_go, b_34, b_clr = st.columns(3)
+            b_go, b_34, b_clr = st.columns([1.15, 1.25, 0.95], gap="small")
             with b_go:
                 go = st.button(
                     f"🚀 {mode_label}",
