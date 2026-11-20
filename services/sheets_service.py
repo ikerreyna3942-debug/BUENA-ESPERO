@@ -77,20 +77,27 @@ class SheetsService:
         self._sku_cache_ttl: float = 20.0
         self._init_lock = threading.Lock()
         self._initialized = False
+        self._last_init_attempt = 0.0
 
     def _build_client(self, service_name: str, version: str, creds):
         """Construye un cliente de Google API con timeout de red para evitar bloqueos."""
         if AuthorizedHttp is not None and httplib2 is not None:
-            auth_http = AuthorizedHttp(creds, http=httplib2.Http(timeout=12))
+            auth_http = AuthorizedHttp(creds, http=httplib2.Http(timeout=20))
             return build(service_name, version, http=auth_http, cache_discovery=False)
         return build(service_name, version, credentials=creds, cache_discovery=False)
 
     def ensure_connected(self) -> bool:
-        """Conecta de forma perezosa con Google Drive y Sheets la primera vez que se necesita."""
-        if self._initialized:
+        """Conecta de forma perezosa con Google Drive y Sheets y reintenta si hubo fallo transitorio."""
+        if self._initialized and self.service is not None and self.drive_service is not None:
+            return True
+        now = time.time()
+        if self._initialized and (now - self._last_init_attempt) < 8.0:
             return self.service is not None and self.drive_service is not None
         with self._init_lock:
-            if not self._initialized:
+            if self._initialized and self.service is not None and self.drive_service is not None:
+                return True
+            if not self._initialized or (time.time() - self._last_init_attempt) >= 8.0:
+                self._last_init_attempt = time.time()
                 self._init_service()
                 self._initialized = True
         return self.service is not None and self.drive_service is not None
@@ -837,10 +844,10 @@ class SheetsService:
         self,
         folder_map: Dict[str, str],
         recursive: bool = True,
-        max_depth: int = 2,
+        max_depth: int = 4,
         ttl: int = 1800,
     ) -> Dict[str, List[Dict[str, str]]]:
-        """Escanea múltiples carpetas raíz de Google Drive simultáneamente en un solo BFS por lotes (1-2 llamadas HTTP totales)."""
+        """Escanea múltiples carpetas raíz de Google Drive simultáneamente en un solo BFS por lotes (con soporte a accesos directos)."""
         now = time.time()
         results: Dict[str, List[Dict[str, str]]] = {}
         pending_roots: Dict[str, str] = {}
@@ -852,12 +859,12 @@ class SheetsService:
             cache_key = f"{fid}:{int(recursive)}:{max_depth}"
             cached = self._drive_folder_tree_cache.get(cache_key)
             if not cached and max_depth < 4:
-                # Reutilizar caché existente si fue escaneada con mayor profundidad
-                for alt_depth in (2, 3, 4):
-                    alt_cached = self._drive_folder_tree_cache.get(f"{fid}:{int(recursive)}:{alt_depth}")
-                    if alt_cached and (now - alt_cached[0]) < ttl:
-                        cached = alt_cached
-                        break
+                for alt_depth in (4, 3, 2):
+                    if alt_depth >= max_depth:
+                        alt_cached = self._drive_folder_tree_cache.get(f"{fid}:{int(recursive)}:{alt_depth}")
+                        if alt_cached and (now - alt_cached[0]) < ttl:
+                            cached = alt_cached
+                            break
             if cached and (now - cached[0]) < ttl:
                 results[key] = list(cached[1])
             else:
@@ -871,14 +878,18 @@ class SheetsService:
         if not self.drive_service:
             return results
 
-        image_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff", ".gif")
+        image_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff", ".gif", ".jfif", ".avif")
         folder_mime = "application/vnd.google-apps.folder"
+        shortcut_mime = "application/vnd.google-apps.shortcut"
         collected: Dict[str, List[Dict[str, str]]] = {k: [] for k in pending_roots}
+        had_error = False
 
         # Mapa parent_folder_id -> Lista de (root_key, subcarpeta_label)
         current_level: Dict[str, List[tuple]] = {}
+        visited_folders = set()
         for r_key, r_fid in pending_roots.items():
             current_level.setdefault(r_fid, []).append((r_key, ""))
+            visited_folders.add(r_fid)
 
         depth = 0
         while current_level and depth <= max_depth:
@@ -894,7 +905,7 @@ class SheetsService:
                         with self._drive_api_lock:
                             res = self.drive_service.files().list(
                                 q=query,
-                                fields="nextPageToken,files(id,name,mimeType,parents,thumbnailLink)",
+                                fields="nextPageToken,files(id,name,mimeType,parents,thumbnailLink,shortcutDetails)",
                                 pageSize=1000,
                                 pageToken=page_token,
                                 supportsAllDrives=True,
@@ -913,27 +924,40 @@ class SheetsService:
                                     matched_owners.extend(current_level[p])
                             if not matched_owners:
                                 continue
-                            if mime_type == folder_mime:
-                                if recursive and depth < max_depth:
+                            eff_id = f_id
+                            eff_mime = mime_type
+                            if mime_type == shortcut_mime:
+                                sc = f.get("shortcutDetails") or {}
+                                target_id = sc.get("targetId", "")
+                                target_mime = sc.get("targetMimeType", "")
+                                if target_id:
+                                    eff_id = target_id
+                                if target_mime:
+                                    eff_mime = target_mime
+
+                            if eff_mime == folder_mime:
+                                if recursive and depth < max_depth and eff_id not in visited_folders:
+                                    visited_folders.add(eff_id)
                                     for r_key, _ in matched_owners:
-                                        next_level.setdefault(f_id, []).append((r_key, name))
-                            elif mime_type.startswith("image/") or name.lower().endswith(image_exts):
+                                        next_level.setdefault(eff_id, []).append((r_key, name))
+                            elif eff_mime.startswith("image/") or name.lower().endswith(image_exts):
                                 clean_name = os.path.splitext(name)[0].strip()
                                 t_link = f.get("thumbnailLink", "")
                                 for r_key, sub_label in matched_owners:
                                     collected[r_key].append({
-                                        "id": f_id,
+                                        "id": eff_id,
                                         "name": clean_name,
                                         "filename": name,
-                                        "link": f"https://drive.google.com/file/d/{f_id}/view",
+                                        "link": f"https://drive.google.com/file/d/{eff_id}/view",
                                         "subcarpeta": sub_label,
-                                        "mimeType": mime_type,
+                                        "mimeType": eff_mime,
                                         "thumbnailLink": t_link,
                                     })
                         page_token = res.get("nextPageToken")
                         if not page_token:
                             break
                 except Exception as e:
+                    had_error = True
                     print(f"[SheetsService] Error escaneando lote multi-carpeta Drive: {e}")
             if not recursive:
                 break
@@ -941,6 +965,7 @@ class SheetsService:
             depth += 1
 
         ts = time.time()
+        saved_any = False
         for r_key, r_fid in pending_roots.items():
             seen_ids = set()
             unique_files = []
@@ -949,18 +974,21 @@ class SheetsService:
                     seen_ids.add(f["id"])
                     unique_files.append(f)
             unique_files.sort(key=lambda x: x["name"].upper())
-            cache_key = f"{r_fid}:{int(recursive)}:{max_depth}"
-            self._drive_folder_tree_cache[cache_key] = (ts, unique_files)
+            if unique_files or not had_error:
+                cache_key = f"{r_fid}:{int(recursive)}:{max_depth}"
+                self._drive_folder_tree_cache[cache_key] = (ts, unique_files)
+                saved_any = True
             results[r_key] = list(unique_files)
 
-        self._save_disk_catalog_cache()
+        if saved_any:
+            self._save_disk_catalog_cache()
         return results
 
     def get_drive_folder_files(
         self,
         folder_id: str,
         recursive: bool = True,
-        max_depth: int = 2,
+        max_depth: int = 4,
         ttl: int = 1800,
     ) -> List[Dict[str, str]]:
         """Obtiene de forma ultra-rápida las imágenes de una carpeta de Google Drive (BFS por lotes + caché RAM/disco)."""

@@ -181,13 +181,17 @@ from services.sheets_service import sheets_service as _ss  # noqa: E402
 from modules.prompt_studio_v7 import (  # noqa: E402
     FOLDER_MUEBLES_RENDER_DRIVE_ID,
     FOLDER_MUEBLES_SUBIR_DRIVE_ID,
+    FOLDER_TELAS_DRIVE_ID,
+    FOLDER_TELAS_ODOO_DRIVE_ID,
     FURNITURE_FOLDER_CHOICES,
+    IMG_TYPES,
     LOCAL_COTIZACION_MUEBLES_DIR,
     LOCAL_RENDER_MUEBLES_DIR,
     LOCAL_SUBIR_MUEBLES_DIR,
     _build_zip as _build_zip_v7,
     _candidate_local_dirs,
     _get_search_preview_src,
+    _merge_telas_lists,
     _resolve_furniture_drive_id,
     filter_catalog_photos_by_name,
 )
@@ -211,6 +215,23 @@ check(
     and _ss._norm_drive_name("Cotización") == "cotizacion"
     and _resolve_furniture_drive_id("RENDER") == FOLDER_MUEBLES_RENDER_DRIVE_ID
     and _resolve_furniture_drive_id("SUBIR") == FOLDER_MUEBLES_SUBIR_DRIVE_ID,
+)
+
+_merged_telas = _merge_telas_lists(
+    [{"id": "t1", "name": "Boucle Marfil"}, {"id": "t2", "name": "Lino Arena"}],
+    [{"id": "t2", "name": "Lino Arena"}, {"id": "t3", "name": "Terciopelo Gris"}],
+)
+from pathlib import Path as _Path  # noqa: E402
+_cfg_toml = (_Path(__file__).resolve().parent.parent / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+check(
+    "telas combina TELAS + FOTOS TELAS sin duplicados y config.toml habilita subidas en iframe",
+    FOLDER_TELAS_DRIVE_ID == "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
+    and FOLDER_TELAS_ODOO_DRIVE_ID == "12gsKZVs6rFonOO8CIxokuE73bxhq8tS9"
+    and len(_merged_telas) == 3
+    and "jfif" in IMG_TYPES
+    and "avif" in IMG_TYPES
+    and "enableXsrfProtection = false" in _cfg_toml
+    and "enableCORS = false" in _cfg_toml,
 )
 
 _sample_cat = [

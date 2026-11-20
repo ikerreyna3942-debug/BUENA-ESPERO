@@ -24,6 +24,7 @@ LOCAL_RENDER_MUEBLES_DIR = Path(r"I:\Mi unidad\DOC ANIPA\Fotos general\Informaci
 LOCAL_SUBIR_MUEBLES_DIR = Path(r"G:\Mi unidad\DOC ANIPA\Fotos general\Fotos de del proyeto\SUBIR")
 LOCAL_COTIZACION_MUEBLES_DIR = Path(r"G:\Mi unidad\DOC ANIPA\Fotos general\Informacion de fotos\Cotizacipón")
 FOLDER_TELAS_DRIVE_ID = "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
+FOLDER_TELAS_ODOO_DRIVE_ID = "12gsKZVs6rFonOO8CIxokuE73bxhq8tS9"
 FOLDER_MADERAS_DRIVE_ID = "1Jq2u1A6-xKi1YigUYSIzLauUww_RJ5Lx"
 
 FURNITURE_FOLDER_CHOICES: Dict[str, str] = {
@@ -75,8 +76,8 @@ _FURNITURE_FOLDER_SPECS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-IMG_TYPES = ["png", "jpg", "jpeg", "webp", "bmp", "heic", "tiff"]
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff"}
+IMG_TYPES = ["png", "jpg", "jpeg", "webp", "bmp", "heic", "tiff", "jfif", "avif"]
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff", ".jfif", ".avif"}
 
 MATERIAL_MODES = {
     "Solo tela": "fabric_only",
@@ -156,6 +157,28 @@ def _resolve_furniture_drive_id(folder_key: str) -> str:
     return ""
 
 
+def _merge_telas_lists(*lists: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Combina fotos de TELAS y FOTOS TELAS (Odoo) sin duplicados por ID ni nombre."""
+    merged: List[Dict[str, str]] = []
+    seen_ids = set()
+    seen_names = set()
+    for lst in lists:
+        for item in lst or []:
+            fid = str(item.get("id") or "").strip()
+            nm_key = str(item.get("name") or "").strip().upper()
+            if fid and fid in seen_ids:
+                continue
+            if not fid and nm_key in seen_names:
+                continue
+            if fid:
+                seen_ids.add(fid)
+            if nm_key:
+                seen_names.add(nm_key)
+            merged.append(dict(item))
+    merged.sort(key=lambda x: str(x.get("name", "")).upper())
+    return merged
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_muebles_v7(folder_key: str = "ALL", refresh_tick: int = 0) -> List[Dict[str, str]]:
     """Lee muebles de RENDER, SUBIR y Cotización en un solo lote BFS (local G:/I: + Google Drive)."""
@@ -172,7 +195,7 @@ def cargar_muebles_v7(folder_key: str = "ALL", refresh_tick: int = 0) -> List[Di
             drive_by_key = sheets_service.get_multiple_drive_folders_files(
                 folder_map,
                 recursive=True,
-                max_depth=2,
+                max_depth=4,
                 ttl=1800,
             )
     except Exception:
@@ -211,7 +234,7 @@ def cargar_maderas_v7(include_drive: bool = True, refresh_tick: int = 0) -> List
                 drive_maderas = sheets_service.get_drive_folder_files(
                     FOLDER_MADERAS_DRIVE_ID,
                     recursive=True,
-                    max_depth=2,
+                    max_depth=4,
                     ttl=1800,
                 )
         except Exception:
@@ -224,12 +247,16 @@ def cargar_telas_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
     _ = refresh_tick
     try:
         if sheets_service.ensure_connected():
-            return sheets_service.get_drive_folder_files(
-                FOLDER_TELAS_DRIVE_ID,
+            batches = sheets_service.get_multiple_drive_folders_files(
+                {
+                    "TELAS": FOLDER_TELAS_DRIVE_ID,
+                    "TELAS_ODOO": FOLDER_TELAS_ODOO_DRIVE_ID,
+                },
                 recursive=True,
-                max_depth=2,
+                max_depth=4,
                 ttl=1800,
             )
+            return _merge_telas_lists(batches.get("TELAS", []), batches.get("TELAS_ODOO", []))
     except Exception:
         pass
     return []
@@ -239,7 +266,7 @@ def cargar_telas_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
 def cargar_todo_catalogo_v7(
     refresh_tick: int = 0,
 ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
-    """Carga muebles (RENDER, SUBIR, Cotización), telas y maderas en un solo BFS multi-raíz ultra-rápido."""
+    """Carga muebles (RENDER, SUBIR, Cotización), telas (TELAS + FOTOS TELAS) y maderas en un solo BFS multi-raíz."""
     _ = refresh_tick
     f_keys = ["RENDER", "SUBIR", "COTIZACION"]
     app_dir = Path(__file__).resolve().parent.parent
@@ -258,12 +285,13 @@ def cargar_todo_catalogo_v7(
                 "SUBIR": _resolve_furniture_drive_id("SUBIR"),
                 "COTIZACION": _resolve_furniture_drive_id("COTIZACION"),
                 "TELAS": FOLDER_TELAS_DRIVE_ID,
+                "TELAS_ODOO": FOLDER_TELAS_ODOO_DRIVE_ID,
                 "MADERAS": FOLDER_MADERAS_DRIVE_ID,
             }
             drive_batches = sheets_service.get_multiple_drive_folders_files(
                 folder_map,
                 recursive=True,
-                max_depth=2,
+                max_depth=4,
                 ttl=1800,
             )
     except Exception:
@@ -281,7 +309,10 @@ def cargar_todo_catalogo_v7(
                 item_copy["source"] = source_label
                 all_muebles.append(item_copy)
 
-    all_telas = list(drive_batches.get("TELAS", []))
+    all_telas = _merge_telas_lists(
+        drive_batches.get("TELAS", []),
+        drive_batches.get("TELAS_ODOO", []),
+    )
     seen_wood = {m["name"].upper() for m in local_maderas}
     all_maderas = local_maderas + [
         m for m in drive_batches.get("MADERAS", []) if m["name"].strip().upper() not in seen_wood
@@ -469,19 +500,41 @@ def _resolve_material_selector(
     picked_item = st.session_state.get(f"v7_picked_{kind}_{ck}")
     if isinstance(picked_item, dict) and picked_item.get("name"):
         p_up = picked_item["name"].strip().upper()
-        if not any(x.get("name", "").strip().upper() == p_up for x in items_list):
+        p_id = str(picked_item.get("id") or "").strip()
+        exists = any(
+            (p_id and str(x.get("id") or "").strip() == p_id)
+            or (not p_id and x.get("name", "").strip().upper() == p_up)
+            for x in items_list
+        )
+        if not exists:
             items_list = [picked_item] + items_list
 
     first_opt = f"{lbl} ({len(items_list)})..."
-    options = [first_opt] + [item["name"] for item in items_list]
+    display_map: Dict[str, Dict[str, str]] = {}
+    options: List[str] = [first_opt]
+    picked_target_lbl: Optional[str] = None
+    for item in items_list:
+        base_lbl = item["name"].strip() or item.get("filename") or lbl
+        sub = str(item.get("subcarpeta") or "").strip()
+        opt_lbl = base_lbl
+        if opt_lbl in display_map and sub:
+            opt_lbl = f"{base_lbl} · {sub}"
+        suffix = 2
+        while opt_lbl in display_map:
+            opt_lbl = f"{base_lbl} ({suffix})"
+            suffix += 1
+        display_map[opt_lbl] = item
+        options.append(opt_lbl)
+        if isinstance(picked_item, dict) and picked_target_lbl is None:
+            p_id = str(picked_item.get("id") or "").strip()
+            if (p_id and str(item.get("id") or "").strip() == p_id) or (
+                item.get("name", "").strip().upper() == picked_item.get("name", "").strip().upper()
+            ):
+                picked_target_lbl = opt_lbl
 
     sb_key = f"v7_sb_{kind}_{ck}"
-    if st.session_state.get(f"v7_apply_pick_{kind}_{ck}") and isinstance(picked_item, dict):
-        target_name = next(
-            (x["name"] for x in items_list if x["name"].strip().upper() == picked_item.get("name", "").strip().upper()),
-            first_opt,
-        )
-        st.session_state[sb_key] = target_name
+    if st.session_state.get(f"v7_apply_pick_{kind}_{ck}") and picked_target_lbl:
+        st.session_state[sb_key] = picked_target_lbl
         st.session_state[f"v7_apply_pick_{kind}_{ck}"] = False
     elif st.session_state.get(sb_key) not in options:
         st.session_state[sb_key] = first_opt
@@ -512,13 +565,12 @@ def _resolve_material_selector(
     else:
         st.session_state[f"v7_cur_up_sig_{kind}_{ck}"] = ""
 
-    if sel_name and sel_name != first_opt:
-        match = next((x for x in items_list if x["name"].upper() == sel_name.upper()), None)
-        if match:
-            loaded = _load_catalog_item_bytes(match)
-            if loaded:
-                src = "Local" if match.get("local_path") else "Drive"
-                return loaded, sel_name, src
+    if sel_name and sel_name in display_map:
+        match = display_map[sel_name]
+        loaded = _load_catalog_item_bytes(match)
+        if loaded:
+            src = "Local" if match.get("local_path") else "Drive"
+            return loaded, match.get("name") or sel_name, src
     return None, "", ""
 
 
@@ -1172,6 +1224,10 @@ div[data-baseweb="popover"] > div {
 
     tick = int(st.session_state.get("v7_render_tick", 0))
     all_muebles_cat, all_telas_cat, all_maderas_cat = cargar_todo_catalogo_v7(tick)
+    if not all_telas_cat and not st.session_state.get(f"v7_retried_telas_{tick}"):
+        st.session_state[f"v7_retried_telas_{tick}"] = True
+        cargar_todo_catalogo_v7.clear()
+        all_muebles_cat, all_telas_cat, all_maderas_cat = cargar_todo_catalogo_v7(tick)
 
     col_work, col_out = st.columns([1.18, 1.32], gap="small")
 
