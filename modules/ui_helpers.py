@@ -425,9 +425,8 @@ def render_preview_image(
         st.image(thumb, caption=caption or None, use_container_width=True)
 
 
-@st.cache_data(ttl=3600, max_entries=256, show_spinner=False)
 def load_drive_file_cached(file_id: str) -> Optional[bytes]:
-    """Descarga y cachea archivos de Drive durante 60 minutos para evitar re-descargas por rerun."""
+    """Descarga y cachea archivos de Drive en RAM sin envenenar caché con None si falla un intento."""
     if not file_id:
         return None
     from services.sheets_service import sheets_service

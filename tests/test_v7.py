@@ -382,5 +382,91 @@ check(
     and len(ODOO_DEST_FOLDERS) >= 5,
 )
 
+# 16. Permisos públicos "Cualquiera con el enlace" al subir y miniaturas privadas seguras
+class _FakeExec:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def execute(self):
+        return self._payload
+
+
+class _FakePermsApi:
+    def __init__(self, calls, list_perms=None):
+        self._calls = calls
+        self._list_perms = list_perms or []
+
+    def create(self, **kw):
+        self._calls.append(("perm_create", kw))
+        return _FakeExec({"id": "perm_anyone"})
+
+    def list(self, **kw):
+        self._calls.append(("perm_list", kw))
+        return _FakeExec({"permissions": self._list_perms})
+
+
+class _FakeFilesApi:
+    def __init__(self, calls, meta=None):
+        self._calls = calls
+        self._meta = meta or {}
+
+    def create(self, **kw):
+        self._calls.append(("file_create", kw))
+        return _FakeExec({"id": "new_file_123", "name": kw["body"]["name"], "webViewLink": "https://drive.google.com/file/d/new_file_123/view"})
+
+    def get(self, **kw):
+        self._calls.append(("file_get", kw))
+        return _FakeExec(self._meta)
+
+
+class _FakeDriveService:
+    def __init__(self, calls, meta=None, list_perms=None):
+        self._calls = calls
+        self._meta = meta or {}
+        self._list_perms = list_perms or []
+
+    def permissions(self):
+        return _FakePermsApi(self._calls, self._list_perms)
+
+    def files(self):
+        return _FakeFilesApi(self._calls, self._meta)
+
+
+_perm_calls = []
+_orig_drive = _ss.drive_service
+_orig_ensure = _ss.ensure_connected
+try:
+    _ss.ensure_connected = lambda: True
+    _ss.drive_service = _FakeDriveService(_perm_calls, meta={"id": "f_priv", "name": "PRIV", "permissions": [{"type": "user", "role": "owner"}]})
+    _priv_info = _ss.inspect_drive_item_permissions("f_priv")
+    _ss.drive_service = _FakeDriveService(_perm_calls, meta={"id": "f_pub", "name": "PUB", "permissions": [{"type": "anyone", "role": "reader"}]})
+    _pub_info = _ss.inspect_drive_item_permissions("f_pub")
+    _up_link = _ss.upload_image_bytes_to_drive(_buf.getvalue(), "SILLON_TEST.jpg", "folder_dest_1")
+finally:
+    _ss.drive_service = _orig_drive
+    _ss.ensure_connected = _orig_ensure
+
+_perm_creates = [kw for tag, kw in _perm_calls if tag == "perm_create"]
+check(
+    "subida asigna permiso anyone/reader con supportsAllDrives=True y revisa carpetas privadas vs públicas",
+    _priv_info["ok"] and not _priv_info["is_public"] and "Privado" in _priv_info["summary"]
+    and _pub_info["ok"] and _pub_info["is_public"] and "Público" in _pub_info["summary"]
+    and _up_link == "https://drive.google.com/file/d/new_file_123/view?usp=sharing"
+    and len(_perm_creates) == 1
+    and _perm_creates[0].get("fileId") == "new_file_123"
+    and _perm_creates[0].get("body") == {"role": "reader", "type": "anyone"}
+    and _perm_creates[0].get("supportsAllDrives") is True
+    and _ss._last_permission_status.get("new_file_123", (False, ""))[0] is True,
+)
+
+check(
+    "buscador nunca expone thumbnailLink privado/expirado directo al navegador",
+    _get_search_preview_src(
+        {"id": "uncached_priv_id", "name": "Privada", "thumbnailLink": "https://lh3.googleusercontent.com/private-expiring=s220"},
+        max_dim=180,
+        allow_network=False,
+    ) == "",
+)
+
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)
