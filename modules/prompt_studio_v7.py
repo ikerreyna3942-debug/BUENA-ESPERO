@@ -118,17 +118,28 @@ def _resolve_mueble_render_selector(ck: int) -> Tuple[List[bytes], List[str]]:
     refresh_opt = "🔄 Actualizar carpeta RENDER"
     options = [first_opt] + [item["name"] for item in catalog_items] + [refresh_opt]
 
+    sb_key = f"v7_sb_mueble_{ck}"
+    reset_key = f"{sb_key}__reset"
+    # Streamlit prohíbe modificar st.session_state[sb_key] DESPUÉS de crear el widget
+    # (StreamlitAPIException). Se hace ANTES de instanciarlo: si se pidió reiniciar
+    # (tras "Actualizar carpeta") o el valor guardado ya no existe en las opciones
+    # (p. ej. cambió el contador "RENDER (N)"), se vuelve a la primera opción.
+    if st.session_state.pop(reset_key, False) or (
+        sb_key in st.session_state and st.session_state[sb_key] not in options
+    ):
+        st.session_state[sb_key] = first_opt
+
     sel_name = st.selectbox(
         "Mueble RENDER",
         options,
         index=0,
-        key=f"v7_sb_mueble_{ck}",
+        key=sb_key,
         label_visibility="collapsed",
     )
     if sel_name == refresh_opt:
         sheets_service._drive_folder_tree_cache.clear()
         st.session_state["v7_render_tick"] = tick + 1
-        st.session_state[f"v7_sb_mueble_{ck}"] = first_opt
+        st.session_state[reset_key] = True  # se aplica en el próximo rerun, antes del widget
         st.rerun()
 
     up_mueble = st.file_uploader(
