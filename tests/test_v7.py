@@ -175,19 +175,24 @@ with _Image.open(_io.BytesIO(_fmt_room["png"])) as _out_room:
         _out_room.size == (2054, 2054) and _out_room.getpixel((0, 0))[0] < 255,
     )
 
-# 13. Helpers de URL Drive, carpetas de muebles (RENDER, SUBIR, Cotización) y diagnóstico de API key
+# 13. Helpers de URL Drive, carpetas de muebles (RENDER, Cotización, SM S Mueblería) y diagnóstico de API key
 from pathlib import PureWindowsPath as _PWP  # noqa: E402
 from services.sheets_service import sheets_service as _ss  # noqa: E402
 from modules.prompt_studio_v7 import (  # noqa: E402
     FOLDER_MUEBLES_RENDER_DRIVE_ID,
-    FOLDER_MUEBLES_SUBIR_DRIVE_ID,
+    FOLDER_MUEBLES_SM_MUEBLERIA_DRIVE_ID,
+    FOLDER_TELAS_DRIVE_ID,
+    FOLDER_TELAS_ODOO_DRIVE_ID,
     FURNITURE_FOLDER_CHOICES,
+    IMG_TYPES,
     LOCAL_COTIZACION_MUEBLES_DIR,
     LOCAL_RENDER_MUEBLES_DIR,
-    LOCAL_SUBIR_MUEBLES_DIR,
+    LOCAL_SM_MUEBLERIA_MUEBLES_DIR,
     _build_zip as _build_zip_v7,
     _candidate_local_dirs,
+    _extract_exact_photo_stem,
     _get_search_preview_src,
+    _merge_telas_lists,
     _resolve_furniture_drive_id,
     filter_catalog_photos_by_name,
 )
@@ -196,25 +201,42 @@ check(
     "extract_drive_id extrae ID limpio de link Drive",
     _ss.extract_drive_id("https://drive.google.com/file/d/1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B/view?usp=sharing")
     == "1lfq8VBF1q-Kg9m6_qd2GU5zxwEywYw_B"
-    and _ss.extract_drive_id("https://drive.google.com/drive/folders/1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX")
-    == "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX",
+    and _ss.extract_drive_id("https://drive.google.com/drive/folders/1P06GIuVHFPhQtE2kvPX-_JPA9A6N-qoF?usp=drive_link")
+    == "1P06GIuVHFPhQtE2kvPX-_JPA9A6N-qoF",
 )
 check(
-    "carpetas RENDER, SUBIR y Cotización configuradas para muebles",
+    "carpetas RENDER, Cotización y SM S Mueblería configuradas para muebles",
     FOLDER_MUEBLES_RENDER_DRIVE_ID == "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX"
+    and FOLDER_MUEBLES_SM_MUEBLERIA_DRIVE_ID == "1P06GIuVHFPhQtE2kvPX-_JPA9A6N-qoF"
     and _PWP(str(LOCAL_RENDER_MUEBLES_DIR)).name == "RENDER"
-    and _PWP(str(LOCAL_SUBIR_MUEBLES_DIR)).name == "SUBIR"
     and "Cotiz" in _PWP(str(LOCAL_COTIZACION_MUEBLES_DIR)).name
-    and set(FURNITURE_FOLDER_CHOICES.values()) == {"ALL", "RENDER", "SUBIR", "COTIZACION"}
-    and len(_candidate_local_dirs("SUBIR")) >= 1
+    and _PWP(str(LOCAL_SM_MUEBLERIA_MUEBLES_DIR)).name == "FOTOS SM S MUEBLERIA"
+    and set(FURNITURE_FOLDER_CHOICES.values()) == {"ALL", "RENDER", "COTIZACION", "SM_MUEBLERIA"}
     and len(_candidate_local_dirs("COTIZACION")) >= 1
+    and len(_candidate_local_dirs("SM_MUEBLERIA")) >= 1
     and _ss._norm_drive_name("Cotización") == "cotizacion"
     and _resolve_furniture_drive_id("RENDER") == FOLDER_MUEBLES_RENDER_DRIVE_ID
-    and _resolve_furniture_drive_id("SUBIR") == FOLDER_MUEBLES_SUBIR_DRIVE_ID,
+    and _resolve_furniture_drive_id("SM_MUEBLERIA") == FOLDER_MUEBLES_SM_MUEBLERIA_DRIVE_ID,
+)
+
+_merged_telas = _merge_telas_lists(
+    [{"id": "t1", "name": "Boucle Marfil"}, {"id": "t2", "name": "Lino Arena"}],
+    [{"id": "t2", "name": "Lino Arena"}, {"id": "t3", "name": "Terciopelo Gris"}],
+)
+_cfg_toml = (Path(__file__).resolve().parent.parent / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+check(
+    "telas combina TELAS + FOTOS TELAS sin duplicados y config.toml habilita subidas en iframe",
+    FOLDER_TELAS_DRIVE_ID == "1JKJPXcnPFPeoUOo_mBIUyl_KXM0Fn3Ul"
+    and FOLDER_TELAS_ODOO_DRIVE_ID == "12gsKZVs6rFonOO8CIxokuE73bxhq8tS9"
+    and len(_merged_telas) == 3
+    and "jfif" in IMG_TYPES
+    and "avif" in IMG_TYPES
+    and "enableXsrfProtection = false" in _cfg_toml
+    and "enableCORS = false" in _cfg_toml,
 )
 
 _sample_cat = [
-    {"name": "Sillón Ánkara", "filename": "sillon_ankara.jpg", "source": "SUBIR"},
+    {"name": "Sillón Ánkara", "filename": "sillon_ankara.jpg", "source": "SM S Mueblería"},
     {"name": "Mesa Parota Skanor", "filename": "mesa_parota.png", "source": "RENDER"},
     {"name": "Credenza Nórdica", "filename": "credenza_nordica.jpg", "source": "Cotización"},
 ]
@@ -242,9 +264,9 @@ _zip_bytes = _build_zip_v7(r_34_2054, include_images=True)
 with _zf.ZipFile(_io.BytesIO(_zip_bytes), "r") as _z:
     _names = _z.namelist()
     check(
-        "zip empaqueta prompts e insumos limpiamente",
-        any(n.startswith("prompts/") and n.endswith(".txt") for n in _names)
-        and any(n.startswith("insumos/") for n in _names),
+        "zip empaqueta prompts e insumos limpiamente con nombre exacto",
+        "prompts/SILLON_PRUEBA.txt" in _names
+        and "insumos/sillon.jpg" in _names,
     )
 
 # 14. Motor híbrido V1 + V7 para hacer tela (material fabric_only / dual / velvet guard / batch)
@@ -311,6 +333,53 @@ check(
     "V1+V7 vistas_tela inyecta análisis de tela en lote",
     "tightly twisted bouclé loops" in r_vt_ana["items"][0]["google_ai_studio"]
     and "INSTRUCTION:" in r_vt_ana["items"][0]["google_ai_studio"],
+)
+
+# 15. Botón copiar foto original debajo de cada foto (+50% más grande) + nombre exacto de foto original
+from modules.ui_helpers import prepare_exact_copy_image_bytes, render_loaded_photos_strip  # noqa: E402
+from modules.alta_fotos_hub import ODOO_DEST_FOLDERS, resolve_upload_filename  # noqa: E402
+import streamlit.components.v1 as _st_comp  # noqa: E402
+
+_exact_b, _exact_m = prepare_exact_copy_image_bytes(_buf.getvalue())
+with _Image.open(_io.BytesIO(_exact_b)) as _exact_img:
+    check(
+        "copiar foto conserva dimensiones originales exactas sin recorte",
+        _exact_img.size == (600, 400) and _exact_m in ("image/jpeg", "image/png"),
+    )
+
+_captured_html = []
+_orig_comp_html = _st_comp.html
+try:
+    _st_comp.html = lambda html_str, **kw: _captured_html.append((html_str, kw))
+    render_loaded_photos_strip(
+        [("SILLON ANKARA.jpg", _buf.getvalue(), "Mueble · SM S Mueblería"), ("TELA LINO.jpg", _buf.getvalue(), "Tela")],
+        key_prefix="test_strip",
+    )
+finally:
+    _st_comp.html = _orig_comp_html
+
+_strip_html = _captured_html[0][0] if _captured_html else ""
+check(
+    "tira de fotos cargadas muestra fotos 120x120 (+50%) con 1 botón Copiar original debajo de cada foto",
+    len(_captured_html) == 1
+    and "width: 120px;" in _strip_html
+    and "height: 120px;" in _strip_html
+    and "flex-direction: column;" in _strip_html
+    and _strip_html.count("📋 Copiar original") == 2
+    and _strip_html.find("<img class=\"thumb-img\"") < _strip_html.find("📋 Copiar original"),
+)
+
+check(
+    "prompts y alta de fotos conservan exactamente el mismo nombre de la foto cargada",
+    _extract_exact_photo_stem("SILLON ANKARA BEIGE.jpg") == "SILLON ANKARA BEIGE"
+    and r_34_2054["items"][0].get("output_filename") == "SILLON_PRUEBA.png"
+    and "OUTPUT FILE NAME: SILLON_PRUEBA.png" in r_34_2054["items"][0]["google_ai_studio"]
+    and "OUTPUT FILE NAME: SILLON_PRUEBA.png" in r_34_2054["items"][0]["chatgpt_dalle3"]
+    and r_vt_ana["items"][0].get("output_filename") == "frente.png"
+    and "OUTPUT FILE NAME: frente.png" in r_vt_ana["items"][0]["google_ai_studio"]
+    and resolve_upload_filename("gen_ai_01.png", "SILLON ANKARA BEIGE", 1, 1, False) == ("SILLON ANKARA BEIGE.png", "SILLON ANKARA BEIGE")
+    and resolve_upload_filename("gen_ai_02.jpg", "SILLON ANKARA BEIGE", 2, 2, True) == ("SILLON ANKARA BEIGE_2.png", "SILLON ANKARA BEIGE_2")
+    and len(ODOO_DEST_FOLDERS) >= 5,
 )
 
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
