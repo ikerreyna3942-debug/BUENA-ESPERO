@@ -263,10 +263,32 @@ _zip_bytes = _build_zip_v7(r_34_2054, include_images=True)
 with _zf.ZipFile(_io.BytesIO(_zip_bytes), "r") as _z:
     _names = _z.namelist()
     check(
-        "zip empaqueta prompts e insumos limpiamente",
-        any(n.startswith("prompts/") and n.endswith(".txt") for n in _names)
-        and any(n.startswith("insumos/") for n in _names),
+        "zip empaqueta prompts e insumos limpiamente con nombre exacto",
+        "prompts/SILLON_PRUEBA.txt" in _names
+        and "insumos/sillon.jpg" in _names,
     )
+
+# 14. Botón copiar foto original tal cual + mismo nombre exacto en prompts + Alta de Fotos unificada
+from modules.ui_helpers import prepare_exact_copy_image_bytes  # noqa: E402
+from modules.prompt_studio_v7 import _extract_exact_photo_stem  # noqa: E402
+from modules.alta_fotos_hub import ODOO_DEST_FOLDERS, resolve_upload_filename  # noqa: E402
+
+_exact_b, _exact_m = prepare_exact_copy_image_bytes(_buf.getvalue())
+with _Image.open(_io.BytesIO(_exact_b)) as _exact_img:
+    check(
+        "copiar foto conserva dimensiones originales exactas sin recorte",
+        _exact_img.size == (600, 400) and _exact_m in ("image/jpeg", "image/png"),
+    )
+
+check(
+    "prompts y alta de fotos conservan exactamente el mismo nombre de la foto cargada",
+    _extract_exact_photo_stem("SILLON ANKARA BEIGE.jpg") == "SILLON ANKARA BEIGE"
+    and r_34_2054["items"][0].get("output_filename") == "SILLON_PRUEBA.png"
+    and "OUTPUT FILE NAME: SILLON_PRUEBA.png" in r_34_2054["items"][0]["google_ai_studio"]
+    and resolve_upload_filename("gen_ai_01.png", "SILLON ANKARA BEIGE", 1, 1, False) == ("SILLON ANKARA BEIGE.png", "SILLON ANKARA BEIGE")
+    and resolve_upload_filename("gen_ai_02.jpg", "SILLON ANKARA BEIGE", 2, 2, True) == ("SILLON ANKARA BEIGE_2.png", "SILLON ANKARA BEIGE_2")
+    and len(ODOO_DEST_FOLDERS) >= 5,
+)
 
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)

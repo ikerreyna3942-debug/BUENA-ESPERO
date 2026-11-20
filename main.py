@@ -111,30 +111,50 @@ def main():
         unsafe_allow_html=True,
     )
 
-    c_ver, c_links = st.columns([0.85, 4.15], vertical_alignment="center")
-    with c_ver:
-        ver_raw = st.selectbox(
-            "Versión:",
-            ["🤖 V7", "V6", "V5", "V4", "V3", "V2", "V1"],
-            index=0,
-            key="sidebar_version",
+    if st.session_state.get("unified_active_app") not in ("🤖 Prompts + IA", "🚀 Alta de Fotos"):
+        st.session_state["unified_active_app"] = "🤖 Prompts + IA"
+
+    c_app, c_ver, c_links = st.columns([1.15, 0.72, 3.13], vertical_alignment="center")
+    with c_app:
+        active_app = st.selectbox(
+            "App:",
+            ["🤖 Prompts + IA", "🚀 Alta de Fotos"],
+            key="unified_active_app",
             label_visibility="collapsed",
         )
-        version = "V7" if "V7" in ver_raw else ver_raw
+    with c_ver:
+        if active_app == "🤖 Prompts + IA":
+            ver_raw = st.selectbox(
+                "Versión:",
+                ["🤖 V7", "V6", "V5", "V4", "V3", "V2", "V1"],
+                index=0,
+                key="sidebar_version",
+                label_visibility="collapsed",
+            )
+            version = "V7" if "V7" in ver_raw else ver_raw
+        else:
+            version = "V7"
+            if st.button("← Prompts", use_container_width=True, key="btn_back_prompts"):
+                st.session_state["unified_active_app"] = "🤖 Prompts + IA"
+                st.rerun()
     with c_links:
         st.markdown(
             """
             <div class="top-nav-links">
                 <a class="folder-pill" href="https://drive.google.com/drive/folders/1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX" target="_blank">📁 RENDER</a>
                 <a href="https://docs.google.com/spreadsheets/d/1ZCLZppO5AH06Wp2gVuxMoaeX3oJwVHgTjRZ7hlqb6eg/edit?gid=876651849#gid=876651849" target="_blank">📊 Sheets</a>
-                <a href="https://app-1-3y7y.onrender.com/" target="_blank">🚀 Odoo</a>
-                <a href="https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/" target="_blank">⚡ AI Studio</a>
+                <a class="folder-pill" href="https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/" target="_blank">⚡ AI Studio</a>
                 <a href="https://accounts.google.com/AccountChooser?continue=https://gemini.google.com/app" target="_blank">♊ Gemini</a>
                 <a href="https://chatgpt.com/" target="_blank">🤖 ChatGPT</a>
             </div>
             """,
             unsafe_allow_html=True,
         )
+
+    if active_app == "🚀 Alta de Fotos":
+        from modules.alta_fotos_hub import render_alta_fotos_hub
+        render_alta_fotos_hub()
+        return
 
     if version == "V7":
         from modules.prompt_studio_v7 import render_prompt_studio_v7

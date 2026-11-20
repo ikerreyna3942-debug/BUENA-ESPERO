@@ -2073,6 +2073,25 @@ class AIPromptServiceV7:
             master_dal = "\n\n".join(f"=== {it['label'].upper()} ===\n{it['chatgpt_dalle3']}" for it in items)
             midjourney = items[0]["midjourney_v6"] if items else ""
 
+        clean_base_name = os.path.splitext(str(furniture_name or "Mueble").strip())[0].strip() or "Mueble"
+        for idx_it, it in enumerate(items, start=1):
+            if mode in ("vistas_tela", "clonar_color") and batch_views and idx_it <= len(batch_views):
+                v_stem = os.path.splitext(str(batch_views[idx_it - 1][0] or clean_base_name).strip())[0].strip() or clean_base_name
+                out_fname = f"{v_stem}.png"
+            elif len(items) == 1 or idx_it == 1:
+                out_fname = f"{clean_base_name}.png"
+            else:
+                out_fname = f"{clean_base_name}_{idx_it}.png"
+            it["output_filename"] = out_fname
+            name_note = (
+                f"\nOUTPUT FILE NAME: {out_fname} "
+                "(keep this exact original photo filename for delivery/saving; do NOT render any filename text inside the image)."
+            )
+            if it.get("google_ai_studio") and "OUTPUT FILE NAME:" not in it["google_ai_studio"]:
+                it["google_ai_studio"] = it["google_ai_studio"].rstrip() + name_note
+            if it.get("chatgpt_dalle3") and "OUTPUT FILE NAME:" not in it["chatgpt_dalle3"]:
+                it["chatgpt_dalle3"] = it["chatgpt_dalle3"].rstrip() + name_note
+
         dims_summary_dict = {
             "category": profile["category"],
             "sub_category": profile["sub_category"],
@@ -2120,7 +2139,9 @@ class AIPromptServiceV7:
         wa = wood_analysis or {}
         fa = fabric_analysis or {}
 
-        furn_item = (tipo_mueble or "").strip() or ma.get("furniture_item") or furniture_name or "Furniture Piece"
+        clean_base_name = os.path.splitext(str(furniture_name or "Mueble").strip())[0].strip() or "Mueble"
+        out_fname = f"{clean_base_name}.png"
+        furn_item = (tipo_mueble or "").strip() or ma.get("furniture_item") or clean_base_name or "Furniture Piece"
         geom_struct = ma.get("geometric_structure") or "exact 3D silhouette, proportions, and joinery from the reference"
         existing_mats = ma.get("existing_materials") or "authentic materials, tones, and finishes from the reference"
         user_notes_clean = (notas_usuario or "").strip()
@@ -2164,10 +2185,14 @@ class AIPromptServiceV7:
         notes_dal = f" Mandatory user directives: {user_notes_clean}." if user_notes_clean else ""
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
+        name_note = (
+            f"\nOUTPUT FILE NAME: {out_fname} "
+            "(keep this exact original photo filename for delivery/saving; do NOT render any filename text inside the image)."
+        )
 
         prompt_ais = (
             "[COMMERCIAL MASTER CUTOUT · 3/4 FACING RIGHT · PURE WHITE #FFFFFF · ZERO SHADOWS · 2054x2054 PX]\n"
-            f"TASK: Generate ONE standalone ultra-sharp commercial catalog photograph of '{furn_item}' ('{furniture_name}') "
+            f"TASK: Generate ONE standalone ultra-sharp commercial catalog photograph of '{furn_item}' ('{clean_base_name}') "
             "in a 3/4 perspective facing toward the RIGHT, isolated on pure solid white (#FFFFFF) with ABSOLUTELY ZERO SHADOWS, "
             "formatted at exact 1:1 square 2054x2054 px proportions.\n\n"
             f"{slots['header_block']}\n\n"
@@ -2183,15 +2208,17 @@ class AIPromptServiceV7:
             "- OPTICS: 100MP medium-format camera, 80mm prime lens at f/11, even shadowless 5400K wrap-around softbox lighting, tack-sharp micro-texture edge-to-edge.\n\n"
             "Exclude: ground shadow, contact shadow, drop shadow, cast shadow, under-furniture shadow, floor reflection, grey floor, studio backdrop gradient, facing left, frontal 0-degree flat angle, collage, text, watermark, CGI plastic sheen"
             f"{profile['neg_add']}."
+            f"{name_note}"
         )
 
         prompt_dal = (
-            f"Standalone 2054x2054 px (1:1 square) commercial catalog photograph of a single {furn_item} ('{furniture_name}').\n"
+            f"Standalone 2054x2054 px (1:1 square) commercial catalog photograph of a single {furn_item} ('{clean_base_name}').\n"
             f"Camera & Orientation: {angle_right_ais} Centered in a 1:1 square 2054x2054 frame with balanced white margins.\n"
             "Background & Zero-Shadow Rule: Pure seamless solid digital white (#FFFFFF, RGB 255,255,255) with ABSOLUTELY ZERO SHADOWS — 0% ground shadow, 0% leg contact shadow, 0% drop shadow, and 0% floor reflection.\n"
             f"Materials & Casco Texture: {mat_dal}\n"
             f"Structure & Proportions: {profile['geometry_rule']} {profile['dimensions_rule']}{notes_dal}\n"
             f"Avoid: any shadows, contact shadow, floor line, reflections, facing left, collage, text, watermarks, CGI plastic look{profile['neg_add']}."
+            f"{name_note}"
         )
 
         prompt_mj = (
@@ -2209,6 +2236,7 @@ class AIPromptServiceV7:
             "google_ai_studio": prompt_ais,
             "chatgpt_dalle3": prompt_dal,
             "midjourney_v6": prompt_mj,
+            "output_filename": out_fname,
             "checklist": [
                 "¿Está en posición 3/4 mirando hacia la derecha?",
                 "¿Fondo blanco puro (#FFFFFF) y 0% sombras (ni debajo de las patas ni alrededor)?",

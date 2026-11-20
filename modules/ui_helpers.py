@@ -10,8 +10,14 @@ import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 
 
-def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = "cp") -> None:
-    """Renderiza un botón HTML/JS seguro para copiar texto UTF-8 al portapapeles."""
+def render_copy_button(
+    text: str,
+    label: str = "📋 Copiar Prompt",
+    key: str = "cp",
+    extra_link_url: str = "",
+    extra_link_label: str = "",
+) -> None:
+    """Renderiza un botón HTML/JS seguro para copiar texto UTF-8 al portapapeles (con acceso opcional a AI Studio)."""
     if text is None:
         text = ""
     b64_text = base64.b64encode(text.encode("utf-8")).decode("ascii")
@@ -24,15 +30,31 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+    extra_html = ""
+    if extra_link_url and extra_link_label:
+        safe_url = extra_link_url.replace('"', "&quot;")
+        safe_extra = (
+            extra_link_label.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        extra_html = f"""
+        <a href="{safe_url}" target="_blank" rel="noopener" style="
+            background:#1e293b;border:1px solid #38bdf8;color:#7dd3fc;
+            text-decoration:none;padding:3px 9px;border-radius:5px;
+            font-size:11px;font-weight:600;white-space:nowrap;
+        ">{safe_extra}</a>
+        """
 
     html_code = f"""
-    <div style="display:flex;align-items:center;gap:6px;margin:2px 0 4px 0;font-family:sans-serif;">
+    <div style="display:flex;align-items:center;gap:6px;margin:2px 0 4px 0;font-family:sans-serif;flex-wrap:wrap;">
         <button id="{btn_id}" style="
             background:linear-gradient(135deg,#0284c7,#0ea5e9);
             color:#ffffff;border:none;padding:4px 10px;border-radius:5px;
             font-size:11.5px;font-weight:600;cursor:pointer;
             box-shadow:0 1px 4px rgba(2,132,199,0.3);transition:transform 0.1s ease;
         ">{safe_label}</button>
+        {extra_html}
         <span id="{msg_id}" style="font-size:11px;color:#4ade80;font-weight:600;display:none;">
             ✅ Copiado
         </span>
@@ -80,7 +102,33 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
     }})();
     </script>
     """
-    components.html(html_code, height=32)
+    components.html(html_code, height=34)
+
+
+@st.cache_data(max_entries=128, show_spinner=False)
+def prepare_exact_copy_image_bytes(raw_bytes: bytes) -> tuple[bytes, str]:
+    """Prepara la imagen original tal cual (sin recorte ni pérdida de proporción) para copiar al portapapeles."""
+    if not raw_bytes:
+        return b"", "image/png"
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            img = ImageOps.exif_transpose(img)
+            fmt = (img.format or "").upper()
+            # Si ya es PNG o JPEG estándar y pesa <= 4.5 MB, conservar bytes originales tal cual
+            if fmt in ("PNG", "JPEG", "JPG") and len(raw_bytes) <= 4_500_000 and img.mode in ("RGB", "RGBA"):
+                mime = "image/png" if fmt == "PNG" else "image/jpeg"
+                return raw_bytes, mime
+            out = io.BytesIO()
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGBA")
+                img.save(out, format="PNG", optimize=True)
+                return out.getvalue(), "image/png"
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(out, format="JPEG", quality=96, subsampling=0, optimize=True)
+            return out.getvalue(), "image/jpeg"
+    except Exception:
+        return raw_bytes, "image/jpeg"
 
 
 @st.cache_data(max_entries=256, show_spinner=False)
@@ -106,6 +154,169 @@ def make_thumbnail_bytes(raw_bytes: bytes, max_dim: int = 480) -> bytes:
             return out.getvalue()
     except Exception:
         return raw_bytes
+
+
+def render_loaded_photos_strip(thumbs: list[tuple[str, bytes, str]], key_prefix: str = "v7") -> None:
+    """Muestra las fotos cargadas (76×76 px con zoom) con un botón directo 📋 Copiar al lado de cada foto para copiarla tal cual."""
+    if not thumbs:
+        return
+
+    card_blocks: list[str] = []
+    js_entries: list[str] = []
+
+    for idx, (lbl, raw_b, badge) in enumerate(thumbs):
+        if not raw_b:
+            continue
+        t_bytes = make_thumbnail_bytes(raw_b, max_dim=240)
+        if not t_bytes:
+            continue
+        exact_bytes, exact_mime = prepare_exact_copy_image_bytes(raw_b)
+        b64_thumb = base64.b64encode(t_bytes).decode("ascii")
+        b64_exact = base64.b64encode(exact_bytes).decode("ascii")
+        uid = hashlib.md5(f"{key_prefix}_{idx}_{lbl}_{len(raw_b)}".encode("utf-8")).hexdigest()[:8]
+        btn_id = f"cpimg_{uid}"
+        msg_id = f"cpmsg_{uid}"
+
+        clean_lbl = (lbl or "foto.jpg").strip()
+        safe_lbl = clean_lbl[:26].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe_title = clean_lbl.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        safe_badge = (badge or "Cargada")[:16].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        dl_name = clean_lbl if "." in clean_lbl else f"{clean_lbl}.png"
+        safe_dl = dl_name.replace("\\", "_").replace('"', "").replace("'", "")
+
+        card_blocks.append(
+            f'<div class="thumb-card" title="{safe_badge}: {safe_title}">'
+            f'<img class="thumb-img" src="data:image/jpeg;base64,{b64_thumb}" alt="{safe_title}" />'
+            f'<div class="thumb-meta">'
+            f'<span class="thumb-badge">✅ {safe_badge}</span>'
+            f'<span class="thumb-name">{safe_lbl}</span>'
+            f'<div class="thumb-actions">'
+            f'<button type="button" id="{btn_id}" class="cp-btn" title="Copiar foto original tal cual al portapapeles">📋 Copiar</button>'
+            f'<span id="{msg_id}" class="cp-msg"></span>'
+            f'</div>'
+            f'</div>'
+            f'</div>'
+        )
+        js_entries.append(
+            f'bindCopy("{btn_id}", "{msg_id}", "data:{exact_mime};base64,{b64_exact}", "{safe_dl}");'
+        )
+
+    if not card_blocks:
+        return
+
+    rows_est = max(1, (len(card_blocks) + 1) // 2)
+    comp_height = min(320, 102 * rows_est + 12)
+
+    html_doc = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8" />
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+        body {{ background: transparent; padding: 2px 0; overflow-x: hidden; }}
+        .strip {{ display: flex; flex-wrap: wrap; gap: 7px; align-items: stretch; }}
+        .thumb-card {{
+            display: flex; align-items: center; gap: 8px;
+            background: #0F172A; border: 1px solid #0284C7;
+            border-radius: 8px; padding: 5px 8px 5px 5px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+            max-width: 100%;
+        }}
+        .thumb-img {{
+            width: 76px; height: 76px; object-fit: cover;
+            border-radius: 6px; display: block; flex-shrink: 0;
+            transition: transform 0.18s ease;
+        }}
+        .thumb-img:hover {{ transform: scale(1.22); z-index: 10; }}
+        .thumb-meta {{
+            display: flex; flex-direction: column; gap: 3px;
+            min-width: 0; max-width: 150px;
+        }}
+        .thumb-badge {{ font-size: 10px; color: #4ADE80; font-weight: 700; white-space: nowrap; }}
+        .thumb-name {{
+            font-size: 11px; color: #F8FAFC; font-weight: 600;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }}
+        .thumb-actions {{ display: flex; align-items: center; gap: 5px; margin-top: 2px; }}
+        .cp-btn {{
+            background: linear-gradient(135deg, #0284C7, #0EA5E9);
+            color: #FFFFFF; border: none; border-radius: 5px;
+            padding: 3px 8px; font-size: 10.5px; font-weight: 700;
+            cursor: pointer; white-space: nowrap;
+        }}
+        .cp-btn:hover {{ filter: brightness(1.1); }}
+        .cp-btn:active {{ transform: scale(0.96); }}
+        .cp-msg {{ font-size: 10px; font-weight: 700; color: #4ADE80; white-space: nowrap; }}
+    </style>
+    </head>
+    <body>
+        <div class="strip">{"".join(card_blocks)}</div>
+        <script>
+        (function() {{
+            function dataUriToPngBlob(dataUri) {{
+                return new Promise(function(resolve, reject) {{
+                    var img = new Image();
+                    img.onload = function() {{
+                        try {{
+                            var c = document.createElement("canvas");
+                            c.width = img.naturalWidth || img.width;
+                            c.height = img.naturalHeight || img.height;
+                            var ctx = c.getContext("2d");
+                            ctx.drawImage(img, 0, 0);
+                            c.toBlob(function(blob) {{
+                                if (blob) resolve(blob);
+                                else reject(new Error("toBlob failed"));
+                            }}, "image/png");
+                        }} catch (e) {{ reject(e); }}
+                    }};
+                    img.onerror = function() {{ reject(new Error("img load failed")); }};
+                    img.src = dataUri;
+                }});
+            }}
+
+            function triggerFallbackDownload(dataUri, fileName) {{
+                var a = document.createElement("a");
+                a.href = dataUri;
+                a.download = fileName || "foto.png";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }}
+
+            function bindCopy(btnId, msgId, dataUri, fileName) {{
+                var btn = document.getElementById(btnId);
+                var msg = document.getElementById(msgId);
+                if (!btn) return;
+                btn.addEventListener("click", async function() {{
+                    btn.disabled = true;
+                    if (msg) msg.textContent = "...";
+                    try {{
+                        if (navigator.clipboard && window.ClipboardItem) {{
+                            var pngBlob = await dataUriToPngBlob(dataUri);
+                            await navigator.clipboard.write([new ClipboardItem({{ "image/png": pngBlob }})]);
+                            if (msg) msg.textContent = "✅ Copiada";
+                        }} else {{
+                            triggerFallbackDownload(dataUri, fileName);
+                            if (msg) msg.textContent = "💾 Descargada";
+                        }}
+                    }} catch (err) {{
+                        triggerFallbackDownload(dataUri, fileName);
+                        if (msg) msg.textContent = "💾 Descargada";
+                    }} finally {{
+                        btn.disabled = false;
+                        setTimeout(function() {{ if (msg) msg.textContent = ""; }}, 2200);
+                    }}
+                }});
+            }}
+
+            {" ".join(js_entries)}
+        }})();
+        </script>
+    </body>
+    </html>
+    """
+    components.html(html_doc, height=comp_height, scrolling=False)
 
 
 def _extract_bytes(img_data: Union[bytes, bytearray, str, Path, Image.Image, object]) -> Optional[bytes]:

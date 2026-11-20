@@ -9,7 +9,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import streamlit as st
 
 from modules.sku_banner import render_sku_autofill_bar
-from modules.ui_helpers import load_drive_file_cached, make_thumbnail_bytes, render_copy_button
+from modules.ui_helpers import (
+    load_drive_file_cached,
+    make_thumbnail_bytes,
+    render_copy_button,
+    render_loaded_photos_strip,
+)
 from services.ai_prompt_service_v7 import (
     ALL_SINGLE_VIEWS,
     MODES,
@@ -574,33 +579,21 @@ def _resolve_material_selector(
     return None, "", ""
 
 
-def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]]) -> None:
-    """Muestra vistas previas más grandes y nítidas (76×76 px) de las fotos seleccionadas/cargadas."""
+def _extract_exact_photo_stem(filename: str, fallback: str = "Mueble") -> str:
+    """Devuelve el nombre exacto de la foto cargada sin extensión (preservando mayúsculas/espacios originales)."""
+    raw = os.path.basename(str(filename or "").strip())
+    if raw:
+        stem = os.path.splitext(raw)[0].strip()
+        if stem:
+            return stem
+    return (fallback or "Mueble").strip()
+
+
+def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]], key_prefix: str = "v7") -> None:
+    """Muestra las fotos cargadas (76×76 px) con botón directo 📋 Copiar al lado para copiar la foto tal cual."""
     if not thumbs:
         return
-    cards: List[str] = []
-    for lbl, raw_b, badge in thumbs:
-        t_bytes = make_thumbnail_bytes(raw_b, max_dim=240)
-        if not t_bytes:
-            continue
-        b64 = base64.b64encode(t_bytes).decode("ascii")
-        safe_lbl = (lbl or "")[:24].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        safe_badge = (badge or "Cargada")[:16].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        cards.append(
-            f'<div class="selected-thumb-card" style="display:flex;align-items:center;gap:8px;background:#0F172A;border:1px solid #0284C7;'
-            f'border-radius:8px;padding:4px 8px 4px 4px;box-shadow:0 2px 8px rgba(0,0,0,0.35);" title="{safe_badge}: {safe_lbl}">'
-            f'<img class="selected-photo-thumb" src="data:image/jpeg;base64,{b64}" style="width:76px;height:76px;object-fit:cover;border-radius:6px;display:block;flex-shrink:0;transition:transform 0.18s ease;" />'
-            f'<div style="display:flex;flex-direction:column;gap:2px;line-height:1.25;">'
-            f'<span style="font-size:10px;color:#4ADE80;font-weight:700;white-space:nowrap;">✅ {safe_badge}</span>'
-            f'<span style="font-size:11px;color:#F8FAFC;font-weight:600;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_lbl}</span>'
-            f'</div>'
-            f'</div>'
-        )
-    if cards:
-        st.markdown(
-            f'<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:4px;">{"".join(cards)}</div>',
-            unsafe_allow_html=True,
-        )
+    render_loaded_photos_strip(thumbs, key_prefix=key_prefix)
 
 
 @st.cache_data(ttl=3600, max_entries=256, show_spinner=False)
@@ -995,29 +988,36 @@ def _build_zip(res: Dict[str, Any], include_images: bool = False) -> bytes:
         for i, it in enumerate(res.get("items", []), start=1):
             guide = it.get("attachment_guide") or []
             guide_txt = "\n".join(f"  - {g}" for g in guide) if guide else "  - Image 1: Foto del mueble"
+            out_fname = it.get("output_filename") or (f"{mueble_slug}.png" if i == 1 else f"{mueble_slug}_{i}.png")
+            out_stem = os.path.splitext(out_fname)[0]
             body = (
+                f"=== NOMBRE EXACTO DE SALIDA ===\n  {out_fname}\n\n"
                 f"=== ORDEN DE IMÁGENES ===\n{guide_txt}\n\n"
                 f"--- GOOGLE AI STUDIO / GEMINI ---\n{it.get('google_ai_studio', '')}\n\n"
                 f"--- CHATGPT ---\n{it.get('chatgpt_dalle3', '')}\n\n"
                 f"--- MIDJOURNEY ---\n{it.get('midjourney_v6', '')}\n"
             )
-            z.writestr(f"prompts/{i:02d}_{it['id']}.txt", body)
+            z.writestr(f"prompts/{out_stem}.txt", body)
 
             gen_photo = it.get("generated_photo")
             if isinstance(gen_photo, dict) and gen_photo.get("png"):
-                fname_png = f"{i:02d}_{mueble_slug}_{it['id']}_2054x2054.png"
-                z.writestr(f"fotos_generadas_2054/{fname_png}", gen_photo["png"])
+                z.writestr(f"fotos_generadas/{out_fname}", gen_photo["png"])
 
         if res.get("master_ais"):
             z.writestr(
-                "prompts/00_prompt_maestro_secuencial.txt",
+                f"prompts/00_{mueble_slug}_maestro.txt",
                 res["master_ais"] + "\n\n====================\n\n" + res.get("master_dal", ""),
             )
 
         if include_images:
+            seen_in = set()
             for idx, (fname, raw) in enumerate(res.get("ref_images", []), start=1):
                 safe_name = os.path.basename(fname or f"ref_{idx}.jpg")
-                z.writestr(f"insumos/{idx:02d}_{safe_name}", raw)
+                if safe_name in seen_in:
+                    base_s, ext_s = os.path.splitext(safe_name)
+                    safe_name = f"{base_s}_{idx}{ext_s}"
+                seen_in.add(safe_name)
+                z.writestr(f"insumos/{safe_name}", raw)
     return buf.getvalue()
 
 
@@ -1025,11 +1025,23 @@ def _render_item(item: Dict[str, Any], idx: int, ck: int, gen_id: int) -> None:
     t_ais, t_dal, t_mj = st.tabs(["AI Studio", "ChatGPT", "Midjourney"])
     with t_ais:
         txt = item.get("google_ai_studio", "")
-        render_copy_button(txt, label="📋 Copiar", key=f"v7_cp_ais_{idx}_{ck}_{gen_id}")
+        render_copy_button(
+            txt,
+            label="📋 Copiar",
+            key=f"v7_cp_ais_{idx}_{ck}_{gen_id}",
+            extra_link_url="https://accounts.google.com/AccountChooser?continue=https://aistudio.google.com/",
+            extra_link_label="⚡ AI Studio",
+        )
         st.text_area("Prompt", txt, height=165, key=f"v7_ais_{idx}_{ck}_{gen_id}", label_visibility="collapsed")
     with t_dal:
         txt = item.get("chatgpt_dalle3", "")
-        render_copy_button(txt, label="📋 Copiar", key=f"v7_cp_dal_{idx}_{ck}_{gen_id}")
+        render_copy_button(
+            txt,
+            label="📋 Copiar",
+            key=f"v7_cp_dal_{idx}_{ck}_{gen_id}",
+            extra_link_url="https://chatgpt.com/",
+            extra_link_label="🤖 ChatGPT",
+        )
         st.text_area("Prompt", txt, height=165, key=f"v7_dal_{idx}_{ck}_{gen_id}", label_visibility="collapsed")
     with t_mj:
         txt = item.get("midjourney_v6", "")
@@ -1391,7 +1403,7 @@ div[data-baseweb="popover"] > div {
             for vn, vb in batch_views_files[:2]:
                 thumbs.append((vn, vb, "🖼️ Vista"))
 
-            _render_mini_thumbs(thumbs)
+            _render_mini_thumbs(thumbs, key_prefix=f"v7_{ck}")
 
         # ------------------------------------------------------------------ BOTÓN 2: 3/4 DERECHA · BLANCO SIN SOMBRA · 2054×2054
         if btn_34_der:
@@ -1402,7 +1414,10 @@ div[data-baseweb="popover"] > div {
             else:
                 with st.spinner("Generando 3/4 Derecha..."):
                     try:
-                        name = sku_code or (target_furn_names[0].rsplit(".", 1)[0] if target_furn_names else "Mueble")
+                        name = _extract_exact_photo_stem(
+                            target_furn_names[0] if target_furn_names else "",
+                            fallback=sku_code or "Mueble",
+                        )
                         notas_ia = "\n".join(
                             p for p in [
                                 f"Tipo de mueble: {tipo}" if tipo else "",
@@ -1432,9 +1447,9 @@ div[data-baseweb="popover"] > div {
 
                         ref_imgs = list(zip(target_furn_names, target_furn_bytes))
                         if wood_bytes:
-                            ref_imgs.append((f"madera_{wood_name or 'muestra'}.jpg", wood_bytes))
+                            ref_imgs.append((f"{_extract_exact_photo_stem(wood_name, 'madera')}.jpg", wood_bytes))
                         if fabric_bytes:
-                            ref_imgs.append((f"tela_{fabric_name or 'muestra'}.jpg", fabric_bytes))
+                            ref_imgs.append((f"{_extract_exact_photo_stem(fabric_name, 'tela')}.jpg", fabric_bytes))
 
                         gen_key = f"v7_gen_id_{ck}"
                         gen_id = int(st.session_state.get(gen_key, 0)) + 1
@@ -1442,6 +1457,9 @@ div[data-baseweb="popover"] > div {
                         res["gen_id"] = gen_id
                         res["mueble_name"] = name
                         res["ref_images"] = ref_imgs
+                        st.session_state["v7_last_photo_stem"] = name
+                        if sku_code:
+                            st.session_state["v7_last_sku"] = sku_code
                         st.session_state["v7_result"] = res
                     except Exception as e:  # noqa: BLE001
                         st.error(f"❌ {e}")
@@ -1470,11 +1488,12 @@ div[data-baseweb="popover"] > div {
             else:
                 with st.spinner(f"Generando {mode_label}..."):
                     try:
-                        name = sku_code or (
-                            m_names[0].rsplit(".", 1)[0]
+                        first_photo_name = (
+                            m_names[0]
                             if m_names
-                            else (batch_views_files[0][0].rsplit(".", 1)[0] if batch_views_files else "Mueble")
+                            else (batch_views_files[0][0] if batch_views_files else "")
                         )
+                        name = _extract_exact_photo_stem(first_photo_name, fallback=sku_code or "Mueble")
                         notas_ia = "\n".join(
                             p for p in [
                                 f"Tipo de mueble: {tipo}" if tipo else "",
@@ -1516,9 +1535,9 @@ div[data-baseweb="popover"] > div {
 
                         ref_imgs = list(zip(m_names, m_bytes))
                         if wood_bytes:
-                            ref_imgs.append((f"madera_{wood_name or 'muestra'}.jpg", wood_bytes))
+                            ref_imgs.append((f"{_extract_exact_photo_stem(wood_name, 'madera')}.jpg", wood_bytes))
                         if fabric_bytes:
-                            ref_imgs.append((f"tela_{fabric_name or 'muestra'}.jpg", fabric_bytes))
+                            ref_imgs.append((f"{_extract_exact_photo_stem(fabric_name, 'tela')}.jpg", fabric_bytes))
                         for vn, vb in batch_views_files:
                             ref_imgs.append((vn, vb))
 
@@ -1528,24 +1547,27 @@ div[data-baseweb="popover"] > div {
                         res["gen_id"] = gen_id
                         res["mueble_name"] = name
                         res["ref_images"] = ref_imgs
+                        st.session_state["v7_last_photo_stem"] = name
+                        if sku_code:
+                            st.session_state["v7_last_sku"] = sku_code
                         st.session_state["v7_result"] = res
                     except Exception as e:  # noqa: BLE001
                         st.error(f"❌ {e}")
 
     # =====================================================================
-    # COLUMNA DERECHA: SALIDA DE PROMPTS + ESCALADOR 2054×2054 + ZIP
+    # COLUMNA DERECHA: SALIDA DE PROMPTS + ESCALADOR 2054×2054 + ZIP + ALTA
     # =====================================================================
     with col_out:
         with st.container(border=True):
             res = st.session_state.get("v7_result")
             if not res:
-                st.caption(f"👈 Elige mueble (**RENDER / SUBIR / Cotización**) + **🧵 Tela** y pulsa **🚀 {mode_label}** o **↘️ 3/4 Derecha**.")
+                st.caption(f"👈 Elige mueble + **🧵 Tela**, copia fotos con **📋 Copiar** y pulsa **🚀 {mode_label}** o **↘️ 3/4 Derecha**.")
                 return
 
             gen_id = int(res.get("gen_id", 0))
             mueble_slug = res.get("mueble_name", "mueble")
 
-            h_name, h_2054, h_zip = st.columns([1.45, 0.95, 0.80], gap="small", vertical_alignment="center")
+            h_name, h_2054, h_zip, h_alta = st.columns([1.35, 0.85, 0.72, 0.78], gap="small", vertical_alignment="center")
             with h_name:
                 st.markdown(f"**{mueble_slug}**")
             with h_2054:
@@ -1559,17 +1581,17 @@ div[data-baseweb="popover"] > div {
                     if ext_up:
                         fmt_img = ai_prompt_service_v7.format_image_2054_white(ext_up.getvalue(), target_px=2054)
                         st.download_button(
-                            "💾 PNG 2054×2054",
+                            f"💾 {mueble_slug}.png",
                             data=fmt_img["png"],
-                            file_name=f"{mueble_slug}_2054x2054.png",
+                            file_name=f"{mueble_slug}.png",
                             mime="image/png",
                             use_container_width=True,
                             key=f"v7_ext_png_{ck}_{gen_id}",
                         )
                         st.download_button(
-                            "💾 JPG 2054×2054",
+                            f"💾 {mueble_slug}.jpg",
                             data=fmt_img["jpg"],
-                            file_name=f"{mueble_slug}_2054x2054.jpg",
+                            file_name=f"{mueble_slug}.jpg",
                             mime="image/jpeg",
                             use_container_width=True,
                             key=f"v7_ext_jpg_{ck}_{gen_id}",
@@ -1578,11 +1600,21 @@ div[data-baseweb="popover"] > div {
                 st.download_button(
                     "📦 ZIP",
                     data=_build_zip(res, include_images=True),
-                    file_name=f"kit_{mueble_slug}.zip",
+                    file_name=f"{mueble_slug}.zip",
                     mime="application/zip",
                     use_container_width=True,
                     key=f"v7_dl_{ck}_{gen_id}",
                 )
+            with h_alta:
+                if st.button(
+                    "🚀 Subir",
+                    use_container_width=True,
+                    key=f"v7_goto_alta_{ck}_{gen_id}",
+                    help="Ir directo a Alta de Fotos con este mismo nombre",
+                ):
+                    st.session_state["v7_last_photo_stem"] = mueble_slug
+                    st.session_state["unified_active_app"] = "🚀 Alta de Fotos"
+                    st.rerun()
 
             items = res.get("items", [])
             if len(items) > 1:
