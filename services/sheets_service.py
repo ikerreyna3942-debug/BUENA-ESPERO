@@ -51,6 +51,8 @@ class SheetsService:
         ]
         self.service = None
         self.drive_service = None
+        self._active_creds = None
+        self._last_permission_status: Dict[str, tuple] = {}
         self.client_email = ""
         self.spreadsheet_id = DEFAULT_SPREADSHEET_ID
         self.buzon_drive_id = BUZON_DRIVE_ID
@@ -135,6 +137,7 @@ class SheetsService:
                 )
                 if not user_creds.valid:
                     user_creds.refresh(GoogleAuthRequest())
+                self._active_creds = user_creds
                 self.drive_service = self._build_client("drive", "v3", user_creds)
                 self.service = self._build_client("sheets", "v4", user_creds)
                 self.connection_status = "Conectado OAuth (kevin.reyna@grupoanipa.com)"
@@ -158,6 +161,7 @@ class SheetsService:
                 sa_creds = service_account.Credentials.from_service_account_info(
                     cred_dict, scopes=self.scopes
                 )
+                self._active_creds = sa_creds
                 self.service = self._build_client("sheets", "v4", sa_creds)
                 self.drive_service = self._build_client("drive", "v3", sa_creds)
                 self.connection_status = f"Conectado SA ({self.client_email})"
@@ -442,8 +446,168 @@ class SheetsService:
                 raise RuntimeError(f"Falló la descarga autenticada de Drive: {e}") from e
             return None
 
+    def _get_auth_bearer_token(self) -> str:
+        """Devuelve un Bearer token vigente para descargar miniaturas incluso de archivos privados."""
+        creds = self._active_creds
+        if creds is None:
+            return ""
+        try:
+            if not getattr(creds, "valid", False) or not getattr(creds, "token", ""):
+                from google.auth.transport.requests import Request as GoogleAuthRequest
+                with self._drive_api_lock:
+                    if not getattr(creds, "valid", False) or not getattr(creds, "token", ""):
+                        creds.refresh(GoogleAuthRequest())
+            return str(getattr(creds, "token", "") or "").strip()
+        except Exception:
+            return str(getattr(creds, "token", "") or "").strip()
+
+    def ensure_public_read_permission(self, file_id: str) -> tuple[bool, str]:
+        """Garantiza permiso 'Cualquiera con el enlace (lector)' en Drive (con supportsAllDrives=True y lock)."""
+        clean_id = str(file_id or "").strip()
+        if not clean_id:
+            return False, "ID de archivo vacío"
+        self.ensure_connected()
+        if not self.drive_service:
+            return False, "Google Drive no conectado"
+
+        create_err = ""
+        try:
+            with self._drive_api_lock:
+                self.drive_service.permissions().create(
+                    fileId=clean_id,
+                    body={"role": "reader", "type": "anyone"},
+                    supportsAllDrives=True,
+                ).execute()
+            status = (True, "Cualquiera con el enlace (lector)")
+            self._last_permission_status[clean_id] = status
+            return status
+        except Exception as exc:
+            create_err = str(exc)
+            print(f"[SheetsService] permissions().create(anyone) falló en {clean_id}: {exc}")
+
+        # Verificar si ya tenía permiso público heredado o previo
+        try:
+            with self._drive_api_lock:
+                plist = self.drive_service.permissions().list(
+                    fileId=clean_id,
+                    fields="permissions(id,type,role)",
+                    supportsAllDrives=True,
+                ).execute()
+            for p in plist.get("permissions", []) or []:
+                if p.get("type") == "anyone":
+                    status = (True, "Cualquiera con el enlace (lector)")
+                    self._last_permission_status[clean_id] = status
+                    return status
+        except Exception:
+            pass
+
+        status = (False, f"No se pudo hacer público ({create_err[:120]})")
+        self._last_permission_status[clean_id] = status
+        return status
+
+    def inspect_drive_item_permissions(self, file_id: str) -> Dict[str, Any]:
+        """Revisa si una carpeta o archivo en Drive es público ('Cualquiera con el enlace') o privado."""
+        clean_id = str(file_id or "").strip()
+        if not clean_id:
+            return {"ok": False, "is_public": False, "summary": "ID vacío", "permissions": [], "error": "ID vacío"}
+        self.ensure_connected()
+        if not self.drive_service:
+            return {"ok": False, "is_public": False, "summary": "Sin conexión", "permissions": [], "error": "Drive no conectado"}
+        try:
+            with self._drive_api_lock:
+                meta = self.drive_service.files().get(
+                    fileId=clean_id,
+                    fields="id,name,mimeType,permissions(id,type,role,domain)",
+                    supportsAllDrives=True,
+                ).execute()
+            perms = meta.get("permissions") or []
+            if not perms:
+                with self._drive_api_lock:
+                    plist = self.drive_service.permissions().list(
+                        fileId=clean_id,
+                        fields="permissions(id,type,role,domain)",
+                        supportsAllDrives=True,
+                    ).execute()
+                perms = plist.get("permissions") or []
+            is_public = any(p.get("type") == "anyone" for p in perms)
+            has_domain = any(p.get("type") == "domain" for p in perms)
+            if is_public:
+                summary = "🌐 Público (cualquiera con el enlace)"
+            elif has_domain:
+                summary = "🏢 Solo dominio (privado para externos)"
+            else:
+                summary = "🔒 Privado (restringido)"
+            return {
+                "ok": True,
+                "id": clean_id,
+                "name": meta.get("name", ""),
+                "is_public": is_public,
+                "summary": summary,
+                "permissions": perms,
+                "error": "",
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "id": clean_id,
+                "name": "",
+                "is_public": False,
+                "summary": "⚠️ No se pudo revisar",
+                "permissions": [],
+                "error": str(exc),
+            }
+
+    def repair_folder_public_permissions(self, folder_id: str, max_files: int = 250) -> Dict[str, Any]:
+        """Hace pública ('Cualquiera con el enlace') una carpeta y las fotos dentro de ella."""
+        clean_id = str(folder_id or "").strip()
+        if not clean_id:
+            return {"ok": False, "folder_public": False, "updated": 0, "failed": 0, "error": "ID de carpeta vacío"}
+        folder_ok, folder_msg = self.ensure_public_read_permission(clean_id)
+        files = self.get_drive_folder_files(clean_id, recursive=True, max_depth=3, ttl=0)
+        updated = 0
+        failed = 0
+        errors: List[str] = []
+        for item in files[:max_files]:
+            fid = str(item.get("id") or "").strip()
+            if not fid:
+                continue
+            ok_f, msg_f = self.ensure_public_read_permission(fid)
+            if ok_f:
+                updated += 1
+            else:
+                failed += 1
+                if len(errors) < 5:
+                    errors.append(f"{item.get('name', fid)}: {msg_f}")
+        return {
+            "ok": folder_ok or updated > 0,
+            "folder_public": folder_ok,
+            "folder_msg": folder_msg,
+            "total_files": len(files),
+            "updated": updated,
+            "failed": failed,
+            "errors": errors,
+        }
+
+    def _download_thumbnail_url(self, url: str) -> Optional[bytes]:
+        if not url:
+            return None
+        hi_url = re.sub(r"=s\d+", "=s400", url)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        token = self._get_auth_bearer_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            req = urllib.request.Request(hi_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
+                t_data = resp.read()
+            if t_data and len(t_data) > 100 and not t_data[:15].lstrip().startswith(b"<"):
+                return t_data
+        except Exception:
+            pass
+        return None
+
     def get_drive_thumbnail_bytes(self, drive_id: str, thumbnail_link: str = "") -> Optional[bytes]:
-        """Obtiene una miniatura ligera (~10-20 KB) desde Google Drive para visualización rápida en búsquedas."""
+        """Obtiene una miniatura ligera (~15 KB) autenticada desde Drive (funciona incluso en archivos privados)."""
         if not drive_id:
             return None
         thumb_key = f"thumb:{drive_id}"
@@ -451,33 +615,33 @@ class SheetsService:
         if cached:
             return cached
 
+        self.ensure_connected()
         t_url = (thumbnail_link or "").strip()
-        if not t_url:
-            self.ensure_connected()
-            if self.drive_service:
-                try:
-                    with self._drive_api_lock:
-                        meta = self.drive_service.files().get(
-                            fileId=drive_id,
-                            fields="thumbnailLink",
-                            supportsAllDrives=True,
-                        ).execute()
-                    t_url = (meta.get("thumbnailLink") or "").strip()
-                except Exception:
-                    t_url = ""
-
         if t_url:
-            # Pedir tamaño nítido (360px) manteniendo peso ultraligero (~15 KB)
-            hi_url = re.sub(r"=s\d+", "=s360", t_url)
+            t_data = self._download_thumbnail_url(t_url)
+            if t_data:
+                if len(self._drive_file_bytes_cache) >= 256:
+                    self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
+                self._drive_file_bytes_cache[thumb_key] = t_data
+                return t_data
+
+        # Si el thumbnailLink venía vacío o vencido (del caché en disco), pedir uno fresco a Drive API
+        if self.drive_service:
             try:
-                req = urllib.request.Request(hi_url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=3.5) as resp:
-                    t_data = resp.read()
-                if t_data and len(t_data) > 100:
-                    if len(self._drive_file_bytes_cache) >= 256:
-                        self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
-                    self._drive_file_bytes_cache[thumb_key] = t_data
-                    return t_data
+                with self._drive_api_lock:
+                    meta = self.drive_service.files().get(
+                        fileId=drive_id,
+                        fields="thumbnailLink",
+                        supportsAllDrives=True,
+                    ).execute()
+                fresh_url = (meta.get("thumbnailLink") or "").strip()
+                if fresh_url and fresh_url != t_url:
+                    t_data = self._download_thumbnail_url(fresh_url)
+                    if t_data:
+                        if len(self._drive_file_bytes_cache) >= 256:
+                            self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
+                        self._drive_file_bytes_cache[thumb_key] = t_data
+                        return t_data
             except Exception:
                 pass
 
@@ -586,8 +750,9 @@ class SheetsService:
 
             if existing_file:
                 self._drive_link_cache.clear()
+                self.ensure_public_read_permission(existing_file['id'])
                 return existing_file.get('webViewLink') or (
-                    f"https://drive.google.com/file/d/{existing_file['id']}/view"
+                    f"https://drive.google.com/file/d/{existing_file['id']}/view?usp=sharing"
                 )
             copied = self.drive_service.files().copy(
                 fileId=file_id,
@@ -598,8 +763,9 @@ class SheetsService:
             if not copied.get('id'):
                 raise RuntimeError("Drive no devolvió el ID del archivo copiado.")
             self._drive_link_cache.clear()
+            self.ensure_public_read_permission(copied['id'])
             return copied.get('webViewLink') or (
-                f"https://drive.google.com/file/d/{copied['id']}/view"
+                f"https://drive.google.com/file/d/{copied['id']}/view?usp=sharing"
             )
         except Exception as e:
             error_details = str(e)
@@ -633,7 +799,10 @@ class SheetsService:
                 'parents': [parent_id]
             }
             folder = self.drive_service.files().create(body=metadata, fields='id', supportsAllDrives=True).execute()
-            return folder.get('id')
+            folder_id = folder.get('id')
+            if folder_id:
+                self.ensure_public_read_permission(folder_id)
+            return folder_id
         except Exception as e:
             print(f'Error getting/creating folder {folder_name}: {e}')
             return None
@@ -673,14 +842,8 @@ class SheetsService:
             file_id = uploaded.get("id")
             if file_id:
                 self._drive_link_cache.clear()
-                try:
-                    self.drive_service.permissions().create(
-                        fileId=file_id,
-                        body={"role": "reader", "type": "anyone"}
-                    ).execute()
-                except Exception:
-                    pass
-                link = f"https://drive.google.com/file/d/{file_id}/view"
+                self.ensure_public_read_permission(file_id)
+                link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
                 stem = os.path.splitext(filename)[0].strip().upper()
                 if self._drive_catalog is not None:
                     self._drive_catalog[filename.upper()] = link
@@ -1113,16 +1276,9 @@ class SheetsService:
                 return None
 
             self._drive_link_cache.clear()
+            self.ensure_public_read_permission(file_id)
 
-            try:
-                self.drive_service.permissions().create(
-                    fileId=file_id,
-                    body={"role": "reader", "type": "anyone"}
-                ).execute()
-            except Exception:
-                pass
-
-            web_link = uploaded.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
+            web_link = uploaded.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
             return web_link
         except Exception as e:
             print(f"[SheetsService] Error subiendo imagen al buzón ({filename}): {e}")
@@ -1169,16 +1325,9 @@ class SheetsService:
                 return None
 
             self._drive_link_cache.clear()
+            self.ensure_public_read_permission(copied_id)
 
-            try:
-                self.drive_service.permissions().create(
-                    fileId=copied_id,
-                    body={"role": "reader", "type": "anyone"}
-                ).execute()
-            except Exception:
-                pass
-
-            web_link = copied.get("webViewLink") or f"https://drive.google.com/file/d/{copied_id}/view"
+            web_link = copied.get("webViewLink") or f"https://drive.google.com/file/d/{copied_id}/view?usp=sharing"
             return web_link
         except Exception as e:
             print(f"[SheetsService] Error copiando archivo {source_drive_id} al buzón ({filename}): {e}")
@@ -1225,7 +1374,8 @@ class SheetsService:
 
             updated = self.drive_service.files().update(**update_kwargs).execute()
             res_id = updated.get("id") or file_id
-            link = updated.get("webViewLink") or f"https://drive.google.com/file/d/{res_id}/view"
+            self.ensure_public_read_permission(res_id)
+            link = updated.get("webViewLink") or f"https://drive.google.com/file/d/{res_id}/view?usp=sharing"
             self._drive_link_cache.clear()
             return {
                 "id": res_id,
@@ -1264,7 +1414,8 @@ class SheetsService:
             if not new_id:
                 raise RuntimeError("Drive no devolvió el ID del archivo copiado en fallback.")
 
-            new_link = copied.get("webViewLink") or f"https://drive.google.com/file/d/{new_id}/view"
+            self.ensure_public_read_permission(new_id)
+            new_link = copied.get("webViewLink") or f"https://drive.google.com/file/d/{new_id}/view?usp=sharing"
 
             # Eliminar archivo original
             try:
@@ -2102,20 +2253,15 @@ class SheetsService:
 
         self._drive_link_cache.clear()
         self._drive_folder_tree_cache.clear()
-        try:
-            self.drive_service.permissions().create(
-                fileId=file_id,
-                body={"role": "reader", "type": "anyone"},
-                supportsAllDrives=True,
-            ).execute()
-        except Exception:
-            pass
+        is_public, perm_msg = self.ensure_public_read_permission(file_id)
 
         return {
             "file_id": file_id,
             "filename": filename,
+            "is_public": is_public,
+            "permission_status": perm_msg,
             "folder_url": f"https://drive.google.com/drive/folders/{target_parent}",
-            "drive_view_url": f"https://drive.google.com/file/d/{file_id}/view",
+            "drive_view_url": f"https://drive.google.com/file/d/{file_id}/view?usp=sharing",
             "direct_cdn_url": f"https://lh3.googleusercontent.com/d/{file_id}=s2054",
             "download_url": f"https://drive.google.com/uc?export=download&id={file_id}",
         }

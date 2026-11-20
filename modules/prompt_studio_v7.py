@@ -594,8 +594,8 @@ def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]], key_prefix: str = 
     render_loaded_photos_strip(thumbs, key_prefix=key_prefix, thumb_px=120)
 
 
-@st.cache_data(ttl=3600, max_entries=256, show_spinner=False)
 def _load_drive_thumb_cached(file_id: str, thumbnail_link: str = "") -> Optional[bytes]:
+    """Descarga miniatura autenticada (funciona incluso si el archivo es privado) sin cachear None."""
     if not file_id:
         return None
     return sheets_service.get_drive_thumbnail_bytes(file_id, thumbnail_link)
@@ -606,7 +606,7 @@ def _get_search_preview_src(
     max_dim: int = 360,
     allow_network: bool = True,
 ) -> str:
-    """Devuelve un data-URI base64 (o thumbnailLink directo) para visualizar una foto del catálogo al buscarla."""
+    """Devuelve un data-URI base64 autenticado para visualizar una foto del catálogo (nunca expone thumbnailLink privado/expirado al navegador)."""
     if not item:
         return ""
     loc_path = item.get("local_path", "")
@@ -636,8 +636,6 @@ def _get_search_preview_src(
                 t_bytes = make_thumbnail_bytes(net_bytes, max_dim=max_dim)
                 if t_bytes:
                     return f"data:image/jpeg;base64,{base64.b64encode(t_bytes).decode('ascii')}"
-        elif t_link:
-            return t_link
     return ""
 
 
@@ -868,10 +866,10 @@ def _render_floating_photo_menu(
                 args=(ck, p_kind, preview_target),
             )
 
-        # Pre-cargar miniaturas en paralelo de los primeros 6 resultados visibles
+        # Pre-cargar miniaturas autenticadas en paralelo de los primeros 12 resultados visibles
         if matches:
             top_to_warm = [
-                m for m in matches[:6]
+                m for m in matches[:12]
                 if m.get("id")
                 and f"thumb:{m['id']}" not in sheets_service._drive_file_bytes_cache
                 and m["id"] not in sheets_service._drive_file_bytes_cache
@@ -904,7 +902,7 @@ def _render_floating_photo_menu(
                         it_name.strip().upper() in active_names_upper
                         or (it.get("filename", "").strip().upper() in active_names_upper)
                     )
-                    allow_net_row = bool(idx_m < 6)
+                    allow_net_row = bool(idx_m < 12)
                     row_thumb_src = _get_search_preview_src(it, max_dim=180, allow_network=allow_net_row)
                     thumb_html = (
                         f'<img class="selected-photo-thumb" src="{row_thumb_src}" '
@@ -945,6 +943,39 @@ def _render_floating_photo_menu(
                             on_click=_pick_catalog_photo_cb,
                             args=(ck, it_kind, it),
                         )
+
+        with st.expander("🔓 Permisos de carpetas (Cualquiera con el enlace)", expanded=False):
+            p_chk, p_fix = st.columns(2, gap="small")
+            with p_chk:
+                if st.button("🔍 Revisar permisos", use_container_width=True, key=f"v7_perm_chk_{ck}"):
+                    report = []
+                    for fk in ("RENDER", "COTIZACION", "SM_MUEBLERIA"):
+                        fid = _resolve_furniture_drive_id(fk)
+                        lbl_f = _FURNITURE_FOLDER_SPECS[fk]["source"]
+                        if not fid:
+                            report.append(f"- **{lbl_f}**: ⚠️ Carpeta no encontrada en Drive")
+                        else:
+                            info = sheets_service.inspect_drive_item_permissions(fid)
+                            report.append(f"- **{lbl_f}**: {info.get('summary', '⚠️')}")
+                    st.session_state[f"v7_perm_report_{ck}"] = "\n".join(report)
+            with p_fix:
+                if st.button("🌐 Hacer públicas", use_container_width=True, type="primary", key=f"v7_perm_fix_{ck}"):
+                    lines = []
+                    for fk in ("RENDER", "COTIZACION", "SM_MUEBLERIA"):
+                        fid = _resolve_furniture_drive_id(fk)
+                        lbl_f = _FURNITURE_FOLDER_SPECS[fk]["source"]
+                        if not fid:
+                            lines.append(f"- **{lbl_f}**: ⚠️ No encontrada")
+                            continue
+                        r_fix = sheets_service.repair_folder_public_permissions(fid)
+                        lines.append(
+                            f"- **{lbl_f}**: {'🌐 Pública' if r_fix.get('folder_public') else '⚠️ ' + str(r_fix.get('folder_msg', ''))} "
+                            f"({r_fix.get('updated', 0)} fotos actualizadas"
+                            + (f", {r_fix.get('failed', 0)} con error)" if r_fix.get("failed") else ")")
+                        )
+                    st.session_state[f"v7_perm_report_{ck}"] = "\n".join(lines)
+            if st.session_state.get(f"v7_perm_report_{ck}"):
+                st.markdown(st.session_state[f"v7_perm_report_{ck}"])
 
 
 def _clear_v7_form(ck: int) -> None:
