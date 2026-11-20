@@ -1622,7 +1622,7 @@ div[data-baseweb="popover"] > div {
             if not res:
                 st.caption(
                     f"👈 Elige carpeta (**RENDER**, **Cotización** o **SM S Mueblería**) o abre **🔍 Buscar foto**, "
-                    f"copia la foto original con **📋 Copiar original** y pulsa **🚀 {mode_label}** o **↘️ 3/4 Derecha**."
+                    f"copia la imagen original con **🖼️ Copiar foto** y pulsa **🚀 {mode_label}** o **↘️ 3/4 Derecha**."
                 )
                 return
 

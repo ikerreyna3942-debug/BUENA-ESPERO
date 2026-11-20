@@ -360,13 +360,16 @@ finally:
 
 _strip_html = _captured_html[0][0] if _captured_html else ""
 check(
-    "tira de fotos cargadas muestra fotos 120x120 (+50%) con 1 botón Copiar original debajo de cada foto",
+    "tira de fotos cargadas muestra fotos 120x120 (+50%) con 1 botón Copiar foto (imagen PNG, no texto) debajo de cada foto",
     len(_captured_html) == 1
     and "width: 120px;" in _strip_html
     and "height: 120px;" in _strip_html
     and "flex-direction: column;" in _strip_html
-    and _strip_html.count("📋 Copiar original") == 2
-    and _strip_html.find("<img class=\"thumb-img\"") < _strip_html.find("📋 Copiar original"),
+    and _strip_html.count("🖼️ Copiar foto") == 2
+    and _strip_html.find("<img class=\"thumb-img\"") < _strip_html.find("🖼️ Copiar foto")
+    and "writePngToWindowClipboard(window.parent" in _strip_html
+    and "CREATA_PROMPTS_COPY_IMAGE" in _strip_html
+    and "writeText" not in _strip_html,
 )
 
 check(

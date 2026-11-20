@@ -74,12 +74,20 @@ def render_copy_button(
                     bytes[i] = binStr.charCodeAt(i);
                 }}
                 var decoded = new TextDecoder("utf-8").decode(bytes);
+                function tryParentText() {{
+                    try {{
+                        if (window.parent && window.parent !== window && window.parent.navigator && window.parent.navigator.clipboard && window.parent.navigator.clipboard.writeText) {{
+                            return window.parent.navigator.clipboard.writeText(decoded).then(showOk);
+                        }}
+                    }} catch (ep) {{}}
+                    return Promise.reject(new Error("parent_text_unavailable"));
+                }}
                 if (navigator.clipboard && navigator.clipboard.writeText) {{
                     navigator.clipboard.writeText(decoded).then(showOk).catch(function() {{
-                        fallbackCopy(decoded);
+                        tryParentText().catch(function() {{ fallbackCopy(decoded); }});
                     }});
                 }} else {{
-                    fallbackCopy(decoded);
+                    tryParentText().catch(function() {{ fallbackCopy(decoded); }});
                 }}
             }} catch (e) {{
                 console.error("Copy error:", e);
@@ -164,7 +172,7 @@ def render_loaded_photos_strip(
     key_prefix: str = "v7",
     thumb_px: int = 120,
 ) -> None:
-    """Muestra las fotos que se van a utilizar (+50% más grandes: 120×120 px) con 1 botón debajo de cada foto para copiar la original."""
+    """Muestra las fotos que se van a utilizar (+50% más grandes: 120×120 px) con 1 botón debajo de cada foto para copiar la imagen (no texto)."""
     if not thumbs:
         return
 
@@ -200,7 +208,7 @@ def render_loaded_photos_strip(
             f'</div>'
             f'<span class="thumb-badge">✅ {safe_badge}</span>'
             f'<span class="thumb-name" title="{safe_title}">{safe_lbl}</span>'
-            f'<button type="button" id="{btn_id}" class="cp-btn" title="Copiar foto original en resolución completa al portapapeles">📋 Copiar original</button>'
+            f'<button type="button" id="{btn_id}" class="cp-btn" title="Copiar foto original (imagen PNG, no texto) al portapapeles">🖼️ Copiar foto</button>'
             f'<span id="{msg_id}" class="cp-msg"></span>'
             f'</div>'
         )
@@ -318,7 +326,22 @@ def render_loaded_photos_strip(
         <div class="strip">{"".join(card_blocks)}</div>
         <script>
         (function() {{
+            function decodePngDataUriSync(dataUri) {{
+                try {{
+                    if (typeof dataUri !== "string" || dataUri.indexOf("data:image/png;base64,") !== 0) return null;
+                    var b64 = dataUri.slice("data:image/png;base64,".length);
+                    var bin = atob(b64);
+                    var bytes = new Uint8Array(bin.length);
+                    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                    return new Blob([bytes], {{ type: "image/png" }});
+                }} catch (e) {{
+                    return null;
+                }}
+            }}
+
             function dataUriToPngBlob(dataUri) {{
+                var directPng = decodePngDataUriSync(dataUri);
+                if (directPng) return Promise.resolve(directPng);
                 return new Promise(function(resolve, reject) {{
                     var img = new Image();
                     img.onload = function() {{
@@ -339,6 +362,85 @@ def render_loaded_photos_strip(
                 }});
             }}
 
+            function writePngToWindowClipboard(targetWin, syncBlob, blobPromise) {{
+                return new Promise(function(resolve, reject) {{
+                    try {{
+                        if (!targetWin || !targetWin.navigator || !targetWin.navigator.clipboard || typeof targetWin.navigator.clipboard.write !== "function" || typeof targetWin.ClipboardItem !== "function") {{
+                            reject(new Error("clipboard_image_unavailable"));
+                            return;
+                        }}
+                        if (syncBlob) {{
+                            var syncItem = new targetWin.ClipboardItem({{ "image/png": syncBlob }});
+                            targetWin.navigator.clipboard.write([syncItem]).then(function() {{ resolve(true); }}, reject);
+                            return;
+                        }}
+                        try {{
+                            var promiseItem = new targetWin.ClipboardItem({{ "image/png": blobPromise }});
+                            targetWin.navigator.clipboard.write([promiseItem]).then(function() {{ resolve(true); }}, function() {{
+                                blobPromise.then(function(resolvedBlob) {{
+                                    var fbItem = new targetWin.ClipboardItem({{ "image/png": resolvedBlob }});
+                                    return targetWin.navigator.clipboard.write([fbItem]);
+                                }}).then(function() {{ resolve(true); }}, reject);
+                            }});
+                        }} catch (eItem) {{
+                            blobPromise.then(function(resolvedBlob) {{
+                                var fbItem2 = new targetWin.ClipboardItem({{ "image/png": resolvedBlob }});
+                                return targetWin.navigator.clipboard.write([fbItem2]);
+                            }}).then(function() {{ resolve(true); }}, reject);
+                        }}
+                    }} catch (err) {{
+                        reject(err);
+                    }}
+                }});
+            }}
+
+            function requestHostBridgeCopyImage(dataUri, fileName) {{
+                return new Promise(function(resolve) {{
+                    var targets = [];
+                    try {{
+                        if (window.top && window.top !== window && typeof window.top.postMessage === "function") {{
+                            targets.push(window.top);
+                        }}
+                    }} catch (e1) {{}}
+                    try {{
+                        if (window.parent && window.parent.parent && window.parent.parent !== window && window.parent.parent !== window.top && typeof window.parent.parent.postMessage === "function") {{
+                            targets.push(window.parent.parent);
+                        }}
+                    }} catch (e2) {{}}
+                    if (!targets.length) {{
+                        resolve(false);
+                        return;
+                    }}
+                    var reqId = "cpimg_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+                    var done = false;
+                    var timer = setTimeout(function() {{
+                        if (done) return;
+                        done = true;
+                        window.removeEventListener("message", onMsg);
+                        resolve(false);
+                    }}, 1400);
+                    function onMsg(ev) {{
+                        var d = ev && ev.data;
+                        if (!d || d.type !== "CREATA_PROMPTS_COPY_IMAGE_RESULT" || d.requestId !== reqId) return;
+                        if (done) return;
+                        done = true;
+                        clearTimeout(timer);
+                        window.removeEventListener("message", onMsg);
+                        resolve(Boolean(d.ok));
+                    }}
+                    window.addEventListener("message", onMsg);
+                    var payload = {{
+                        type: "CREATA_PROMPTS_COPY_IMAGE",
+                        requestId: reqId,
+                        dataUri: dataUri,
+                        fileName: fileName || "foto.png"
+                    }};
+                    for (var i = 0; i < targets.length; i++) {{
+                        try {{ targets[i].postMessage(payload, "*"); }} catch (ePost) {{}}
+                    }}
+                }});
+            }}
+
             function triggerFallbackDownload(dataUri, fileName) {{
                 var a = document.createElement("a");
                 a.href = dataUri;
@@ -352,13 +454,45 @@ def render_loaded_photos_strip(
                 var btn = document.getElementById(btnId);
                 var msg = document.getElementById(msgId);
                 if (!btn) return;
+
+                // Pre-calentar Blob PNG al montar la tarjeta para copiar la foto al instante (0ms) dentro del clic
+                var readyPngBlob = decodePngDataUriSync(dataUri);
+                var pngBlobPromise = readyPngBlob ? Promise.resolve(readyPngBlob) : dataUriToPngBlob(dataUri).then(function(b) {{
+                    readyPngBlob = b;
+                    return b;
+                }}).catch(function(err) {{
+                    return null;
+                }});
+
                 btn.addEventListener("click", async function() {{
                     btn.disabled = true;
-                    if (msg) msg.textContent = "Copiando...";
+                    if (msg) msg.textContent = "Copiando foto...";
+                    var activePromise = readyPngBlob ? Promise.resolve(readyPngBlob) : (pngBlobPromise.then(function(b) {{ return b || dataUriToPngBlob(dataUri); }}));
+                    var copiedImage = false;
                     try {{
-                        if (navigator.clipboard && window.ClipboardItem) {{
-                            var pngBlob = await dataUriToPngBlob(dataUri);
-                            await navigator.clipboard.write([new ClipboardItem({{ "image/png": pngBlob }})]);
+                        // Nivel 1: Portapapeles directo (ventana actual) — solo imagen PNG, nunca texto
+                        try {{
+                            await writePngToWindowClipboard(window, readyPngBlob, activePromise);
+                            copiedImage = true;
+                        }} catch (eSelf) {{}}
+
+                        // Nivel 2: Documento padre Streamlit del mismo origen (escapa iframe srcdoc sin allow=clipboard-write)
+                        if (!copiedImage) {{
+                            try {{
+                                if (window.parent && window.parent !== window && window.parent.navigator) {{
+                                    try {{ if (typeof window.parent.focus === "function") window.parent.focus(); }} catch (eFoc) {{}}
+                                    await writePngToWindowClipboard(window.parent, readyPngBlob, activePromise);
+                                    copiedImage = true;
+                                }}
+                            }} catch (eParent) {{}}
+                        }}
+
+                        // Nivel 3: Puente postMessage al host superior (prompts.html / CREATA Suite)
+                        if (!copiedImage) {{
+                            copiedImage = await requestHostBridgeCopyImage(dataUri, fileName);
+                        }}
+
+                        if (copiedImage) {{
                             if (msg) msg.textContent = "✅ Foto copiada";
                         }} else {{
                             triggerFallbackDownload(dataUri, fileName);
@@ -369,7 +503,7 @@ def render_loaded_photos_strip(
                         if (msg) msg.textContent = "💾 Descargada";
                     }} finally {{
                         btn.disabled = false;
-                        setTimeout(function() {{ if (msg) msg.textContent = ""; }}, 2400);
+                        setTimeout(function() {{ if (msg) msg.textContent = ""; }}, 2600);
                     }}
                 }});
             }}
