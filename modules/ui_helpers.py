@@ -10,8 +10,14 @@ import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 
 
-def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = "cp") -> None:
-    """Renderiza un botón HTML/JS seguro para copiar texto UTF-8 al portapapeles."""
+def render_copy_button(
+    text: str,
+    label: str = "📋 Copiar Prompt",
+    key: str = "cp",
+    extra_link_url: str = "",
+    extra_link_label: str = "",
+) -> None:
+    """Renderiza un botón HTML/JS seguro para copiar texto UTF-8 al portapapeles (con acceso opcional a AI Studio/ChatGPT)."""
     if text is None:
         text = ""
     b64_text = base64.b64encode(text.encode("utf-8")).decode("ascii")
@@ -24,6 +30,21 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+    extra_html = ""
+    if extra_link_url and extra_link_label:
+        safe_url = extra_link_url.replace('"', "&quot;")
+        safe_extra = (
+            extra_link_label.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        extra_html = f"""
+        <a href="{safe_url}" target="_blank" rel="noopener" style="
+            background:#1e293b;border:1px solid #38bdf8;color:#7dd3fc;
+            text-decoration:none;padding:4px 9px;border-radius:6px;
+            font-size:11px;font-weight:600;white-space:nowrap;
+        ">{safe_extra}</a>
+        """
 
     html_code = f"""
     <style>html, body {{ margin: 0; padding: 0; background: transparent; overflow: hidden; }}</style>
@@ -35,6 +56,7 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
             max-width:100%;text-align:center;
             box-shadow:0 1px 4px rgba(2,132,199,0.3);transition:transform 0.1s ease;
         ">{safe_label}</button>
+        {extra_html}
         <span id="{msg_id}" style="font-size:11px;color:#4ade80;font-weight:600;display:none;">
             ✅ Copiado
         </span>
@@ -86,6 +108,32 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
     components.html(html_code, height=btn_height)
 
 
+@st.cache_data(max_entries=128, show_spinner=False)
+def prepare_exact_copy_image_bytes(raw_bytes: bytes) -> tuple[bytes, str]:
+    """Prepara la imagen original tal cual (sin recorte ni pérdida de proporción) para copiar al portapapeles."""
+    if not raw_bytes:
+        return b"", "image/png"
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            img = ImageOps.exif_transpose(img)
+            fmt = (img.format or "").upper()
+            # Si ya es PNG o JPEG estándar y pesa <= 4.5 MB, conservar bytes originales tal cual
+            if fmt in ("PNG", "JPEG", "JPG") and len(raw_bytes) <= 4_500_000 and img.mode in ("RGB", "RGBA"):
+                mime = "image/png" if fmt == "PNG" else "image/jpeg"
+                return raw_bytes, mime
+            out = io.BytesIO()
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGBA")
+                img.save(out, format="PNG", optimize=True)
+                return out.getvalue(), "image/png"
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(out, format="JPEG", quality=96, subsampling=0, optimize=True)
+            return out.getvalue(), "image/jpeg"
+    except Exception:
+        return raw_bytes, "image/jpeg"
+
+
 @st.cache_data(max_entries=256, show_spinner=False)
 def make_thumbnail_bytes(raw_bytes: bytes, max_dim: int = 480) -> bytes:
     """Genera una miniatura JPEG optimizada en caché para evitar saturar memoria/DOM."""
@@ -109,6 +157,228 @@ def make_thumbnail_bytes(raw_bytes: bytes, max_dim: int = 480) -> bytes:
             return out.getvalue()
     except Exception:
         return raw_bytes
+
+
+def render_loaded_photos_strip(
+    thumbs: list[tuple[str, bytes, str]],
+    key_prefix: str = "v7",
+    thumb_px: int = 120,
+) -> None:
+    """Muestra las fotos que se van a utilizar (+50% más grandes: 120×120 px) con 1 botón debajo de cada foto para copiar la original."""
+    if not thumbs:
+        return
+
+    card_blocks: list[str] = []
+    js_entries: list[str] = []
+    img_px = max(90, int(thumb_px))
+    card_w = img_px + 20
+
+    for idx, (lbl, raw_b, badge) in enumerate(thumbs):
+        if not raw_b:
+            continue
+        t_bytes = make_thumbnail_bytes(raw_b, max_dim=max(360, img_px * 3))
+        if not t_bytes:
+            continue
+        exact_bytes, exact_mime = prepare_exact_copy_image_bytes(raw_b)
+        b64_thumb = base64.b64encode(t_bytes).decode("ascii")
+        b64_exact = base64.b64encode(exact_bytes).decode("ascii")
+        uid = hashlib.md5(f"{key_prefix}_{idx}_{lbl}_{len(raw_b)}".encode("utf-8")).hexdigest()[:8]
+        btn_id = f"cpimg_{uid}"
+        msg_id = f"cpmsg_{uid}"
+
+        clean_lbl = (lbl or "foto.jpg").strip()
+        safe_lbl = clean_lbl[:28].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe_title = clean_lbl.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        safe_badge = (badge or "Cargada")[:20].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        dl_name = clean_lbl if "." in clean_lbl else f"{clean_lbl}.png"
+        safe_dl = dl_name.replace("\\", "_").replace('"', "").replace("'", "")
+
+        card_blocks.append(
+            f'<div class="thumb-card" title="{safe_badge}: {safe_title}">'
+            f'<div class="thumb-img-wrap">'
+            f'<img class="thumb-img" src="data:image/jpeg;base64,{b64_thumb}" alt="{safe_title}" />'
+            f'</div>'
+            f'<span class="thumb-badge">✅ {safe_badge}</span>'
+            f'<span class="thumb-name" title="{safe_title}">{safe_lbl}</span>'
+            f'<button type="button" id="{btn_id}" class="cp-btn" title="Copiar foto original en resolución completa al portapapeles">📋 Copiar original</button>'
+            f'<span id="{msg_id}" class="cp-msg"></span>'
+            f'</div>'
+        )
+        js_entries.append(
+            f'bindCopy("{btn_id}", "{msg_id}", "data:{exact_mime};base64,{b64_exact}", "{safe_dl}");'
+        )
+
+    if not card_blocks:
+        return
+
+    # Estima filas (aprox. 3 tarjetas por fila en escritorio, 2 en pantallas estrechas)
+    rows_est = max(1, (len(card_blocks) + 2) // 3)
+    row_h = img_px + 96
+    comp_height = min(460, row_h * rows_est + 16)
+    needs_scroll = (row_h * rows_est + 16) > 460
+
+    html_doc = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8" />
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+        body {{ background: transparent; padding: 3px 2px; overflow-x: hidden; }}
+        .strip {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: stretch;
+        }}
+        .thumb-card {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            width: {card_w}px;
+            max-width: 100%;
+            background: #0F172A;
+            border: 1px solid #0284C7;
+            border-radius: 9px;
+            padding: 7px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.38);
+        }}
+        .thumb-img-wrap {{
+            width: {img_px}px;
+            height: {img_px}px;
+            border-radius: 7px;
+            overflow: hidden;
+            background: #020617;
+            border: 1px solid #1E293B;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }}
+        .thumb-img {{
+            width: {img_px}px;
+            height: {img_px}px;
+            object-fit: cover;
+            display: block;
+            transition: transform 0.18s ease;
+        }}
+        .thumb-img:hover {{ transform: scale(1.12); }}
+        .thumb-badge {{
+            width: 100%;
+            font-size: 10px;
+            color: #4ADE80;
+            font-weight: 700;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .thumb-name {{
+            width: 100%;
+            font-size: 11px;
+            color: #F8FAFC;
+            font-weight: 600;
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .cp-btn {{
+            width: 100%;
+            background: linear-gradient(135deg, #0284C7, #0EA5E9);
+            color: #FFFFFF;
+            border: none;
+            border-radius: 6px;
+            padding: 5px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            margin-top: 2px;
+            box-shadow: 0 1px 4px rgba(2,132,199,0.35);
+        }}
+        .cp-btn:hover {{ filter: brightness(1.1); }}
+        .cp-btn:active {{ transform: scale(0.97); }}
+        .cp-btn:disabled {{ opacity: 0.65; cursor: wait; }}
+        .cp-msg {{
+            font-size: 10px;
+            font-weight: 700;
+            color: #4ADE80;
+            min-height: 13px;
+            line-height: 13px;
+            text-align: center;
+            white-space: nowrap;
+        }}
+    </style>
+    </head>
+    <body>
+        <div class="strip">{"".join(card_blocks)}</div>
+        <script>
+        (function() {{
+            function dataUriToPngBlob(dataUri) {{
+                return new Promise(function(resolve, reject) {{
+                    var img = new Image();
+                    img.onload = function() {{
+                        try {{
+                            var c = document.createElement("canvas");
+                            c.width = img.naturalWidth || img.width;
+                            c.height = img.naturalHeight || img.height;
+                            var ctx = c.getContext("2d");
+                            ctx.drawImage(img, 0, 0);
+                            c.toBlob(function(blob) {{
+                                if (blob) resolve(blob);
+                                else reject(new Error("toBlob failed"));
+                            }}, "image/png");
+                        }} catch (e) {{ reject(e); }}
+                    }};
+                    img.onerror = function() {{ reject(new Error("img load failed")); }};
+                    img.src = dataUri;
+                }});
+            }}
+
+            function triggerFallbackDownload(dataUri, fileName) {{
+                var a = document.createElement("a");
+                a.href = dataUri;
+                a.download = fileName || "foto.png";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }}
+
+            function bindCopy(btnId, msgId, dataUri, fileName) {{
+                var btn = document.getElementById(btnId);
+                var msg = document.getElementById(msgId);
+                if (!btn) return;
+                btn.addEventListener("click", async function() {{
+                    btn.disabled = true;
+                    if (msg) msg.textContent = "Copiando...";
+                    try {{
+                        if (navigator.clipboard && window.ClipboardItem) {{
+                            var pngBlob = await dataUriToPngBlob(dataUri);
+                            await navigator.clipboard.write([new ClipboardItem({{ "image/png": pngBlob }})]);
+                            if (msg) msg.textContent = "✅ Foto copiada";
+                        }} else {{
+                            triggerFallbackDownload(dataUri, fileName);
+                            if (msg) msg.textContent = "💾 Descargada";
+                        }}
+                    }} catch (err) {{
+                        triggerFallbackDownload(dataUri, fileName);
+                        if (msg) msg.textContent = "💾 Descargada";
+                    }} finally {{
+                        btn.disabled = false;
+                        setTimeout(function() {{ if (msg) msg.textContent = ""; }}, 2400);
+                    }}
+                }});
+            }}
+
+            {" ".join(js_entries)}
+        }})();
+        </script>
+    </body>
+    </html>
+    """
+    components.html(html_doc, height=comp_height, scrolling=needs_scroll)
 
 
 def _extract_bytes(img_data: Union[bytes, bytearray, str, Path, Image.Image, object]) -> Optional[bytes]:
