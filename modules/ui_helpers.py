@@ -86,7 +86,7 @@ def render_copy_button(text: str, label: str = "📋 Copiar Prompt", key: str = 
     components.html(html_code, height=btn_height)
 
 
-@st.cache_data(max_entries=64, show_spinner=False)
+@st.cache_data(max_entries=256, show_spinner=False)
 def make_thumbnail_bytes(raw_bytes: bytes, max_dim: int = 480) -> bytes:
     """Genera una miniatura JPEG optimizada en caché para evitar saturar memoria/DOM."""
     if not raw_bytes:
@@ -155,9 +155,9 @@ def render_preview_image(
         st.image(thumb, caption=caption or None, use_container_width=True)
 
 
-@st.cache_data(ttl=600, max_entries=64, show_spinner=False)
+@st.cache_data(ttl=3600, max_entries=256, show_spinner=False)
 def load_drive_file_cached(file_id: str) -> Optional[bytes]:
-    """Descarga y cachea archivos de Drive durante 10 minutos para evitar re-descargas por rerun."""
+    """Descarga y cachea archivos de Drive durante 60 minutos para evitar re-descargas por rerun."""
     if not file_id:
         return None
     from services.sheets_service import sheets_service

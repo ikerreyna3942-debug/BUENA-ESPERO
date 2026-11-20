@@ -1,8 +1,10 @@
-﻿import os
+import os
 import re
 import json
 import time
 import threading
+import unicodedata
+import urllib.request
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import io
@@ -62,6 +64,11 @@ class SheetsService:
         self._fn_catalogs_by_type: Optional[Dict[str, Dict[str, str]]] = None
         self._drive_link_cache: Dict[str, str] = {}
         self._drive_folder_tree_cache: Dict[str, tuple] = {}
+        self._resolved_folder_ids: Dict[str, str] = {}
+        self._drive_file_bytes_cache: Dict[str, bytes] = {}
+        self._drive_api_lock = threading.Lock()
+        self._catalog_disk_cache_path = Path(__file__).resolve().parent.parent / "drive_catalog_cache.json"
+        self._load_disk_catalog_cache()
         self._sheet_name_datos_general: Optional[str] = None
         self._sheet_name_fotos_norm: Optional[str] = None
         self._sku_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
@@ -151,6 +158,39 @@ class SheetsService:
                 self.sa_error = str(e)
                 print(f"[SheetsService] Error Service Account: {e}")
 
+    def _load_disk_catalog_cache(self) -> None:
+        try:
+            if self._catalog_disk_cache_path.exists():
+                data = json.loads(self._catalog_disk_cache_path.read_text(encoding="utf-8"))
+                ts = float(data.get("ts", time.time()))
+                for k, v in (data.get("folders") or {}).items():
+                    if isinstance(v, list):
+                        self._drive_folder_tree_cache[k] = (ts, v)
+                for rk, rv in (data.get("resolved_ids") or {}).items():
+                    if isinstance(rv, str) and rv:
+                        self._resolved_folder_ids[rk] = rv
+        except Exception:
+            pass
+
+    def _save_disk_catalog_cache(self) -> None:
+        try:
+            folders_payload = {
+                k: v[1]
+                for k, v in self._drive_folder_tree_cache.items()
+                if isinstance(v, tuple) and len(v) == 2
+            }
+            payload = {
+                "ts": time.time(),
+                "folders": folders_payload,
+                "resolved_ids": dict(self._resolved_folder_ids),
+            }
+            self._catalog_disk_cache_path.write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
     def clear_memory_cache(self):
         """Limpia los catálogos en memoria y nombres de pestañas para forzar sincronización fresca."""
         self._fn_catalog = None
@@ -158,6 +198,12 @@ class SheetsService:
         self._fn_catalogs_by_type = None
         self._drive_link_cache.clear()
         self._drive_folder_tree_cache.clear()
+        self._resolved_folder_ids.clear()
+        try:
+            if self._catalog_disk_cache_path.exists():
+                self._catalog_disk_cache_path.unlink()
+        except Exception:
+            pass
         self._sheet_name_datos_general = None
         self._sheet_name_fotos_norm = None
         self._sku_catalog_cache = None
@@ -352,29 +398,83 @@ class SheetsService:
         return ""
 
     def get_drive_file_bytes(self, drive_id: str, raise_on_error: bool = False) -> Optional[bytes]:
-        """Descarga el contenido binario de una imagen directamente desde Google Drive API autenticada."""
+        """Descarga el contenido binario de una imagen directamente desde Google Drive API autenticada (con caché RAM)."""
         if not drive_id:
             if raise_on_error:
                 raise RuntimeError("Google Drive no está conectado o falta el ID del archivo.")
             return None
+        cached_bytes = self._drive_file_bytes_cache.get(drive_id)
+        if cached_bytes:
+            return cached_bytes
         self.ensure_connected()
         if not self.drive_service:
             if raise_on_error:
                 raise RuntimeError("Google Drive no está conectado o falta el ID del archivo.")
             return None
         try:
-            request = self.drive_service.files().get_media(fileId=drive_id, supportsAllDrives=True)
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while not done:
-                status, done = downloader.next_chunk()
-            return fh.getvalue()
+            with self._drive_api_lock:
+                request = self.drive_service.files().get_media(fileId=drive_id, supportsAllDrives=True)
+                raw = request.execute()
+                if isinstance(raw, (bytes, bytearray)) and raw:
+                    data = bytes(raw)
+                else:
+                    fh = io.BytesIO()
+                    downloader = MediaIoBaseDownload(fh, request)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+                    data = fh.getvalue()
+            if data:
+                if len(self._drive_file_bytes_cache) >= 256:
+                    self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
+                self._drive_file_bytes_cache[drive_id] = data
+            return data
         except Exception as e:
             print(f"[SheetsService] Error descargando archivo de Drive {drive_id}: {e}")
             if raise_on_error:
                 raise RuntimeError(f"Falló la descarga autenticada de Drive: {e}") from e
             return None
+
+    def get_drive_thumbnail_bytes(self, drive_id: str, thumbnail_link: str = "") -> Optional[bytes]:
+        """Obtiene una miniatura ligera (~10-20 KB) desde Google Drive para visualización rápida en búsquedas."""
+        if not drive_id:
+            return None
+        thumb_key = f"thumb:{drive_id}"
+        cached = self._drive_file_bytes_cache.get(thumb_key) or self._drive_file_bytes_cache.get(drive_id)
+        if cached:
+            return cached
+
+        t_url = (thumbnail_link or "").strip()
+        if not t_url:
+            self.ensure_connected()
+            if self.drive_service:
+                try:
+                    with self._drive_api_lock:
+                        meta = self.drive_service.files().get(
+                            fileId=drive_id,
+                            fields="thumbnailLink",
+                            supportsAllDrives=True,
+                        ).execute()
+                    t_url = (meta.get("thumbnailLink") or "").strip()
+                except Exception:
+                    t_url = ""
+
+        if t_url:
+            # Pedir tamaño nítido (360px) manteniendo peso ultraligero (~15 KB)
+            hi_url = re.sub(r"=s\d+", "=s360", t_url)
+            try:
+                req = urllib.request.Request(hi_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=3.5) as resp:
+                    t_data = resp.read()
+                if t_data and len(t_data) > 100:
+                    if len(self._drive_file_bytes_cache) >= 256:
+                        self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
+                    self._drive_file_bytes_cache[thumb_key] = t_data
+                    return t_data
+            except Exception:
+                pass
+
+        return self.get_drive_file_bytes(drive_id)
 
     def search_drive_images_live(
         self,
@@ -399,7 +499,6 @@ class SheetsService:
             for w in words[:4]
         ]
         clauses = " and ".join(f"name contains '{word}'" for word in escaped_words)
-        folder_mime_type = "application/vnd.google-apps.folder"
         
         try:
             results = []
@@ -407,13 +506,14 @@ class SheetsService:
             
             # 1. Búsqueda directa ultra-rápida (coincidencia de nombre e imágenes)
             query = f"({clauses}) and trashed = false and (mimeType contains 'image/' or mimeType = 'application/vnd.google-apps.shortcut')"
-            response = self.drive_service.files().list(
-                q=query,
-                pageSize=limit,
-                fields="files(id,name,mimeType,webViewLink)",
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-            ).execute()
+            with self._drive_api_lock:
+                response = self.drive_service.files().list(
+                    q=query,
+                    pageSize=limit,
+                    fields="files(id,name,mimeType,webViewLink,thumbnailLink)",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute()
 
             for file in response.get("files", []):
                 file_id = file.get("id")
@@ -424,6 +524,7 @@ class SheetsService:
                     "id": file_id,
                     "name": file.get("name", ""),
                     "link": file.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view",
+                    "thumbnailLink": file.get("thumbnailLink", ""),
                 })
                 if len(results) >= limit:
                     break
@@ -615,34 +716,174 @@ class SheetsService:
             print(f"[SheetsService] Error obteniendo fotos recientes de Drive: {e}")
             return []
 
-    def get_drive_folder_files(
+    @staticmethod
+    def _norm_drive_name(name: str) -> str:
+        raw = unicodedata.normalize("NFKD", str(name or "").strip())
+        stripped = "".join(ch for ch in raw if not unicodedata.combining(ch))
+        return re.sub(r"\s+", " ", stripped).strip().lower()
+
+    def find_drive_folder_by_path(
         self,
-        folder_id: str,
-        recursive: bool = True,
-        max_depth: int = 4,
-        ttl: int = 1800,
-    ) -> List[Dict[str, str]]:
-        """Obtiene de forma ultra-rápida las imágenes de una carpeta de Google Drive (BFS por lotes + caché en memoria)."""
-        if not folder_id:
-            return []
-        cache_key = f"{folder_id}:{int(recursive)}:{max_depth}"
-        cached = self._drive_folder_tree_cache.get(cache_key)
-        if cached and (time.time() - cached[0]) < ttl:
-            return list(cached[1])
+        path_levels: List[tuple],
+        fallback_id: str = "",
+    ) -> str:
+        """Resuelve dinámicamente el folderId de Drive (primero ID directo/caché, luego búsqueda directa de hoja en 1 consulta, luego ruta)."""
+        if fallback_id:
+            return fallback_id
+        if not path_levels:
+            return fallback_id
+        cache_key = "|".join(",".join(lvl) for lvl in path_levels)
+        if cache_key in self._resolved_folder_ids and self._resolved_folder_ids[cache_key]:
+            return self._resolved_folder_ids[cache_key]
 
         self.ensure_connected()
         if not self.drive_service:
-            return []
+            return fallback_id
+
+        folder_mime = "application/vnd.google-apps.folder"
+        try:
+            # 1) Búsqueda ultra-rápida de 1 sola consulta por el nombre de la carpeta final (hoja)
+            leaf_aliases = [a for a in path_levels[-1] if a]
+            norm_leaf_aliases = [self._norm_drive_name(a) for a in leaf_aliases]
+            if leaf_aliases:
+                leaf_clauses = " or ".join(
+                    f"name = '{str(a).replace(chr(92), chr(92)*2).replace(chr(39), chr(92)+chr(39))}'"
+                    for a in leaf_aliases[:4]
+                )
+                with self._drive_api_lock:
+                    leaf_res = self.drive_service.files().list(
+                        q=f"mimeType='{folder_mime}' and ({leaf_clauses}) and trashed=false",
+                        fields="files(id,name,parents)",
+                        pageSize=30,
+                        supportsAllDrives=True,
+                        includeItemsFromAllDrives=True,
+                    ).execute()
+                leaf_files = [
+                    f for f in leaf_res.get("files", [])
+                    if self._norm_drive_name(f.get("name", "")) in norm_leaf_aliases
+                ]
+                if len(leaf_files) == 1:
+                    resolved = leaf_files[0]["id"]
+                    self._resolved_folder_ids[cache_key] = resolved
+                    self._save_disk_catalog_cache()
+                    return resolved
+
+            # 2) Recorrido por niveles si hay ambigüedad o variación de acentos
+            root_aliases = [self._norm_drive_name(a) for a in path_levels[0] if a]
+            first_term = str(path_levels[0][0]).replace("\\", "\\\\").replace("'", "\\'")
+            with self._drive_api_lock:
+                res = self.drive_service.files().list(
+                    q=f"mimeType='{folder_mime}' and name contains '{first_term}' and trashed=false",
+                    fields="files(id,name)",
+                    pageSize=50,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute()
+            current_ids = [
+                f["id"]
+                for f in res.get("files", [])
+                if self._norm_drive_name(f.get("name", "")) in root_aliases
+            ]
+            if not current_ids:
+                current_ids = [f["id"] for f in res.get("files", []) if f.get("id")]
+
+            for level_aliases in path_levels[1:]:
+                if not current_ids:
+                    break
+                norm_aliases = [self._norm_drive_name(a) for a in level_aliases if a]
+                parent_clause = " or ".join(f"'{pid}' in parents" for pid in current_ids[:15])
+                with self._drive_api_lock:
+                    child_res = self.drive_service.files().list(
+                        q=f"({parent_clause}) and mimeType='{folder_mime}' and trashed=false",
+                        fields="files(id,name)",
+                        pageSize=200,
+                        supportsAllDrives=True,
+                        includeItemsFromAllDrives=True,
+                    ).execute()
+                children = child_res.get("files", [])
+                exact_ids = [
+                    f["id"]
+                    for f in children
+                    if self._norm_drive_name(f.get("name", "")) in norm_aliases
+                ]
+                if not exact_ids:
+                    exact_ids = [
+                        f["id"]
+                        for f in children
+                        if any(
+                            alias and (
+                                alias in self._norm_drive_name(f.get("name", ""))
+                                or self._norm_drive_name(f.get("name", "")) in alias
+                            )
+                            for alias in norm_aliases
+                        )
+                    ]
+                current_ids = exact_ids
+
+            resolved = current_ids[0] if current_ids else ""
+            if resolved:
+                self._resolved_folder_ids[cache_key] = resolved
+                self._save_disk_catalog_cache()
+                return resolved
+        except Exception as e:
+            print(f"[SheetsService] Error resolviendo ruta de carpeta Drive ({cache_key}): {e}")
+
+        if fallback_id:
+            self._resolved_folder_ids[cache_key] = fallback_id
+            return fallback_id
+        return ""
+
+    def get_multiple_drive_folders_files(
+        self,
+        folder_map: Dict[str, str],
+        recursive: bool = True,
+        max_depth: int = 2,
+        ttl: int = 1800,
+    ) -> Dict[str, List[Dict[str, str]]]:
+        """Escanea múltiples carpetas raíz de Google Drive simultáneamente en un solo BFS por lotes (1-2 llamadas HTTP totales)."""
+        now = time.time()
+        results: Dict[str, List[Dict[str, str]]] = {}
+        pending_roots: Dict[str, str] = {}
+
+        for key, fid in folder_map.items():
+            if not fid:
+                results[key] = []
+                continue
+            cache_key = f"{fid}:{int(recursive)}:{max_depth}"
+            cached = self._drive_folder_tree_cache.get(cache_key)
+            if not cached and max_depth < 4:
+                # Reutilizar caché existente si fue escaneada con mayor profundidad
+                for alt_depth in (2, 3, 4):
+                    alt_cached = self._drive_folder_tree_cache.get(f"{fid}:{int(recursive)}:{alt_depth}")
+                    if alt_cached and (now - alt_cached[0]) < ttl:
+                        cached = alt_cached
+                        break
+            if cached and (now - cached[0]) < ttl:
+                results[key] = list(cached[1])
+            else:
+                pending_roots[key] = fid
+                results[key] = []
+
+        if not pending_roots:
+            return results
+
+        self.ensure_connected()
+        if not self.drive_service:
+            return results
 
         image_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff", ".gif")
         folder_mime = "application/vnd.google-apps.folder"
-        all_files: List[Dict[str, str]] = []
-        current_level: Dict[str, str] = {folder_id: ""}
-        depth = 0
+        collected: Dict[str, List[Dict[str, str]]] = {k: [] for k in pending_roots}
 
+        # Mapa parent_folder_id -> Lista de (root_key, subcarpeta_label)
+        current_level: Dict[str, List[tuple]] = {}
+        for r_key, r_fid in pending_roots.items():
+            current_level.setdefault(r_fid, []).append((r_key, ""))
+
+        depth = 0
         while current_level and depth <= max_depth:
             parent_ids = list(current_level.keys())
-            next_level: Dict[str, str] = {}
+            next_level: Dict[str, List[tuple]] = {}
             for start in range(0, len(parent_ids), 25):
                 batch_ids = parent_ids[start:start + 25]
                 parent_clause = " or ".join(f"'{pid}' in parents" for pid in batch_ids)
@@ -650,54 +891,88 @@ class SheetsService:
                 page_token = None
                 try:
                     while True:
-                        res = self.drive_service.files().list(
-                            q=query,
-                            fields="nextPageToken,files(id,name,mimeType,parents)",
-                            pageSize=1000,
-                            pageToken=page_token,
-                            supportsAllDrives=True,
-                            includeItemsFromAllDrives=True,
-                        ).execute()
+                        with self._drive_api_lock:
+                            res = self.drive_service.files().list(
+                                q=query,
+                                fields="nextPageToken,files(id,name,mimeType,parents,thumbnailLink)",
+                                pageSize=1000,
+                                pageToken=page_token,
+                                supportsAllDrives=True,
+                                includeItemsFromAllDrives=True,
+                            ).execute()
                         for f in res.get("files", []):
                             f_id = f.get("id", "")
                             name = f.get("name", "")
                             mime_type = f.get("mimeType", "")
                             if not f_id or not name or name.startswith("."):
                                 continue
+                            parents = f.get("parents") or []
+                            matched_owners: List[tuple] = []
+                            for p in parents:
+                                if p in current_level:
+                                    matched_owners.extend(current_level[p])
+                            if not matched_owners:
+                                continue
                             if mime_type == folder_mime:
                                 if recursive and depth < max_depth:
-                                    next_level[f_id] = name
+                                    for r_key, _ in matched_owners:
+                                        next_level.setdefault(f_id, []).append((r_key, name))
                             elif mime_type.startswith("image/") or name.lower().endswith(image_exts):
-                                parents = f.get("parents") or []
-                                sub_label = next((current_level[p] for p in parents if p in current_level), "")
                                 clean_name = os.path.splitext(name)[0].strip()
-                                all_files.append({
-                                    "id": f_id,
-                                    "name": clean_name,
-                                    "filename": name,
-                                    "link": f"https://drive.google.com/file/d/{f_id}/view",
-                                    "subcarpeta": sub_label,
-                                    "mimeType": mime_type,
-                                })
+                                t_link = f.get("thumbnailLink", "")
+                                for r_key, sub_label in matched_owners:
+                                    collected[r_key].append({
+                                        "id": f_id,
+                                        "name": clean_name,
+                                        "filename": name,
+                                        "link": f"https://drive.google.com/file/d/{f_id}/view",
+                                        "subcarpeta": sub_label,
+                                        "mimeType": mime_type,
+                                        "thumbnailLink": t_link,
+                                    })
                         page_token = res.get("nextPageToken")
                         if not page_token:
                             break
                 except Exception as e:
-                    print(f"[SheetsService] Error escaneando lote de carpeta {folder_id}: {e}")
+                    print(f"[SheetsService] Error escaneando lote multi-carpeta Drive: {e}")
             if not recursive:
                 break
             current_level = next_level
             depth += 1
 
-        seen_ids = set()
-        unique_files = []
-        for f in all_files:
-            if f["id"] not in seen_ids:
-                seen_ids.add(f["id"])
-                unique_files.append(f)
-        unique_files.sort(key=lambda x: x["name"].upper())
-        self._drive_folder_tree_cache[cache_key] = (time.time(), unique_files)
-        return list(unique_files)
+        ts = time.time()
+        for r_key, r_fid in pending_roots.items():
+            seen_ids = set()
+            unique_files = []
+            for f in collected.get(r_key, []):
+                if f["id"] not in seen_ids:
+                    seen_ids.add(f["id"])
+                    unique_files.append(f)
+            unique_files.sort(key=lambda x: x["name"].upper())
+            cache_key = f"{r_fid}:{int(recursive)}:{max_depth}"
+            self._drive_folder_tree_cache[cache_key] = (ts, unique_files)
+            results[r_key] = list(unique_files)
+
+        self._save_disk_catalog_cache()
+        return results
+
+    def get_drive_folder_files(
+        self,
+        folder_id: str,
+        recursive: bool = True,
+        max_depth: int = 2,
+        ttl: int = 1800,
+    ) -> List[Dict[str, str]]:
+        """Obtiene de forma ultra-rápida las imágenes de una carpeta de Google Drive (BFS por lotes + caché RAM/disco)."""
+        if not folder_id:
+            return []
+        res = self.get_multiple_drive_folders_files(
+            {"single": folder_id},
+            recursive=recursive,
+            max_depth=max_depth,
+            ttl=ttl,
+        )
+        return res.get("single", [])
 
     # =========================================================================
     # OPERACIONES DE BUZÓN (STAGING) Y GESTIÓN DE ARCHIVOS DRIVE (MILESTONE 1)

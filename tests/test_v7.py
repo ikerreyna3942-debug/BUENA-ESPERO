@@ -175,9 +175,22 @@ with _Image.open(_io.BytesIO(_fmt_room["png"])) as _out_room:
         _out_room.size == (2054, 2054) and _out_room.getpixel((0, 0))[0] < 255,
     )
 
-# 13. Helpers de URL Drive, carpeta única RENDER y diagnóstico claro de API key filtrada (403 leaked)
+# 13. Helpers de URL Drive, carpetas de muebles (RENDER, SUBIR, Cotización) y diagnóstico de API key
+from pathlib import PureWindowsPath as _PWP  # noqa: E402
 from services.sheets_service import sheets_service as _ss  # noqa: E402
-from modules.prompt_studio_v7 import FOLDER_MUEBLES_RENDER_DRIVE_ID, LOCAL_RENDER_MUEBLES_DIR, _build_zip as _build_zip_v7  # noqa: E402
+from modules.prompt_studio_v7 import (  # noqa: E402
+    FOLDER_MUEBLES_RENDER_DRIVE_ID,
+    FOLDER_MUEBLES_SUBIR_DRIVE_ID,
+    FURNITURE_FOLDER_CHOICES,
+    LOCAL_COTIZACION_MUEBLES_DIR,
+    LOCAL_RENDER_MUEBLES_DIR,
+    LOCAL_SUBIR_MUEBLES_DIR,
+    _build_zip as _build_zip_v7,
+    _candidate_local_dirs,
+    _get_search_preview_src,
+    _resolve_furniture_drive_id,
+    filter_catalog_photos_by_name,
+)
 
 check(
     "extract_drive_id extrae ID limpio de link Drive",
@@ -187,9 +200,34 @@ check(
     == "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX",
 )
 check(
-    "carpeta unica RENDER configurada para muebles",
+    "carpetas RENDER, SUBIR y Cotización configuradas para muebles",
     FOLDER_MUEBLES_RENDER_DRIVE_ID == "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX"
-    and LOCAL_RENDER_MUEBLES_DIR.name == "RENDER",
+    and _PWP(str(LOCAL_RENDER_MUEBLES_DIR)).name == "RENDER"
+    and _PWP(str(LOCAL_SUBIR_MUEBLES_DIR)).name == "SUBIR"
+    and "Cotiz" in _PWP(str(LOCAL_COTIZACION_MUEBLES_DIR)).name
+    and set(FURNITURE_FOLDER_CHOICES.values()) == {"ALL", "RENDER", "SUBIR", "COTIZACION"}
+    and len(_candidate_local_dirs("SUBIR")) >= 1
+    and len(_candidate_local_dirs("COTIZACION")) >= 1
+    and _ss._norm_drive_name("Cotización") == "cotizacion"
+    and _resolve_furniture_drive_id("RENDER") == FOLDER_MUEBLES_RENDER_DRIVE_ID
+    and _resolve_furniture_drive_id("SUBIR") == FOLDER_MUEBLES_SUBIR_DRIVE_ID,
+)
+
+_sample_cat = [
+    {"name": "Sillón Ánkara", "filename": "sillon_ankara.jpg", "source": "SUBIR"},
+    {"name": "Mesa Parota Skanor", "filename": "mesa_parota.png", "source": "RENDER"},
+    {"name": "Credenza Nórdica", "filename": "credenza_nordica.jpg", "source": "Cotización"},
+]
+_hits_ank = filter_catalog_photos_by_name(_sample_cat, "sillon ankara")
+_hits_active = filter_catalog_photos_by_name(_sample_cat, "", active_names_upper={"CREDENZA NÓRDICA"})
+_ss._drive_file_bytes_cache["thumb:test_prev_id"] = _fmt["jpg"]
+_prev_uri = _get_search_preview_src({"id": "test_prev_id", "name": "Sillón Ánkara"}, max_dim=180, allow_network=False)
+check(
+    "buscador de menu flotante filtra por nombre sin acentos, prioriza cargadas y genera vista previa visual",
+    len(_hits_ank) == 1
+    and _hits_ank[0]["name"] == "Sillón Ánkara"
+    and _hits_active[0]["name"] == "Credenza Nórdica"
+    and _prev_uri.startswith("data:image/jpeg;base64,"),
 )
 check(
     "format_gemini_error detecta API key filtrada (403 leaked)",
