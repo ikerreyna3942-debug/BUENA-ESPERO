@@ -1206,8 +1206,8 @@ div[data-testid="stPopover"] > div > button:hover {
     color: #FFFFFF !important;
 }
 div[data-baseweb="popover"] > div {
-    min-width: min(440px, 94vw) !important;
-    max-width: min(500px, 96vw) !important;
+    min-width: min(330px, 92vw) !important;
+    max-width: min(480px, 95vw) !important;
     background-color: #1E293B !important;
     border: 1px solid #0284C7 !important;
     border-radius: 10px !important;
