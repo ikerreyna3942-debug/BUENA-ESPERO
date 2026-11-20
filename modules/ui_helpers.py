@@ -211,9 +211,9 @@ def render_loaded_photos_strip(
     if not card_blocks:
         return
 
-    # Estima filas (aprox. 3 tarjetas por fila en escritorio, 2 en pantallas estrechas)
-    rows_est = max(1, (len(card_blocks) + 2) // 3)
-    row_h = img_px + 96
+    # Estima filas pensando en móvil (2 tarjetas por fila) para que nunca se recorte la 3.ª foto
+    rows_est = max(1, (len(card_blocks) + 1) // 2)
+    row_h = img_px + 98
     comp_height = min(460, row_h * rows_est + 16)
     needs_scroll = (row_h * rows_est + 16) > 460
 
@@ -237,7 +237,7 @@ def render_loaded_photos_strip(
             align-items: center;
             gap: 4px;
             width: {card_w}px;
-            max-width: 100%;
+            max-width: calc(50% - 4px);
             background: #0F172A;
             border: 1px solid #0284C7;
             border-radius: 9px;
@@ -247,6 +247,7 @@ def render_loaded_photos_strip(
         .thumb-img-wrap {{
             width: {img_px}px;
             height: {img_px}px;
+            max-width: 100%;
             border-radius: 7px;
             overflow: hidden;
             background: #020617;
@@ -259,6 +260,7 @@ def render_loaded_photos_strip(
         .thumb-img {{
             width: {img_px}px;
             height: {img_px}px;
+            max-width: 100%;
             object-fit: cover;
             display: block;
             transition: transform 0.18s ease;
