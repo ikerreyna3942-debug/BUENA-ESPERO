@@ -43,60 +43,60 @@ class AIPromptServiceV5:
         self._preferred_model: Optional[str] = None
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
+        from services.gemini_runtime import is_key_rejected
+        from services.ai_prompt_service_v7 import ai_prompt_service_v7
+
         if custom_key and custom_key.strip():
             return custom_key.strip()
         try:
             import streamlit as st
             if "GEMINI_API_KEY" in st.secrets:
-                return st.secrets["GEMINI_API_KEY"].strip()
+                s_val = st.secrets["GEMINI_API_KEY"].strip()
+                if s_val and not is_key_rejected(s_val):
+                    return s_val
         except Exception:
             pass
-        return os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
+        env_val = os.getenv("GEMINI_API_KEY", self.default_api_key).strip()
+        if env_val and not is_key_rejected(env_val):
+            return env_val
+        return ai_prompt_service_v7._builtin_key
 
     def get_client(self, api_key: Optional[str] = None):
-        """Reutiliza el cliente con conexión Keep-Alive para evitar renegociación SSL."""
+        """Reutiliza el cliente con timeout explícito y sin reintentos largos."""
+        from services.gemini_runtime import build_genai_client
+
         key = self.get_api_key(api_key)
         if not key:
             return None
         if key in self._clients:
             return self._clients[key]
         try:
-            from google import genai
-            client = genai.Client(api_key=key)
-            self._clients[key] = client
+            client = build_genai_client(key)
+            if client is not None:
+                self._clients[key] = client
             return client
         except Exception as e:
             print(f"[AIPromptServiceV5] Error instanciando cliente: {e}")
             return None
 
     def _call_gemini(self, client, contents, config=None):
-        """Llama a Gemini con modelos vigentes y caché del modelo operativo (fail-fast en errores de auth)."""
-        base_models = [
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-2.5-pro",
-            "gemini-2.0-flash-lite",
-        ]
-        models_to_try = []
-        if self._preferred_model:
-            models_to_try.append(self._preferred_model)
-        for m in base_models:
-            if m not in models_to_try:
-                models_to_try.append(m)
+        """Llama a Gemini con modelos vigentes (Gemini 3.x Flash), thinking mínimo y fail-fast."""
+        from services.gemini_runtime import call_gemini_fast, get_last_vision_meta
+        from services.ai_prompt_service_v7 import ai_prompt_service_v7
 
-        last_err = None
-        for m in models_to_try:
-            try:
-                res = client.models.generate_content(model=m, contents=contents, config=config)
-                self._preferred_model = m
-                return res
-            except Exception as e:
-                err_txt = str(e).upper()
-                if any(tok in err_txt for tok in ("API_KEY_INVALID", "API KEY NOT VALID", "PERMISSION_DENIED", "UNAUTHENTICATED", "401", "403")):
-                    raise
-                last_err = e
-                continue
-        raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
+        active_key = self.get_api_key()
+        fb_key = ai_prompt_service_v7._builtin_key if active_key != ai_prompt_service_v7._builtin_key else ""
+        res = call_gemini_fast(
+            client=client,
+            contents=contents,
+            config=config,
+            api_key=active_key,
+            fallback_key=fb_key,
+        )
+        meta = get_last_vision_meta()
+        if meta.get("model"):
+            self._preferred_model = meta["model"]
+        return res
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 512) -> Image.Image:
         """Optimiza y comprime en memoria imágenes a 512px y JPEG 75 para envío ultra-rápido (<50KB)."""

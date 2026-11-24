@@ -176,6 +176,8 @@ class AIPromptServiceV7:
         self.last_image_error: Optional[str] = None
 
     def get_api_key(self, custom_key: Optional[str] = None) -> str:
+        from services.gemini_runtime import is_key_rejected
+
         if custom_key and custom_key.strip():
             return custom_key.strip()
         try:
@@ -186,7 +188,7 @@ class AIPromptServiceV7:
                         line_s = line.strip()
                         if line_s.startswith("GEMINI_API_KEY="):
                             val = line_s.split("=", 1)[1].strip().strip('"').strip("'")
-                            if val:
+                            if val and not is_key_rejected(val):
                                 return val
         except Exception:
             pass
@@ -194,13 +196,12 @@ class AIPromptServiceV7:
             import streamlit as st
             if "GEMINI_API_KEY" in st.secrets:
                 s_val = str(st.secrets["GEMINI_API_KEY"]).strip()
-                if s_val:
+                if s_val and not is_key_rejected(s_val):
                     return s_val
         except Exception:
             pass
         env_val = os.getenv("GEMINI_API_KEY", "").strip()
-        # Ignorar claves antiguas de 39 caracteres reportadas como filtradas si hay respaldo integrado
-        if env_val and not (env_val.startswith("AIza") and len(env_val) == 39):
+        if env_val and not is_key_rejected(env_val):
             return env_val
         return self._builtin_key
 
@@ -220,15 +221,17 @@ class AIPromptServiceV7:
         return f"Aviso de Gemini API: {txt[:220]}"
 
     def get_client(self, api_key: Optional[str] = None) -> Any:
+        from services.gemini_runtime import build_genai_client
+
         key = self.get_api_key(api_key)
         if not key:
             return None
         if key in self._clients:
             return self._clients[key]
         try:
-            from google import genai
-            client = genai.Client(api_key=key)
-            self._clients[key] = client
+            client = build_genai_client(key)
+            if client is not None:
+                self._clients[key] = client
             return client
         except Exception as e:
             print(f"[AIPromptServiceV7] Error instanciando cliente: {e}")
@@ -240,66 +243,27 @@ class AIPromptServiceV7:
         img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    def _call_gemini(self, client: Any, contents: Any, config: Any = None) -> Any:
-        base_models = [
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-3.8-flash",
-        ]
-        models_to_try: List[str] = []
-        if self._preferred_model:
-            models_to_try.append(self._preferred_model)
-        for m in base_models:
-            if m not in models_to_try:
-                models_to_try.append(m)
+    def _call_gemini(
+        self,
+        client: Any,
+        contents: Any,
+        config: Any = None,
+        api_key: Optional[str] = None,
+    ) -> Any:
+        from services.gemini_runtime import call_gemini_fast, get_last_vision_meta
 
-        # Construir input compatible con client.interactions.create (SDK moderno >=2.0)
-        items_list = contents if isinstance(contents, list) else [contents]
-        interaction_inputs: List[Dict[str, Any]] = []
-        for it in items_list:
-            if isinstance(it, str):
-                interaction_inputs.append({"type": "text", "text": it})
-            elif isinstance(it, Image.Image):
-                interaction_inputs.append({
-                    "type": "image",
-                    "data": self._pil_to_b64_jpeg(it, quality=80),
-                    "mime_type": "image/jpeg",
-                })
-
-        resp_fmt: Optional[Dict[str, Any]] = None
-        schema_cls = getattr(config, "response_schema", None) if config is not None else None
-        resp_mime = getattr(config, "response_mime_type", None) if config is not None else None
-        if schema_cls is not None and hasattr(schema_cls, "model_json_schema"):
-            resp_fmt = {
-                "type": "text",
-                "mime_type": "application/json",
-                "schema": schema_cls.model_json_schema(),
-            }
-        elif resp_mime == "application/json":
-            resp_fmt = {"type": "text", "mime_type": "application/json"}
-
-        last_err = None
-        for m in models_to_try:
-            try:
-                res = client.models.generate_content(model=m, contents=contents, config=config)
-                self._preferred_model = m
-                return res
-            except Exception as e:
-                err_txt = str(e).upper()
-                if any(
-                    tok in err_txt
-                    for tok in (
-                        "API_KEY_INVALID",
-                        "API KEY NOT VALID",
-                        "PERMISSION_DENIED",
-                        "UNAUTHENTICATED",
-                        "401",
-                        "403",
-                    )
-                ):
-                    raise
-                last_err = e
-        raise last_err if last_err else RuntimeError("No se pudo conectar con Gemini API")
+        active_key = (api_key or "").strip() or self.get_api_key()
+        res = call_gemini_fast(
+            client=client,
+            contents=contents,
+            config=config,
+            api_key=active_key,
+            fallback_key=self._builtin_key if active_key != self._builtin_key else "",
+        )
+        meta = get_last_vision_meta()
+        if meta.get("model"):
+            self._preferred_model = meta["model"]
+        return res
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 512) -> Image.Image:
         with Image.open(io.BytesIO(img_bytes)) as src:
@@ -389,6 +353,7 @@ class AIPromptServiceV7:
                     response_schema=MaterialAnalysisV7,
                     temperature=0.1,
                 ),
+                api_key=key,
             )
             data = json.loads(res.text)
             if clean_label and (not data.get("name") or "fallback" in data.get("name", "").lower()):
@@ -490,6 +455,7 @@ class AIPromptServiceV7:
                     response_schema=FurnitureAnalysisV7,
                     temperature=0.1,
                 ),
+                api_key=key,
             )
             data = json.loads(res.text)
             if not data.get("existing_materials"):
@@ -1886,6 +1852,7 @@ class AIPromptServiceV7:
                 client=client,
                 contents=[sys_prompt, img1, img2],
                 config=types.GenerateContentConfig(temperature=0.2),
+                api_key=key,
             )
             txt = (res.text or "").strip() or local_ais
             return {

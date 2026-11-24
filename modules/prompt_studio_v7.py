@@ -260,7 +260,7 @@ def cargar_telas_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
     return []
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner="📂 Cargando catálogo de fotos...")
 def cargar_todo_catalogo_v7(
     refresh_tick: int = 0,
 ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
@@ -489,6 +489,7 @@ def _resolve_mueble_selector(
             fname = match.get("filename") or f"{match.get('name') or sel_name}.jpg"
             src = match.get("source") or ("Local" if match.get("local_path") else "Drive")
             return [raw_b], [fname], src
+        st.warning(f"⚠️ No se pudo descargar «{match.get('name') or sel_name}» desde Drive. Reintenta con 🔄 o súbela con Upload.")
     return [], [], ""
 
 
@@ -574,6 +575,7 @@ def _resolve_material_selector(
         if loaded:
             src = "Local" if match.get("local_path") else "Drive"
             return loaded, match.get("filename") or match.get("name") or sel_name, src
+        st.warning(f"⚠️ No se pudo descargar «{match.get('name') or sel_name}» desde Drive. Reintenta con 🔄 o súbela con Upload.")
     return None, "", ""
 
 
@@ -1453,6 +1455,8 @@ div[data-baseweb="popover"] > div {
                 ):
                     _clear_v7_form(ck)
 
+            status_slot = st.empty()
+
             # Fotos seleccionadas (+50% más grandes: 120×120 px) con 1 botón "📋 Copiar original" debajo de cada foto
             thumbs: List[Tuple[str, bytes, str]] = []
             for nm, raw in zip(m_names, m_bytes):
@@ -1471,57 +1475,59 @@ div[data-baseweb="popover"] > div {
             target_furn_bytes = m_bytes or ([batch_views_files[0][1]] if batch_views_files else [])
             target_furn_names = m_names or ([batch_views_files[0][0]] if batch_views_files else [])
             if not target_furn_bytes:
-                st.error("⚠️ Elige o sube la foto del mueble.")
+                status_slot.error("⚠️ Elige o sube la foto del mueble.")
             else:
-                with st.spinner("Generando 3/4 Derecha..."):
-                    try:
-                        first_photo_name = target_furn_names[0] if target_furn_names else ""
-                        name = _extract_exact_photo_stem(first_photo_name, fallback=sku_code or "Mueble")
-                        notas_ia = "\n".join(
-                            p for p in [
-                                f"Tipo de mueble: {tipo}" if tipo else "",
-                                f"Medidas exactas: {medidas_final}" if medidas_final else "",
-                                notas.strip(),
-                            ] if p
-                        )
-                        f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
-                            furniture_bytes=target_furn_bytes,
-                            wood_bytes=wood_bytes,
-                            wood_name=wood_name,
-                            fabric_bytes=fabric_bytes,
-                            fabric_name=fabric_name,
-                            notas_ia=notas_ia,
-                        )
-                        res = ai_prompt_service_v7.build_34_derecha_2054_prompts(
-                            furniture_name=name,
-                            furniture_analysis=f_ana,
-                            wood_analysis=w_ana,
-                            fabric_analysis=t_ana,
-                            notas_usuario=notas.strip(),
-                            tipo_mueble=tipo,
-                            medidas_texto=medidas_final,
-                            wood_label=wood_name,
-                            fabric_label=fabric_name,
-                        )
+                status_slot.info("⏳ Analizando foto y generando 3/4 Derecha...")
+                try:
+                    first_photo_name = target_furn_names[0] if target_furn_names else ""
+                    name = _extract_exact_photo_stem(first_photo_name, fallback=sku_code or "Mueble")
+                    notas_ia = "\n".join(
+                        p for p in [
+                            f"Tipo de mueble: {tipo}" if tipo else "",
+                            f"Medidas exactas: {medidas_final}" if medidas_final else "",
+                            notas.strip(),
+                        ] if p
+                    )
+                    f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
+                        furniture_bytes=target_furn_bytes,
+                        wood_bytes=wood_bytes,
+                        wood_name=wood_name,
+                        fabric_bytes=fabric_bytes,
+                        fabric_name=fabric_name,
+                        notas_ia=notas_ia,
+                    )
+                    res = ai_prompt_service_v7.build_34_derecha_2054_prompts(
+                        furniture_name=name,
+                        furniture_analysis=f_ana,
+                        wood_analysis=w_ana,
+                        fabric_analysis=t_ana,
+                        notas_usuario=notas.strip(),
+                        tipo_mueble=tipo,
+                        medidas_texto=medidas_final,
+                        wood_label=wood_name,
+                        fabric_label=fabric_name,
+                    )
 
-                        ref_imgs = list(zip(target_furn_names, target_furn_bytes))
-                        if wood_bytes:
-                            ref_imgs.append((f"{_extract_exact_photo_stem(wood_name, 'madera')}.jpg", wood_bytes))
-                        if fabric_bytes:
-                            ref_imgs.append((f"{_extract_exact_photo_stem(fabric_name, 'tela')}.jpg", fabric_bytes))
+                    ref_imgs = list(zip(target_furn_names, target_furn_bytes))
+                    if wood_bytes:
+                        ref_imgs.append((f"{_extract_exact_photo_stem(wood_name, 'madera')}.jpg", wood_bytes))
+                    if fabric_bytes:
+                        ref_imgs.append((f"{_extract_exact_photo_stem(fabric_name, 'tela')}.jpg", fabric_bytes))
 
-                        gen_key = f"v7_gen_id_{ck}"
-                        gen_id = int(st.session_state.get(gen_key, 0)) + 1
-                        st.session_state[gen_key] = gen_id
-                        res["gen_id"] = gen_id
-                        res["mueble_name"] = name
-                        res["ref_images"] = ref_imgs
-                        st.session_state["v7_last_photo_stem"] = name
-                        if sku_code:
-                            st.session_state["v7_last_sku"] = sku_code
-                        st.session_state["v7_result"] = res
-                    except Exception as e:  # noqa: BLE001
-                        st.error(f"❌ {e}")
+                    gen_key = f"v7_gen_id_{ck}"
+                    gen_id = int(st.session_state.get(gen_key, 0)) + 1
+                    st.session_state[gen_key] = gen_id
+                    res["gen_id"] = gen_id
+                    res["mueble_name"] = name
+                    res["ref_images"] = ref_imgs
+                    st.session_state["v7_last_photo_stem"] = name
+                    if sku_code:
+                        st.session_state["v7_last_sku"] = sku_code
+                    st.session_state["v7_result"] = res
+                    status_slot.empty()
+                    st.toast(f"✅ Prompt 3/4 Derecha listo: {name}")
+                except Exception as e:  # noqa: BLE001
+                    status_slot.error(f"❌ {e}")
 
         # ------------------------------------------------------------------ BOTÓN 1: GENERAR MODO SELECCIONADO
         if go:
@@ -1543,75 +1549,77 @@ div[data-baseweb="popover"] > div {
                     err = "⚠️ Selecciona tela."
 
             if err:
-                st.error(err)
+                status_slot.error(err)
             else:
-                with st.spinner(f"Generando {mode_label}..."):
-                    try:
-                        first_photo_name = (
-                            m_names[0]
-                            if m_names
-                            else (batch_views_files[0][0] if batch_views_files else "")
-                        )
-                        name = _extract_exact_photo_stem(first_photo_name, fallback=sku_code or "Mueble")
-                        notas_ia = "\n".join(
-                            p for p in [
-                                f"Tipo de mueble: {tipo}" if tipo else "",
-                                f"Medidas exactas: {medidas_final}" if medidas_final else "",
-                                notas.strip(),
-                            ] if p
-                        )
-                        skip_f = mode in ("vistas_tela", "clonar_color")
-                        f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
-                            furniture_bytes=m_bytes,
-                            wood_bytes=wood_bytes,
-                            wood_name=wood_name,
-                            fabric_bytes=fabric_bytes,
-                            fabric_name=fabric_name,
-                            notas_ia=notas_ia,
-                            skip_furniture=skip_f,
-                        )
-                        batch_ref = fabric_bytes if mode == "vistas_tela" else (m_bytes[0] if mode == "clonar_color" else None)
+                status_slot.info(f"⏳ Analizando foto y generando {mode_label}...")
+                try:
+                    first_photo_name = (
+                        m_names[0]
+                        if m_names
+                        else (batch_views_files[0][0] if batch_views_files else "")
+                    )
+                    name = _extract_exact_photo_stem(first_photo_name, fallback=sku_code or "Mueble")
+                    notas_ia = "\n".join(
+                        p for p in [
+                            f"Tipo de mueble: {tipo}" if tipo else "",
+                            f"Medidas exactas: {medidas_final}" if medidas_final else "",
+                            notas.strip(),
+                        ] if p
+                    )
+                    skip_f = mode in ("vistas_tela", "clonar_color")
+                    f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
+                        furniture_bytes=m_bytes,
+                        wood_bytes=wood_bytes,
+                        wood_name=wood_name,
+                        fabric_bytes=fabric_bytes,
+                        fabric_name=fabric_name,
+                        notas_ia=notas_ia,
+                        skip_furniture=skip_f,
+                    )
+                    batch_ref = fabric_bytes if mode == "vistas_tela" else (m_bytes[0] if mode == "clonar_color" else None)
 
-                        res = ai_prompt_service_v7.build_prompts(
-                            mode=mode,
-                            furniture_name=name,
-                            furniture_analysis=f_ana,
-                            wood_analysis=w_ana,
-                            fabric_analysis=t_ana,
-                            notas_usuario=notas.strip(),
-                            tipo_mueble=tipo,
-                            medidas_texto=medidas_final,
-                            lugar_casa=lugar_casa,
-                            vista_id=vista_id,
-                            material_mode=material_mode,
-                            wood_label=wood_name,
-                            fabric_label=fabric_name,
-                            white_bg_enabled=True,
-                            classic_numbering=False,
-                            batch_ref_bytes=batch_ref,
-                            batch_views=batch_views_files,
-                        )
+                    res = ai_prompt_service_v7.build_prompts(
+                        mode=mode,
+                        furniture_name=name,
+                        furniture_analysis=f_ana,
+                        wood_analysis=w_ana,
+                        fabric_analysis=t_ana,
+                        notas_usuario=notas.strip(),
+                        tipo_mueble=tipo,
+                        medidas_texto=medidas_final,
+                        lugar_casa=lugar_casa,
+                        vista_id=vista_id,
+                        material_mode=material_mode,
+                        wood_label=wood_name,
+                        fabric_label=fabric_name,
+                        white_bg_enabled=True,
+                        classic_numbering=False,
+                        batch_ref_bytes=batch_ref,
+                        batch_views=batch_views_files,
+                    )
 
-                        ref_imgs = list(zip(m_names, m_bytes))
-                        if wood_bytes:
-                            ref_imgs.append((f"{_extract_exact_photo_stem(wood_name, 'madera')}.jpg", wood_bytes))
-                        if fabric_bytes:
-                            ref_imgs.append((f"{_extract_exact_photo_stem(fabric_name, 'tela')}.jpg", fabric_bytes))
-                        for vn, vb in batch_views_files:
-                            ref_imgs.append((vn, vb))
+                    ref_imgs = list(zip(m_names, m_bytes))
+                    if wood_bytes:
+                        ref_imgs.append((f"{_extract_exact_photo_stem(wood_name, 'madera')}.jpg", wood_bytes))
+                    if fabric_bytes:
+                        ref_imgs.append((f"{_extract_exact_photo_stem(fabric_name, 'tela')}.jpg", fabric_bytes))
+                    for vn, vb in batch_views_files:
+                        ref_imgs.append((vn, vb))
 
-                        gen_key = f"v7_gen_id_{ck}"
-                        gen_id = int(st.session_state.get(gen_key, 0)) + 1
-                        st.session_state[gen_key] = gen_id
-                        res["gen_id"] = gen_id
-                        res["mueble_name"] = name
-                        res["ref_images"] = ref_imgs
-                        st.session_state["v7_last_photo_stem"] = name
-                        if sku_code:
-                            st.session_state["v7_last_sku"] = sku_code
-                        st.session_state["v7_result"] = res
-                    except Exception as e:  # noqa: BLE001
-                        st.error(f"❌ {e}")
+                    gen_key = f"v7_gen_id_{ck}"
+                    gen_id = int(st.session_state.get(gen_key, 0)) + 1
+                    st.session_state[gen_key] = gen_id
+                    res["gen_id"] = gen_id
+                    res["mueble_name"] = name
+                    res["ref_images"] = ref_imgs
+                    st.session_state["v7_last_photo_stem"] = name
+                    if sku_code:
+                        st.session_state["v7_last_sku"] = sku_code
+                    st.session_state["v7_result"] = res
+                    status_slot.empty()
+                    st.toast(f"✅ Prompts listos ({mode_label}): {name}")
+                except Exception as e:  # noqa: BLE001
+                    status_slot.error(f"❌ {e}")
 
     # =====================================================================
     # COLUMNA DERECHA: SALIDA DE PROMPTS + ESCALADOR 2054×2054 + ZIP + ALTA
