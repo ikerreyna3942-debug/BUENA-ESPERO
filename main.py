@@ -25,7 +25,7 @@ if _env_file.exists():
     except Exception:
         pass
 _cur_env = os.environ.get("GEMINI_API_KEY", "").strip()
-if not _cur_env or (_cur_env.startswith("AIza") and len(_cur_env) == 39):
+if not _cur_env:
     os.environ["GEMINI_API_KEY"] = _DEFAULT_KEY
 
 try:

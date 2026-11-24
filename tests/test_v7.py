@@ -471,5 +471,110 @@ check(
     ) == "",
 )
 
+# 17. Runtime rápido Gemini (respeto a llaves AIza, fallback auth, cooldown ante 503/404, y visibilidad de estado V7)
+import os as _os  # noqa: E402
+from services import gemini_runtime as _gr  # noqa: E402
+
+_gr.reset_runtime_state()
+_prev_env_key = _os.environ.get("GEMINI_API_KEY")
+_sample_aiza = "AIza" + ("X" * 35)
+try:
+    _os.environ["GEMINI_API_KEY"] = _sample_aiza
+    _resolved_aiza = v7.get_api_key()
+    _gr.mark_key_rejected(_sample_aiza)
+    _resolved_after_reject = v7.get_api_key()
+finally:
+    if _prev_env_key is None:
+        _os.environ.pop("GEMINI_API_KEY", None)
+    else:
+        _os.environ["GEMINI_API_KEY"] = _prev_env_key
+    _gr.reset_runtime_state()
+
+check(
+    "get_api_key respeta llave estándar AIza de 39 caracteres y cae a respaldo solo si fue rechazada",
+    _resolved_aiza == _sample_aiza and _resolved_after_reject == v7._builtin_key,
+)
+
+
+class _FakeGeminiResp:
+    def __init__(self, text: str):
+        self.text = text
+
+
+class _FakeModelsApi:
+    def __init__(self, handler):
+        self._handler = handler
+
+    def generate_content(self, **kw):
+        return self._handler(**kw)
+
+
+class _FakeGenaiClient:
+    def __init__(self, handler):
+        self.models = _FakeModelsApi(handler)
+
+
+_gr.reset_runtime_state()
+_seen_models = []
+
+
+def _handler_503_then_ok(model, contents, config=None):
+    _seen_models.append(model)
+    if model == _gr.VISION_MODELS[0][0]:
+        raise RuntimeError("503 UNAVAILABLE: This model is currently experiencing high demand.")
+    return _FakeGeminiResp('{"ok": true}')
+
+
+_fake_cli = _FakeGenaiClient(_handler_503_then_ok)
+_res1 = _gr.call_gemini_fast(_fake_cli, ["hi"], api_key="test-key-1")
+_res2 = _gr.call_gemini_fast(_fake_cli, ["hi"], api_key="test-key-1")
+check(
+    "call_gemini_fast pone en cooldown el modelo 503 y reutiliza el modelo saludable al instante",
+    _res1.text == '{"ok": true}'
+    and _res2.text == '{"ok": true}'
+    and _seen_models == [_gr.VISION_MODELS[0][0], _gr.VISION_MODELS[1][0], _gr.VISION_MODELS[1][0]],
+)
+
+_gr.reset_runtime_state()
+_orig_build = _gr.build_genai_client
+try:
+    _fb_called = []
+
+    def _bad_key_handler(model, contents, config=None):
+        raise RuntimeError("403 PERMISSION_DENIED: Your API key was reported as leaked")
+
+    def _good_fb_handler(model, contents, config=None):
+        _fb_called.append(model)
+        return _FakeGeminiResp('{"recovered": true}')
+
+    _gr.build_genai_client = lambda k, timeout_ms=_gr.DEFAULT_TIMEOUT_MS: _FakeGenaiClient(_good_fb_handler)
+    _res_fb = _gr.call_gemini_fast(
+        _FakeGenaiClient(_bad_key_handler),
+        ["hi"],
+        api_key="AIzaLeakedKey1234567890123456789012345",
+        fallback_key="AQ.GoodFallbackKey",
+    )
+finally:
+    _gr.build_genai_client = _orig_build
+
+check(
+    "call_gemini_fast marca llave filtrada (403) y recupera automáticamente con fallback_key",
+    _res_fb.text == '{"recovered": true}'
+    and len(_fb_called) == 1
+    and _gr.is_key_rejected("AIzaLeakedKey1234567890123456789012345"),
+)
+_gr.reset_runtime_state()
+
+_v7_src = (Path(__file__).resolve().parent.parent / "modules" / "prompt_studio_v7.py").read_text(encoding="utf-8")
+_main_src = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
+check(
+    "V7 muestra status_slot antes de la tira de fotos, spinner de catálogo en frío, toast y main.py no pisa llaves AIza",
+    _v7_src.find("status_slot = st.empty()") != -1
+    and _v7_src.find("status_slot = st.empty()") < _v7_src.find("_render_mini_thumbs(thumbs,")
+    and 'show_spinner="📂 Cargando catálogo de fotos..."' in _v7_src
+    and "st.toast(" in _v7_src
+    and 'startswith("AIza")' not in _main_src,
+)
+
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)
