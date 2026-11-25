@@ -79,5 +79,16 @@ for mm in ("wood_only", "fabric_only", "dual"):
 check("warn: sin medidas", len(ups.sanity_warnings("table", 0, 0, 0, 0)) == 1)
 check("warn: espejo alto raro", len(ups.sanity_warnings("mirror", 80, 120, 4, 0)) >= 1)
 
+# --- nombres de fotos copiadas en V6
+r_names_v6 = ups.build_prompts(
+    mode="catalogo",
+    furniture_name="SILLON_V6",
+    tipo_mueble="SILLON",
+    medidas_texto="85 cm frente x 85 cm fondo x 78 cm alto",
+    furniture_filenames=["SILLON_V6_ORIG.jpg"],
+    wood_filenames=["PAROTA_V6.jpg"],
+)
+check("v6 catalogo incluye nombres de fotos en prompt", "SILLON_V6_ORIG.jpg" in r_names_v6["master_ais"] and "PAROTA_V6.jpg" in r_names_v6["master_ais"])
+
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)

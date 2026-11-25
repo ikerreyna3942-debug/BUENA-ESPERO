@@ -167,6 +167,17 @@ def make_thumbnail_bytes(raw_bytes: bytes, max_dim: int = 480) -> bytes:
         return raw_bytes
 
 
+def resolve_copied_photo_filename(label: str, fallback: str = "foto.png") -> str:
+    """Devuelve el nombre exacto de archivo que entrega el botón Copiar foto (y el que usará el prompt)."""
+    raw = str(label or "").strip().replace("\\", "/")
+    base = raw.rsplit("/", 1)[-1].strip() if raw else ""
+    if not base:
+        base = str(fallback or "foto.png").strip() or "foto.png"
+    dl_name = base if "." in base else f"{base}.png"
+    clean = dl_name.replace("\\", "_").replace('"', "").replace("'", "").strip()
+    return clean or "foto.png"
+
+
 def render_loaded_photos_strip(
     thumbs: list[tuple[str, bytes, str]],
     key_prefix: str = "v7",
@@ -194,12 +205,12 @@ def render_loaded_photos_strip(
         btn_id = f"cpimg_{uid}"
         msg_id = f"cpmsg_{uid}"
 
-        clean_lbl = (lbl or "foto.jpg").strip()
-        safe_lbl = clean_lbl[:28].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe_dl = resolve_copied_photo_filename(lbl, fallback=f"foto_{idx + 1}.png")
+        clean_lbl = safe_dl
+        safe_lbl = clean_lbl.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         safe_title = clean_lbl.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-        safe_badge = (badge or "Cargada")[:20].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        dl_name = clean_lbl if "." in clean_lbl else f"{clean_lbl}.png"
-        safe_dl = dl_name.replace("\\", "_").replace('"', "").replace("'", "")
+        safe_badge = (badge or "Cargada")[:34].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        js_dl = safe_dl.replace("\\", "\\\\").replace('"', '\\"')
 
         card_blocks.append(
             f'<div class="thumb-card" title="{safe_badge}: {safe_title}">'
@@ -208,12 +219,12 @@ def render_loaded_photos_strip(
             f'</div>'
             f'<span class="thumb-badge">✅ {safe_badge}</span>'
             f'<span class="thumb-name" title="{safe_title}">{safe_lbl}</span>'
-            f'<button type="button" id="{btn_id}" class="cp-btn" title="Copiar foto original (imagen PNG, no texto) al portapapeles">🖼️ Copiar foto</button>'
+            f'<button type="button" id="{btn_id}" class="cp-btn" title="Copiar foto original ({safe_title}) al portapapeles">🖼️ Copiar foto</button>'
             f'<span id="{msg_id}" class="cp-msg"></span>'
             f'</div>'
         )
         js_entries.append(
-            f'bindCopy("{btn_id}", "{msg_id}", "data:{exact_mime};base64,{b64_exact}", "{safe_dl}");'
+            f'bindCopy("{btn_id}", "{msg_id}", "data:{exact_mime};base64,{b64_exact}", "{js_dl}");'
         )
 
     if not card_blocks:
@@ -312,13 +323,16 @@ def render_loaded_photos_strip(
         .cp-btn:active {{ transform: scale(0.97); }}
         .cp-btn:disabled {{ opacity: 0.65; cursor: wait; }}
         .cp-msg {{
-            font-size: 10px;
+            width: 100%;
+            font-size: 9.5px;
             font-weight: 700;
             color: #4ADE80;
             min-height: 13px;
             line-height: 13px;
             text-align: center;
             white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }}
     </style>
     </head>
@@ -362,7 +376,19 @@ def render_loaded_photos_strip(
                 }});
             }}
 
-            function writePngToWindowClipboard(targetWin, syncBlob, blobPromise) {{
+            function toNamedPngPayload(targetWin, blob, fileName) {{
+                if (!blob) return blob;
+                try {{
+                    var cleanName = String(fileName || "foto.png").trim() || "foto.png";
+                    var pngName = /\\.png$/i.test(cleanName) ? cleanName : (cleanName.replace(/\\.[^.]+$/, "") + ".png");
+                    if (targetWin && typeof targetWin.File === "function") {{
+                        return new targetWin.File([blob], pngName, {{ type: "image/png" }});
+                    }}
+                }} catch (eFile) {{}}
+                return blob;
+            }}
+
+            function writePngToWindowClipboard(targetWin, syncBlob, blobPromise, fileName) {{
                 return new Promise(function(resolve, reject) {{
                     try {{
                         if (!targetWin || !targetWin.navigator || !targetWin.navigator.clipboard || typeof targetWin.navigator.clipboard.write !== "function" || typeof targetWin.ClipboardItem !== "function") {{
@@ -370,12 +396,17 @@ def render_loaded_photos_strip(
                             return;
                         }}
                         if (syncBlob) {{
-                            var syncItem = new targetWin.ClipboardItem({{ "image/png": syncBlob }});
-                            targetWin.navigator.clipboard.write([syncItem]).then(function() {{ resolve(true); }}, reject);
+                            var namedSync = toNamedPngPayload(targetWin, syncBlob, fileName);
+                            var syncItem = new targetWin.ClipboardItem({{ "image/png": namedSync }});
+                            targetWin.navigator.clipboard.write([syncItem]).then(function() {{ resolve(true); }}, function() {{
+                                var rawItem = new targetWin.ClipboardItem({{ "image/png": syncBlob }});
+                                targetWin.navigator.clipboard.write([rawItem]).then(function() {{ resolve(true); }}, reject);
+                            }});
                             return;
                         }}
                         try {{
-                            var promiseItem = new targetWin.ClipboardItem({{ "image/png": blobPromise }});
+                            var namedPromise = blobPromise.then(function(b) {{ return toNamedPngPayload(targetWin, b, fileName); }});
+                            var promiseItem = new targetWin.ClipboardItem({{ "image/png": namedPromise }});
                             targetWin.navigator.clipboard.write([promiseItem]).then(function() {{ resolve(true); }}, function() {{
                                 blobPromise.then(function(resolvedBlob) {{
                                     var fbItem = new targetWin.ClipboardItem({{ "image/png": resolvedBlob }});
@@ -472,7 +503,7 @@ def render_loaded_photos_strip(
                     try {{
                         // Nivel 1: Portapapeles directo (ventana actual) — solo imagen PNG, nunca texto
                         try {{
-                            await writePngToWindowClipboard(window, readyPngBlob, activePromise);
+                            await writePngToWindowClipboard(window, readyPngBlob, activePromise, fileName);
                             copiedImage = true;
                         }} catch (eSelf) {{}}
 
@@ -481,7 +512,7 @@ def render_loaded_photos_strip(
                             try {{
                                 if (window.parent && window.parent !== window && window.parent.navigator) {{
                                     try {{ if (typeof window.parent.focus === "function") window.parent.focus(); }} catch (eFoc) {{}}
-                                    await writePngToWindowClipboard(window.parent, readyPngBlob, activePromise);
+                                    await writePngToWindowClipboard(window.parent, readyPngBlob, activePromise, fileName);
                                     copiedImage = true;
                                 }}
                             }} catch (eParent) {{}}
@@ -493,17 +524,26 @@ def render_loaded_photos_strip(
                         }}
 
                         if (copiedImage) {{
-                            if (msg) msg.textContent = "✅ Foto copiada";
+                            if (msg) {{
+                                msg.textContent = "✅ " + (fileName || "Foto copiada");
+                                msg.title = "Foto copiada: " + (fileName || "foto.png");
+                            }}
                         }} else {{
                             triggerFallbackDownload(dataUri, fileName);
-                            if (msg) msg.textContent = "💾 Descargada";
+                            if (msg) {{
+                                msg.textContent = "💾 " + (fileName || "Descargada");
+                                msg.title = "Foto descargada: " + (fileName || "foto.png");
+                            }}
                         }}
                     }} catch (err) {{
                         triggerFallbackDownload(dataUri, fileName);
-                        if (msg) msg.textContent = "💾 Descargada";
+                        if (msg) {{
+                            msg.textContent = "💾 " + (fileName || "Descargada");
+                            msg.title = "Foto descargada: " + (fileName || "foto.png");
+                        }}
                     }} finally {{
                         btn.disabled = false;
-                        setTimeout(function() {{ if (msg) msg.textContent = ""; }}, 2600);
+                        setTimeout(function() {{ if (msg) msg.textContent = ""; }}, 3000);
                     }}
                 }});
             }}

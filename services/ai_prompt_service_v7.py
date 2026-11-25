@@ -843,8 +843,19 @@ class AIPromptServiceV7:
         return w
 
     # ------------------------------------------------------------------
-    # MAPEO DINÁMICO DE RANURAS DE IMAGEN (ADIÓS ERROR DE "Image 2")
+    # MAPEO DINÁMICO DE RANURAS DE IMAGEN CON NOMBRE EXACTO DE FOTO COPIADA
     # ------------------------------------------------------------------
+    @staticmethod
+    def _canonical_photo_filename(raw_name: str, fallback: str = "foto.png") -> str:
+        """Normaliza el nombre de foto exactamente igual que el botón Copiar foto."""
+        raw = str(raw_name or "").strip().replace("\\", "/")
+        base = raw.rsplit("/", 1)[-1].strip() if raw else ""
+        if not base:
+            base = str(fallback or "foto.png").strip() or "foto.png"
+        dl_name = base if "." in base else f"{base}.png"
+        clean = dl_name.replace("\\", "_").replace('"', "").replace("'", "").strip()
+        return clean or "foto.png"
+
     def _build_image_slots(
         self,
         furn_item: str,
@@ -855,29 +866,67 @@ class AIPromptServiceV7:
         has_ref: bool,
         include_anchor: bool = False,
         classic_numbering: bool = False,
+        furniture_name: str = "",
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filename: str = "",
+        fabric_filename: str = "",
     ) -> Dict[str, Any]:
-        """Calcula el índice exacto (Image 1, Image 2...) de cada archivo adjunto."""
+        """Calcula el índice exacto (Image 1, Image 2...) y el nombre exacto de cada foto copiada."""
         slots: List[str] = []
         guide: List[str] = []
+        dal_parts: List[str] = []
         idx = 1
 
-        slots.append(f"- Image {idx} (PRIMARY FURNITURE REFERENCE): Exact 3D silhouette, joinery, and proportions of '{furn_item}'.")
-        guide.append(f"Image {idx}: Foto original del mueble")
+        raw_furn_list = [str(x).strip() for x in (furniture_filenames or []) if str(x or "").strip()]
+        if not raw_furn_list:
+            raw_furn_list = [furniture_name or furn_item or "mueble.png"]
+        furn_files = [self._canonical_photo_filename(fn, f"mueble_{i + 1}.png") for i, fn in enumerate(raw_furn_list)]
+        primary_furn_file = furn_files[0]
+
+        slots.append(
+            f'- Image {idx} (PRIMARY FURNITURE REFERENCE · FILE: "{primary_furn_file}"): '
+            f'Take the furniture piece strictly from photo "{primary_furn_file}" — exact 3D silhouette, joinery, and proportions of \'{furn_item}\'.'
+        )
+        guide.append(f'Image {idx}: Foto original del mueble ("{primary_furn_file}")')
+        dal_parts.append(f'Image {idx} = "{primary_furn_file}" (furniture piece)')
         idx += 1
 
+        extra_furn_indices: List[int] = []
+        for extra_file in furn_files[1:]:
+            extra_furn_indices.append(idx)
+            slots.append(
+                f'- Image {idx} (ADDITIONAL FURNITURE ANGLE · FILE: "{extra_file}"): '
+                f'Supplementary angle of the same furniture piece from photo "{extra_file}".'
+            )
+            guide.append(f'Image {idx}: Vista adicional del mueble ("{extra_file}")')
+            dal_parts.append(f'Image {idx} = "{extra_file}" (extra furniture angle)')
+            idx += 1
+
         wood_idx: Optional[int] = None
+        wood_file = ""
         if has_wood:
             wood_idx = 2 if classic_numbering else idx
-            slots.append(f"- Image {wood_idx} (WOOD SAMPLE GROUND TRUTH): Exact wood species, continuous grain, and stain tone ({wood_label}).")
-            guide.append(f"Image {wood_idx}: Muestra de madera ({wood_label})")
+            wood_file = self._canonical_photo_filename(wood_filename or wood_label, "madera.png")
+            slots.append(
+                f'- Image {wood_idx} (WOOD SAMPLE GROUND TRUTH · FILE: "{wood_file}"): '
+                f'Take exact wood species, continuous grain, and stain tone from photo "{wood_file}" ({wood_label}).'
+            )
+            guide.append(f'Image {wood_idx}: Muestra de madera ("{wood_file}")')
+            dal_parts.append(f'Image {wood_idx} = "{wood_file}" (wood sample)')
             if not classic_numbering:
                 idx += 1
 
         fabric_idx: Optional[int] = None
+        fabric_file = ""
         if has_fabric:
             fabric_idx = (3 if has_wood else 2) if classic_numbering else idx
-            slots.append(f"- Image {fabric_idx} (FABRIC SWATCH GROUND TRUTH): Exact textile weave, fiber thickness, and color ({fabric_label}).")
-            guide.append(f"Image {fabric_idx}: Muestra de tela ({fabric_label})")
+            fabric_file = self._canonical_photo_filename(fabric_filename or fabric_label, "tela.png")
+            slots.append(
+                f'- Image {fabric_idx} (FABRIC SWATCH GROUND TRUTH · FILE: "{fabric_file}"): '
+                f'Take exact textile weave, fiber thickness, and color from photo "{fabric_file}" ({fabric_label}).'
+            )
+            guide.append(f'Image {fabric_idx}: Muestra de tela ("{fabric_file}")')
+            dal_parts.append(f'Image {fabric_idx} = "{fabric_file}" (fabric swatch)')
             if not classic_numbering:
                 idx += 1
 
@@ -886,6 +935,7 @@ class AIPromptServiceV7:
             ref_idx = idx
             slots.append(f"- Image {ref_idx} (AUXILIARY ANGLE REFERENCE): Supplementary structural angle details.")
             guide.append(f"Image {ref_idx}: Referencia auxiliar de ángulo")
+            dal_parts.append(f"Image {ref_idx} = auxiliary angle reference")
             idx += 1
 
         anchor_idx: Optional[int] = None
@@ -895,14 +945,26 @@ class AIPromptServiceV7:
                 f"- Image {anchor_idx} (APPROVED VISTA 1 ANCHOR — WHEN ATTACHED): Use as visual lock for exact outline, color, and finish; change ONLY camera angle."
             )
             guide.append(f"Image {anchor_idx} (recomendada): Tu render aprobado de Vista 1")
+            dal_parts.append(f"Image {anchor_idx} (optional) = approved Vista 1 anchor")
+
+        match_rule = (
+            "PHOTO IDENTIFICATION RULE: Match every attached image by its exact copied file name above "
+            "(or by attachment order Image 1, Image 2, ... if pasted from clipboard); NEVER confuse which photo is the target furniture vs a material swatch."
+        )
 
         return {
-            "header_block": "ATTACHED REFERENCE IMAGES:\n" + "\n".join(slots),
+            "header_block": "ATTACHED REFERENCE IMAGES:\n" + "\n".join(slots) + "\n" + match_rule,
+            "dal_photo_map": "Attached Photos Map (identify by exact copied filename or order): " + " | ".join(dal_parts) + ".",
             "guide": guide,
             "wood_idx": wood_idx,
             "fabric_idx": fabric_idx,
             "ref_idx": ref_idx,
             "anchor_idx": anchor_idx,
+            "primary_furn_file": primary_furn_file,
+            "furn_files": furn_files,
+            "extra_furn_indices": extra_furn_indices,
+            "wood_file": wood_file,
+            "fabric_file": fabric_file,
         }
 
     @staticmethod
@@ -941,17 +1003,22 @@ class AIPromptServiceV7:
         fabric_idx: Optional[int],
         has_wood: bool,
         has_fabric: bool,
+        primary_furn_file: str = "",
+        wood_file: str = "",
+        fabric_file: str = "",
     ) -> Tuple[str, str]:
         """Devuelve (bloque_para_AI_Studio, bloque_para_DALLE)."""
         ais_parts: List[str] = []
         dal_parts: List[str] = []
+        furn_ref = f'Image 1 ("{primary_furn_file}")' if primary_furn_file else "Image 1"
 
         if has_wood:
             w_name = wa.get("name") or "Selected Wood Sample"
             w_color = wa.get("color_description") or "warm natural timber tone from the wood sample"
             w_tex = wa.get("texture_detail") or "fine continuous wood grain pores"
             w_light = wa.get("light_interaction") or "soft satin-matte timber sheen"
-            src = f"Image {wood_idx}" if wood_idx else "the wood sample"
+            src_base = f"Image {wood_idx}" if wood_idx else "the wood sample"
+            src = f'{src_base} ("{wood_file}")' if wood_file else src_base
             ais_parts.append(
                 f"- MONOLITHIC WOOD FINISH LOCK (from {src} — '{w_name}'): Apply this exact timber species, {w_color}, "
                 f"{w_tex}, and {w_light} uniformly across all wooden parts ({profile['parts_str']}). "
@@ -962,11 +1029,11 @@ class AIPromptServiceV7:
             )
         else:
             ais_parts.append(
-                f"- ORIGINAL WOOD / SURFACE PRESERVATION (from Image 1): Faithfully preserve the authentic surface materials, "
+                f"- ORIGINAL WOOD / SURFACE PRESERVATION (from {furn_ref}): Faithfully preserve the authentic surface materials, "
                 f"dual-tones, stone/metal/wood contrast, and color saturation of '{furn_item}' ({existing_mats}) without artificial uniformization."
             )
             dal_parts.append(
-                f"Faithfully preserve all authentic materials, finishes, and natural contrasts directly from Image 1 ({existing_mats})."
+                f"Faithfully preserve all authentic materials, finishes, and natural contrasts directly from {furn_ref} ({existing_mats})."
             )
 
         if has_fabric:
@@ -974,7 +1041,8 @@ class AIPromptServiceV7:
             f_color = fa.get("color_description") or "exact hue, undertones, and flecks from the fabric swatch"
             f_tex = fa.get("texture_detail") or "dense realistic woven upholstery fibers and loops"
             f_light = fa.get("light_interaction") or "soft matte textile sheen"
-            src = f"Image {fabric_idx}" if fabric_idx else "the fabric swatch"
+            src_base = f"Image {fabric_idx}" if fabric_idx else "the fabric swatch"
+            src = f'{src_base} ("{fabric_file}")' if fabric_file else src_base
             ais_parts.append(
                 f"- FULL CASCO & CUSHIONS FABRIC TEXTURE LOCK (V1+V7 from {src} — '{f_name}'): "
                 f"First, meticulously analyze the source fabric macro texture in {src} ({f_name}: {f_color}; {f_tex}; {f_light}). "
@@ -998,9 +1066,9 @@ class AIPromptServiceV7:
             pass
         else:
             ais_parts.append(
-                "- NON-WOOD / UPHOLSTERY PRESERVATION (from Image 1): Keep any fabric, cushions, metal, stone, or glass strictly identical to Image 1."
+                f"- NON-WOOD / UPHOLSTERY PRESERVATION (from {furn_ref}): Keep any fabric, cushions, metal, stone, or glass strictly identical to {furn_ref}."
             )
-            dal_parts.append("All non-wooden surfaces (upholstery, cushions, metal, stone, glass) remain strictly identical to Image 1.")
+            dal_parts.append(f"All non-wooden surfaces (upholstery, cushions, metal, stone, glass) remain strictly identical to {furn_ref}.")
 
         return "\n".join(ais_parts), " ".join(dal_parts)
 
@@ -1094,6 +1162,9 @@ class AIPromptServiceV7:
         white_bg_enabled: bool,
         classic_numbering: bool,
         use_anchor: bool,
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filename: str = "",
+        fabric_filename: str = "",
     ) -> Dict[str, Any]:
         meta = ALL_SINGLE_VIEWS[view_id]
         angle_desc = profile["angles"][view_id]
@@ -1106,7 +1177,12 @@ class AIPromptServiceV7:
             has_ref=has_ref,
             include_anchor=use_anchor,
             classic_numbering=classic_numbering,
+            furniture_name=furniture_name,
+            furniture_filenames=furniture_filenames,
+            wood_filename=wood_filename,
+            fabric_filename=fabric_filename,
         )
+        primary_furn_file = slots["primary_furn_file"]
         mat_ais, mat_dal = self._build_material_lock_text(
             profile=profile,
             furn_item=furn_item,
@@ -1117,6 +1193,9 @@ class AIPromptServiceV7:
             fabric_idx=slots["fabric_idx"],
             has_wood=has_wood,
             has_fabric=has_fabric,
+            primary_furn_file=primary_furn_file,
+            wood_file=slots["wood_file"],
+            fabric_file=slots["fabric_file"],
         )
 
         anchor_ais = ""
@@ -1153,8 +1232,8 @@ class AIPromptServiceV7:
 
         prompt_ais = (
             f"[COMMERCIAL PRODUCT PHOTOGRAPHY · {meta['label'].upper()}]\n"
-            f"TASK: Generate ONE standalone high-resolution commercial catalog photograph of '{furn_item}' ('{furniture_name}') "
-            f"from the exact requested camera perspective.\n\n"
+            f'TASK: Generate ONE standalone high-resolution commercial catalog photograph of \'{furn_item}\' (\'{furniture_name}\'), '
+            f'taking the furniture piece from Image 1 ("{primary_furn_file}"), from the exact requested camera perspective.\n\n'
             f"{slots['header_block']}\n\n"
             f"CAMERA & FRAMING:\n"
             f"- PERSPECTIVE: {angle_desc}\n"
@@ -1170,7 +1249,8 @@ class AIPromptServiceV7:
         )
 
         prompt_dal = (
-            f"Standalone 8K commercial catalog photograph of a single {furn_item} ('{furniture_name}').\n"
+            f'Standalone 8K commercial catalog photograph of a single {furn_item} (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}").\n'
+            f"{slots['dal_photo_map']}\n"
             f"Camera Perspective: {angle_desc} Centered with generous clean margins, single object only (no collage or split frame).\n"
             f"Materials: {mat_dal}\n"
             f"Structure & Proportions: {profile['geometry_rule']} {profile['dimensions_rule']}{anchor_dal}{notes_dal}\n"
@@ -1205,7 +1285,13 @@ class AIPromptServiceV7:
         profile: Dict[str, Any],
         medidas_usuario: str,
         user_notes_clean: str,
+        furniture_filenames: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        raw_furn = [str(x).strip() for x in (furniture_filenames or []) if str(x or "").strip()]
+        primary_furn_file = self._canonical_photo_filename(
+            raw_furn[0] if raw_furn else (furniture_name or furn_item or "mueble.png"),
+            "mueble.png",
+        )
         w_val = profile.get("width_cm")
         d_val = profile.get("depth_cm")
         h_val = profile.get("height_cm")
@@ -1237,10 +1323,10 @@ class AIPromptServiceV7:
 
         prompt_ais = (
             "[TECHNICAL ISOMETRIC CAD LINE-ART BLUEPRINT WITH DIMENSIONS]\n"
-            f"TASK: Generate a pure, crisp minimalist black-and-white isometric technical CAD line drawing with dimension arrows "
-            f"of the EXACT '{furn_item}' ('{furniture_name}') from Image 1.\n\n"
+            f'TASK: Generate a pure, crisp minimalist black-and-white isometric technical CAD line drawing with dimension arrows '
+            f'of the EXACT \'{furn_item}\' (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}").\n\n'
             "ATTACHED REFERENCE:\n"
-            "- Image 1: Furniture photo whose exact 3D silhouette, proportions, and details must be drawn as clean technical line art.\n\n"
+            f'- Image 1 (PRIMARY FURNITURE REFERENCE · FILE: "{primary_furn_file}"): Take the furniture photo "{primary_furn_file}" whose exact 3D silhouette, proportions, and details must be drawn as clean technical line art.\n\n'
             "LINE-ART & CANVAS RULES:\n"
             "- STYLE: Pure minimalist 2D isometric architectural CAD line art. Crisp uniform black ink lines (#000000) ONLY.\n"
             "- CANVAS: Square 1:1 composition on pure solid white background (#FFFFFF). Center the furniture with ~25% clean white margin on every side.\n"
@@ -1255,7 +1341,7 @@ class AIPromptServiceV7:
         ).replace("{notes_line}", notes_line)
 
         prompt_dal = (
-            f"Minimalist black-and-white technical isometric CAD blueprint line drawing of the {furn_item} ('{furniture_name}') from Image 1.\n"
+            f'Minimalist black-and-white technical isometric CAD blueprint line drawing of the {furn_item} (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}").\n'
             "Pure solid white background (#FFFFFF), uniform crisp black (#000000) technical outlines only — zero color, zero shading, zero textures, zero shadows.\n"
             "Centered in a square frame with ~25% white margin on all sides.\n"
             f"Include clean double-headed black dimension arrows parallel to the edges showing ONLY: {dim_summary}.\n"
@@ -1278,7 +1364,7 @@ class AIPromptServiceV7:
             "midjourney_v6": prompt_mj,
             "checklist": CHECKLISTS["vista_plano_tecnico"],
             "needs_anchor": False,
-            "attachment_guide": ["Image 1: Foto original del mueble"],
+            "attachment_guide": [f'Image 1: Foto original del mueble ("{primary_furn_file}")'],
         }
 
     def _build_environment_item(
@@ -1299,6 +1385,9 @@ class AIPromptServiceV7:
         user_notes_clean: str,
         classic_numbering: bool,
         use_anchor: bool,
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filename: str = "",
+        fabric_filename: str = "",
     ) -> Dict[str, Any]:
         slots = self._build_image_slots(
             furn_item=furn_item,
@@ -1309,7 +1398,12 @@ class AIPromptServiceV7:
             has_ref=has_ref,
             include_anchor=use_anchor,
             classic_numbering=classic_numbering,
+            furniture_name=furniture_name,
+            furniture_filenames=furniture_filenames,
+            wood_filename=wood_filename,
+            fabric_filename=fabric_filename,
         )
+        primary_furn_file = slots["primary_furn_file"]
         mat_ais, mat_dal = self._build_material_lock_text(
             profile=profile,
             furn_item=furn_item,
@@ -1320,6 +1414,9 @@ class AIPromptServiceV7:
             fabric_idx=slots["fabric_idx"],
             has_wood=has_wood,
             has_fabric=has_fabric,
+            primary_furn_file=primary_furn_file,
+            wood_file=slots["wood_file"],
+            fabric_file=slots["fabric_file"],
         )
         room_intro, companions = self._build_environment_room_context(profile, furn_item, lugar_casa)
         dim_summary = profile["dimensions_rule"] or "Preserve true-to-life furniture scale relative to surrounding architecture and rugs."
@@ -1337,7 +1434,7 @@ class AIPromptServiceV7:
 
         prompt_ais = (
             "[ARCHITECTURAL INTERIOR PHOTOGRAPHY · CLIENT HOME ENVIRONMENT (WIDE DISTANT SHOT)]\n"
-            f"TASK: Photograph '{furn_item}' ('{furniture_name}') placed authentically {room_intro}, "
+            f'TASK: Photograph \'{furn_item}\' (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}"), placed authentically {room_intro}, '
             "captured as a wide, distant architectural interior photograph.\n\n"
             f"{slots['header_block']}\n\n"
             "ENVIRONMENT & COMPOSITION:\n"
@@ -1355,7 +1452,8 @@ class AIPromptServiceV7:
         )
 
         prompt_dal = (
-            f"Wide-angle distant architectural interior photograph of a luxury client residence ({room_intro}), featuring the exact {furn_item} ('{furniture_name}') from Image 1.\n"
+            f'Wide-angle distant architectural interior photograph of a luxury client residence ({room_intro}), featuring the exact {furn_item} (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}").\n'
+            f"{slots['dal_photo_map']}\n"
             f"Scale & Placement: {dim_summary} {companions}\n"
             f"Contrast Mandate: Surrounding walls, rug, and floor use complementary neutral tones that deliberately contrast with the furniture so it stands out prominently.\n"
             f"Materials & Structure: {mat_dal} {profile['geometry_rule']}{notes_dal}\n"
@@ -1402,14 +1500,26 @@ class AIPromptServiceV7:
         white_bg_enabled: bool,
         classic_numbering: bool,
         camera_angle: str = "",
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filename: str = "",
+        fabric_filename: str = "",
     ) -> Dict[str, Any]:
         _ = classic_numbering
         has_wood = material_mode in ("wood_only", "dual")
         has_fabric = material_mode in ("fabric_only", "dual")
 
+        raw_furn_list = [str(x).strip() for x in (furniture_filenames or []) if str(x or "").strip()]
+        if not raw_furn_list:
+            raw_furn_list = [furniture_name or furn_item or "mueble.png"]
+        furn_files = [self._canonical_photo_filename(fn, f"mueble_{i + 1}.png") for i, fn in enumerate(raw_furn_list)]
+        primary_furn_file = furn_files[0]
+        fabric_file = self._canonical_photo_filename(fabric_filename or fabric_label, "tela.png") if has_fabric else ""
+        wood_file = self._canonical_photo_filename(wood_filename or wood_label, "madera.png") if has_wood else ""
+
         # Orden probado de V1: primero las muestras macro (Tela / Madera) y al final el mueble objetivo
         slot_lines: List[str] = []
         guide: List[str] = []
+        dal_parts: List[str] = []
         idx = 1
         fabric_idx: Optional[int] = None
         wood_idx: Optional[int] = None
@@ -1417,24 +1527,46 @@ class AIPromptServiceV7:
         if has_fabric:
             fabric_idx = idx
             slot_lines.append(
-                f"- Image {fabric_idx} (FABRIC SWATCH GROUND TRUTH): Source fabric macro texture, exact weave pattern, multi-tone flecks, and color ({fabric_label})."
+                f'- Image {fabric_idx} (FABRIC SWATCH GROUND TRUTH · FILE: "{fabric_file}"): '
+                f'Take source fabric macro texture, exact weave pattern, multi-tone flecks, and color strictly from photo "{fabric_file}" ({fabric_label}).'
             )
-            guide.append(f"Image {fabric_idx}: Muestra de tela ({fabric_label})")
+            guide.append(f'Image {fabric_idx}: Muestra de tela ("{fabric_file}")')
+            dal_parts.append(f'Image {fabric_idx} = "{fabric_file}" (fabric swatch)')
             idx += 1
         if has_wood:
             wood_idx = idx
             slot_lines.append(
-                f"- Image {wood_idx} (WOOD SAMPLE GROUND TRUTH): Exact wood species, continuous grain flow, and stain tone ({wood_label})."
+                f'- Image {wood_idx} (WOOD SAMPLE GROUND TRUTH · FILE: "{wood_file}"): '
+                f'Take exact wood species, continuous grain flow, and stain tone strictly from photo "{wood_file}" ({wood_label}).'
             )
-            guide.append(f"Image {wood_idx}: Muestra de madera ({wood_label})")
+            guide.append(f'Image {wood_idx}: Muestra de madera ("{wood_file}")')
+            dal_parts.append(f'Image {wood_idx} = "{wood_file}" (wood sample)')
             idx += 1
 
         furn_idx = idx
         slot_lines.append(
-            f"- Image {furn_idx} (TARGET FURNITURE PIECE): Original '{furn_item}' ('{furniture_name}') — preserve exact silhouette, seams, folds, and camera angle."
+            f'- Image {furn_idx} (TARGET FURNITURE PIECE · FILE: "{primary_furn_file}"): '
+            f'Take the original \'{furn_item}\' (\'{furniture_name}\') strictly from photo "{primary_furn_file}" — preserve exact silhouette, seams, folds, and camera angle.'
         )
-        guide.append(f"Image {furn_idx}: Foto original del mueble")
-        header_block = "ATTACHED IMAGES:\n" + "\n".join(slot_lines)
+        guide.append(f'Image {furn_idx}: Foto original del mueble ("{primary_furn_file}")')
+        dal_parts.append(f'Image {furn_idx} = "{primary_furn_file}" (target furniture piece)')
+        idx += 1
+
+        for extra_file in furn_files[1:]:
+            slot_lines.append(
+                f'- Image {idx} (ADDITIONAL FURNITURE ANGLE · FILE: "{extra_file}"): '
+                f'Supplementary reference angle of the target furniture from photo "{extra_file}".'
+            )
+            guide.append(f'Image {idx}: Vista adicional del mueble ("{extra_file}")')
+            dal_parts.append(f'Image {idx} = "{extra_file}" (extra furniture angle)')
+            idx += 1
+
+        match_rule = (
+            "PHOTO IDENTIFICATION RULE: Match every attached image by its exact copied file name above "
+            "(or by attachment order Image 1, Image 2, ... if pasted from clipboard); NEVER confuse which photo is the target furniture vs a material swatch."
+        )
+        header_block = "ATTACHED IMAGES:\n" + "\n".join(slot_lines) + "\n" + match_rule
+        dal_photo_map = "Attached Photos Map (identify by exact copied filename or order): " + " | ".join(dal_parts) + "."
 
         f_name = fa.get("name") or fabric_label or "Selected Fabric Swatch"
         f_color = fa.get("color_description") or "true-to-life chromatic profile, undertones, and flecks from sample"
@@ -1446,6 +1578,10 @@ class AIPromptServiceV7:
         w_texture = wa.get("texture_detail") or "natural anatomical wood grain flow"
         w_light = wa.get("light_interaction") or "soft satin-matte timber sheen"
 
+        furn_ref = f'Image {furn_idx} ("{primary_furn_file}")'
+        fab_ref = f'Image {fabric_idx} ("{fabric_file}")' if fabric_idx else ""
+        wood_ref = f'Image {wood_idx} ("{wood_file}")' if wood_idx else ""
+
         cam_lock = (camera_angle or "").strip() or "the exact same camera angle and framing as the original photo"
         dim_line = f" SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
         mirror_line = f" {profile['mirror_optics']}" if profile["mirror_optics"] else ""
@@ -1454,7 +1590,7 @@ class AIPromptServiceV7:
 
         if white_bg_enabled:
             scene_str = (
-                f"Strictly preserve the exact shape, structural geometry ({geom_struct}), contours, seams, piping, folds, and proportions of the furniture in Image {furn_idx}. "
+                f"Strictly preserve the exact shape, structural geometry ({geom_struct}), contours, seams, piping, folds, and proportions of the furniture in {furn_ref}. "
                 f"{profile['geometry_rule']}{dim_line}{mirror_line} "
                 f"CAMERA CONSTRAINT: You MUST lock the camera to {cam_lock}. "
                 f"ENVIRONMENT CONSTRAINT: Extract ONLY the furniture onto a pure seamless solid white background (#FFFFFF, RGB 255,255,255) centered with balanced margins; "
@@ -1465,7 +1601,7 @@ class AIPromptServiceV7:
             bg_dal = "pure seamless solid white background (#FFFFFF) with 0% ground/contact/drop shadows and 0% reflections"
         else:
             scene_str = (
-                f"Strictly preserve the exact shape, structural geometry ({geom_struct}), contours, seams, piping, folds, lighting, shadows, and surrounding background of Image {furn_idx}. "
+                f"Strictly preserve the exact shape, structural geometry ({geom_struct}), contours, seams, piping, folds, lighting, shadows, and surrounding background of {furn_ref}. "
                 f"{profile['geometry_rule']}{dim_line}{mirror_line} "
                 f"CAMERA CONSTRAINT: You MUST lock the camera to {cam_lock}. Do not alter the room or the furniture's physical design."
             )
@@ -1476,72 +1612,73 @@ class AIPromptServiceV7:
 
         if material_mode == "dual":
             prompt_ais = (
-                f"INSTRUCTION: First, meticulously analyze the source fabric macro texture in Image {fabric_idx} ({f_name}: {f_color}; {f_texture}; {f_light}), "
-                f"the source wood macro texture in Image {wood_idx} ({w_name}: {w_color}; {w_texture}; {w_light}), "
-                f"and the target furniture piece in Image {furn_idx} ('{furn_item}').\n\n"
+                f"INSTRUCTION: First, meticulously analyze the source fabric macro texture in {fab_ref} ({f_name}: {f_color}; {f_texture}; {f_light}), "
+                f"the source wood macro texture in {wood_ref} ({w_name}: {w_color}; {w_texture}; {w_light}), "
+                f"and the target furniture piece in {furn_ref} ('{furn_item}').\n\n"
                 f"{header_block}\n\n"
-                f"GENERATE: Accurately replace BOTH 100% of the fabric upholstery AND all wooden components of the furniture in Image {furn_idx} "
-                f"using the exact textures analyzed from Image {fabric_idx} and Image {wood_idx}.\n\n"
+                f"GENERATE: Accurately replace BOTH 100% of the fabric upholstery AND all wooden components of the furniture in {furn_ref} "
+                f"using the exact textures analyzed from {fab_ref} and {wood_ref}.\n\n"
                 f"GEOMETRY & SCENE CONSTRAINT: {scene_str}\n\n"
                 f"FABRIC & CASCO CONSTRAINT (FULL CASCO + CUSHIONS · 97% MACRO REDUCTION): "
-                f"Apply the precise weave pattern ({f_texture}), multi-tone thread colors/flecks ({f_color}), and surface response ({f_light}) from Image {fabric_idx} "
+                f"Apply the precise weave pattern ({f_texture}), multi-tone thread colors/flecks ({f_color}), and surface response ({f_light}) from {fab_ref} "
                 f"uniformly across 100% of the upholstered body shell (EL CASCO COMPLETO: outer & inner backrest, armrests/descansabrazos, upholstered base rail/faldón, side panels) "
                 f"AND all seat/back cushions with 0% hue shift. "
                 f"CRITICAL: You must scale down this macro texture dramatically (approx. 97% reduction) so it looks like realistic, finely woven fabric viewed from furniture distance, "
                 f"explicitly retaining dense micro-thread details on both the casco and cushions without turning into a flat solid color, leaving the casco in the old fabric, or creating an oversized pattern.\n\n"
-                f"WOOD CONSTRAINT: Apply the precise wood grain flow, pores, finish ({w_light}), and color ({w_color}) from Image {wood_idx} monolithically to all legs, frames, and wooden bases. "
+                f"WOOD CONSTRAINT: Apply the precise wood grain flow, pores, finish ({w_light}), and color ({w_color}) from {wood_ref} monolithically to all legs, frames, and wooden bases. "
                 f"Ensure the grain follows the natural anatomical direction (vertical on legs, horizontal on rails) with zero unintended two-tone contrast.{notes_ais}\n\n"
                 f"Negative Prompt:\n"
                 f"{fab_neg}, flat wood colors, bleached patches, text, watermark, poster, collage, infographic, multiple furniture pieces, {bg_neg}{profile['neg_add']}"
             )
             mat_dal = (
                 f"100% of the upholstered body shell (casco: backrest, armrests, upholstered base rail/sides) AND all cushions reupholstered in "
-                f"{f_name} ({f_color}; {f_texture}; {f_light}) from Image {fabric_idx} with approx. 97% macro weave scale reduction (preserving micro-threads, never flat color); "
-                f"all wooden parts finished monolithically in {w_name} ({w_color}; {w_texture}; {w_light}) from Image {wood_idx}."
+                f"{f_name} ({f_color}; {f_texture}; {f_light}) from {fab_ref} with approx. 97% macro weave scale reduction (preserving micro-threads, never flat color); "
+                f"all wooden parts finished monolithically in {w_name} ({w_color}; {w_texture}; {w_light}) from {wood_ref}."
             )
         elif material_mode == "fabric_only":
             prompt_ais = (
-                f"INSTRUCTION: First, meticulously analyze the source fabric macro texture in Image {fabric_idx} ({f_name}: {f_color}; {f_texture}; {f_light}) "
-                f"and the target furniture piece in Image {furn_idx} ('{furn_item}').\n\n"
+                f"INSTRUCTION: First, meticulously analyze the source fabric macro texture in {fab_ref} ({f_name}: {f_color}; {f_texture}; {f_light}) "
+                f"and the target furniture piece in {furn_ref} ('{furn_item}').\n\n"
                 f"{header_block}\n\n"
-                f"GENERATE: Accurately replace ONLY the upholstery fabric of the furniture piece in Image {furn_idx} using the exact texture analyzed from Image {fabric_idx}.\n\n"
+                f"GENERATE: Accurately replace ONLY the upholstery fabric of the furniture piece in {furn_ref} using the exact texture analyzed from {fab_ref}.\n\n"
                 f"GEOMETRY & SCENE CONSTRAINT: {scene_str}\n\n"
                 f"MATERIAL & SCALING CONSTRAINT (FULL CASCO + CUSHIONS · 97% MACRO REDUCTION): "
-                f"Apply the precise weave pattern ({f_texture}), multi-tone thread colors/flecks ({f_color}), and textile light response ({f_light}) from Image {fabric_idx} "
+                f"Apply the precise weave pattern ({f_texture}), multi-tone thread colors/flecks ({f_color}), and textile light response ({f_light}) from {fab_ref} "
                 f"uniformly across 100% of the upholstered body shell (EL CASCO COMPLETO: outer & inner backrest, armrests/descansabrazos, upholstered lower base rail/faldón, side panels, headboard/rails) "
                 f"AND all upholstered seat/back cushions, following original seams, piping, and folds with 0% color/hue shift. "
                 f"CRITICAL: You must scale down this macro texture dramatically (approx. 97% reduction). The final result must look like realistic, finely woven fabric viewed from a distance, "
                 f"explicitly retaining the dense micro-thread details on both the casco and cushions without turning into a flat, solid color, leaving the casco in the old fabric, or creating an oversized pattern. "
-                f"Strictly protect all non-upholstered parts (exposed wooden legs, wooden plinths/frames, metal hardware, glass, stone) identical to Image {furn_idx}.{notes_ais}\n\n"
+                f"Strictly protect all non-upholstered parts (exposed wooden legs, wooden plinths/frames, metal hardware, glass, stone) identical to {furn_ref}.{notes_ais}\n\n"
                 f"Negative Prompt:\n"
                 f"{fab_neg}, altered wood legs, changed wood color, text, watermark, poster, collage, infographic, multiple furniture pieces, {bg_neg}{profile['neg_add']}"
             )
             mat_dal = (
                 f"100% of the upholstered body shell (casco: backrest, armrests, upholstered base rail/sides) AND all cushions reupholstered in "
-                f"{f_name} ({f_color}; {f_texture}; {f_light}) from Image {fabric_idx} with approx. 97% macro weave scale reduction (preserving micro-threads, never flat solid color); "
-                f"all exposed wooden legs, frames, and metal parts preserved strictly identical to Image {furn_idx}."
+                f"{f_name} ({f_color}; {f_texture}; {f_light}) from {fab_ref} with approx. 97% macro weave scale reduction (preserving micro-threads, never flat solid color); "
+                f"all exposed wooden legs, frames, and metal parts preserved strictly identical to {furn_ref}."
             )
         else:  # wood_only
             prompt_ais = (
-                f"INSTRUCTION: First, meticulously analyze the source wood macro texture in Image {wood_idx} ({w_name}: {w_color}; {w_texture}; {w_light}) "
-                f"and the target furniture piece in Image {furn_idx} ('{furn_item}').\n\n"
+                f"INSTRUCTION: First, meticulously analyze the source wood macro texture in {wood_ref} ({w_name}: {w_color}; {w_texture}; {w_light}) "
+                f"and the target furniture piece in {furn_ref} ('{furn_item}').\n\n"
                 f"{header_block}\n\n"
-                f"GENERATE: Accurately replace ONLY the wooden components ({profile['parts_str']}) of the furniture in Image {furn_idx} "
-                f"using the exact wood grain, finish, and tone analyzed from Image {wood_idx}.\n\n"
+                f"GENERATE: Accurately replace ONLY the wooden components ({profile['parts_str']}) of the furniture in {furn_ref} "
+                f"using the exact wood grain, finish, and tone analyzed from {wood_ref}.\n\n"
                 f"GEOMETRY & SCENE CONSTRAINT: {scene_str}\n\n"
-                f"MATERIAL CONSTRAINT: Apply the precise wood grain flow, pores, finish ({w_light}), and color ({w_color}) from Image {wood_idx} monolithically. "
+                f"MATERIAL CONSTRAINT: Apply the precise wood grain flow, pores, finish ({w_light}), and color ({w_color}) from {wood_ref} monolithically. "
                 f"Ensure the grain follows the natural anatomical direction of the furniture parts (vertical on legs, horizontal on rails) with zero two-tone contrast or bleached patches. "
-                f"Keep any upholstery, cushions, metal, stone, or glass strictly identical to Image {furn_idx}.{notes_ais}\n\n"
+                f"Keep any upholstery, cushions, metal, stone, or glass strictly identical to {furn_ref}.{notes_ais}\n\n"
                 f"Negative Prompt:\n"
                 f"altered fabric, changed upholstery, color shift, flat colors, two-tone wood mismatch, changed geometry, text, watermark, {bg_neg}{profile['neg_add']}"
             )
             mat_dal = (
-                f"Wooden components ({profile['parts_str']}) finished monolithically in {w_name} ({w_color}; {w_texture}; {w_light}) matching Image {wood_idx}; "
-                f"all non-wooden surfaces preserved identical to Image {furn_idx}."
+                f"Wooden components ({profile['parts_str']}) finished monolithically in {w_name} ({w_color}; {w_texture}; {w_light}) matching {wood_ref}; "
+                f"all non-wooden surfaces preserved identical to {furn_ref}."
             )
 
         prompt_dal = (
-            f"Precision material-swap product photograph of the exact {furn_item} ('{furniture_name}') in Image {furn_idx} (do NOT redesign geometry or camera angle: {cam_lock}).\n"
+            f"Precision material-swap product photograph of the exact {furn_item} ('{furniture_name}') taken from {furn_ref} (do NOT redesign geometry or camera angle: {cam_lock}).\n"
+            f"{dal_photo_map}\n"
             f"Materials: {mat_dal}\n"
             f"Structure & Folds: Preserve exact contours, seams, piping, and folds. {profile['geometry_rule']} {profile['dimensions_rule']}{notes_dal}\n"
             f"Background: {bg_dal}.\n"
@@ -1582,6 +1719,9 @@ class AIPromptServiceV7:
         fabric_label: str,
         user_notes_clean: str,
         classic_numbering: bool,
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filename: str = "",
+        fabric_filename: str = "",
     ) -> Dict[str, Any]:
         slots = self._build_image_slots(
             furn_item=furn_item,
@@ -1592,7 +1732,12 @@ class AIPromptServiceV7:
             has_ref=False,
             include_anchor=False,
             classic_numbering=classic_numbering,
+            furniture_name=furniture_name,
+            furniture_filenames=furniture_filenames,
+            wood_filename=wood_filename,
+            fabric_filename=fabric_filename,
         )
+        primary_furn_file = slots["primary_furn_file"]
         mat_ais, mat_dal = self._build_material_lock_text(
             profile=profile,
             furn_item=furn_item,
@@ -1603,6 +1748,9 @@ class AIPromptServiceV7:
             fabric_idx=slots["fabric_idx"],
             has_wood=has_wood,
             has_fabric=has_fabric,
+            primary_furn_file=primary_furn_file,
+            wood_file=slots["wood_file"],
+            fabric_file=slots["fabric_file"],
         )
         notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
@@ -1610,7 +1758,7 @@ class AIPromptServiceV7:
 
         prompt_ais = (
             "[ISOLATED COMMERCIAL PRODUCT CUTOUT · PURE WHITE #FFFFFF]\n"
-            f"TASK: Cleanly extract and isolate '{furn_item}' ('{furniture_name}') from Image 1 onto a pure solid white background (#FFFFFF).\n\n"
+            f'TASK: Cleanly extract and isolate \'{furn_item}\' (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}") onto a pure solid white background (#FFFFFF).\n\n'
             f"{slots['header_block']}\n\n"
             "ISOLATION & FRAMING:\n"
             "- POSITION: Place the furniture dead-center occupying ~72% of the canvas with balanced margins on all sides.\n"
@@ -1624,8 +1772,9 @@ class AIPromptServiceV7:
         )
 
         prompt_dal = (
-            f"Clean commercial e-commerce cutout of the exact {furn_item} ('{furniture_name}') from Image 1, "
+            f'Clean commercial e-commerce cutout of the exact {furn_item} (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}"), '
             "centered on a pure seamless solid white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, and 0% reflections.\n"
+            f"{slots['dal_photo_map']}\n"
             f"Materials: {mat_dal}\n"
             f"Geometry: {profile['geometry_rule']} {profile['dimensions_rule']}\n"
             f"{'User directives: ' + user_notes_clean if user_notes_clean else ''}\n"
@@ -1666,6 +1815,9 @@ class AIPromptServiceV7:
         user_notes_clean: str,
         white_bg_enabled: bool,
         classic_numbering: bool,
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filename: str = "",
+        fabric_filename: str = "",
     ) -> Dict[str, Any]:
         slots = self._build_image_slots(
             furn_item=furn_item,
@@ -1676,7 +1828,12 @@ class AIPromptServiceV7:
             has_ref=False,
             include_anchor=False,
             classic_numbering=classic_numbering,
+            furniture_name=furniture_name,
+            furniture_filenames=furniture_filenames,
+            wood_filename=wood_filename,
+            fabric_filename=fabric_filename,
         )
+        primary_furn_file = slots["primary_furn_file"]
         mat_ais, mat_dal = self._build_material_lock_text(
             profile=profile,
             furn_item=furn_item,
@@ -1687,11 +1844,14 @@ class AIPromptServiceV7:
             fabric_idx=slots["fabric_idx"],
             has_wood=has_wood,
             has_fabric=has_fabric,
+            primary_furn_file=primary_furn_file,
+            wood_file=slots["wood_file"],
+            fabric_file=slots["fabric_file"],
         )
         bg_line = (
             "Pure seamless solid white catalog studio background (#FFFFFF) with zero drop shadows."
             if white_bg_enabled
-            else "Preserve the exact original background, scene lighting, and framing from Image 1 while upgrading sharpness to 8K."
+            else f'Preserve the exact original background, scene lighting, and framing from Image 1 ("{primary_furn_file}") while upgrading sharpness to 8K.'
         )
         notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
@@ -1699,7 +1859,7 @@ class AIPromptServiceV7:
 
         prompt_ais = (
             "[8K ULTRA-HD COMMERCIAL RESTORATION · ZERO COLOR OR GEOMETRY DRIFT]\n"
-            f"TASK: Remaster '{furn_item}' ('{furniture_name}') from Image 1 into ultra-sharp 8K medium-format clarity "
+            f'TASK: Remaster \'{furn_item}\' (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}") into ultra-sharp 8K medium-format clarity '
             "without altering color, tone, material identity, or silhouette.\n\n"
             f"{slots['header_block']}\n\n"
             "CLARITY & RESTORATION:\n"
@@ -1714,7 +1874,8 @@ class AIPromptServiceV7:
         )
 
         prompt_dal = (
-            f"8K Ultra-HD photographic remaster of the exact {furn_item} ('{furniture_name}') from Image 1.\n"
+            f'8K Ultra-HD photographic remaster of the exact {furn_item} (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}").\n'
+            f"{slots['dal_photo_map']}\n"
             "Remove all blur, pixelation, and compression artifacts while preserving 100% identical color, warmth, wood grain, fabric weave, and geometry.\n"
             f"Materials: {mat_dal}\n"
             f"Geometry: {profile['geometry_rule']} {profile['dimensions_rule']}\n"
@@ -1756,36 +1917,51 @@ class AIPromptServiceV7:
         user_notes_clean: str,
         white_bg_enabled: bool,
         ref_label: str = "",
+        ref_filename: str = "",
         fabric_analysis: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
     ) -> Dict[str, str]:
         fa = fabric_analysis or {}
+        view_file = self._canonical_photo_filename(view_name, "vista.png")
+        ref_file = self._canonical_photo_filename(
+            ref_filename or ref_label,
+            "tela.png" if batch_mode == "vistas_tela" else "referencia_color.png",
+        )
         bg_clause = (
             "pure seamless solid white background (#FFFFFF) with 0% ground shadows, 0% drop shadows, and 0% floor reflections"
             if white_bg_enabled
-            else "the exact original background and natural lighting of Image 2"
+            else f'the exact original background and natural lighting of Image 2 ("{view_file}")'
         )
         notes_part = f"\n- MANDATORY NOTES: {user_notes_clean}" if user_notes_clean else ""
         dims_part = f"\n- REAL-WORLD SCALE: {medidas_texto}" if medidas_texto else ""
 
+        match_rule = (
+            "PHOTO IDENTIFICATION RULE: Match every attached image by its exact copied file name above "
+            "(or by attachment order Image 1, Image 2 if pasted from clipboard); NEVER swap Image 1 and Image 2."
+        )
+
         if batch_mode == "vistas_tela":
             f_name = fa.get("name") or ref_label or "Fabric Swatch"
-            f_color = fa.get("color_description") or "exact hue, undertones, and multi-tone flecks from Image 1"
+            f_color = fa.get("color_description") or f'exact hue, undertones, and multi-tone flecks from Image 1 ("{ref_file}")'
             f_tex = fa.get("texture_detail") or "dense realistic woven upholstery fibers and loops"
             f_light = fa.get("light_interaction") or "soft matte textile sheen"
             fab_neg = self._fabric_negative_terms(fa, ref_label)
+            batch_header = (
+                "ATTACHED IMAGES:\n"
+                f'- Image 1 (FABRIC SWATCH GROUND TRUTH · FILE: "{ref_file}"): Take exact color, flecks, thread thickness, and textile weave strictly from photo "{ref_file}" ({f_name}).\n'
+                f'- Image 2 (TARGET VIEW · FILE: "{view_file}"): Take the target furniture view strictly from photo "{view_file}" — keep its EXACT camera angle, 3D silhouette, proportions, seams, piping, folds, and wooden/metal parts.\n'
+                f"{match_rule}"
+            )
 
             local_ais = (
-                f"INSTRUCTION: First, meticulously analyze the source fabric macro texture in Image 1 ({f_name}: {f_color}; {f_tex}; {f_light}) "
-                f"and the target furniture view '{view_name}' in Image 2 ('{furn_item}').\n\n"
-                "ATTACHED IMAGES:\n"
-                f"- Image 1 (FABRIC SWATCH GROUND TRUTH): Exact color, flecks, thread thickness, and textile weave ({f_name}).\n"
-                "- Image 2 (TARGET VIEW): Keep the EXACT camera angle, 3D silhouette, proportions, seams, piping, folds, and wooden/metal parts.\n\n"
-                f"GENERATE: Accurately replace ONLY the upholstery fabric of the furniture piece in Image 2 using the exact texture analyzed from Image 1.\n\n"
-                "GEOMETRY & SCENE CONSTRAINT: Strictly preserve the exact camera angle, shape, contours, seams, piping, folds, and non-upholstered wood/metal parts of Image 2. "
+                f'INSTRUCTION: First, meticulously analyze the source fabric macro texture in Image 1 ("{ref_file}" — {f_name}: {f_color}; {f_tex}; {f_light}) '
+                f'and the target furniture view in Image 2 ("{view_file}" — \'{furn_item}\').\n\n'
+                f"{batch_header}\n\n"
+                f'GENERATE: Accurately replace ONLY the upholstery fabric of the furniture piece in Image 2 ("{view_file}") using the exact texture analyzed from Image 1 ("{ref_file}").\n\n'
+                f'GEOMETRY & SCENE CONSTRAINT: Strictly preserve the exact camera angle, shape, contours, seams, piping, folds, and non-upholstered wood/metal parts of Image 2 ("{view_file}"). '
                 f"ENVIRONMENT: {bg_clause}. Do NOT include text, labels, or watermarks.{dims_part}{notes_part}\n\n"
                 "MATERIAL & SCALING CONSTRAINT (FULL CASCO + CUSHIONS · 97% MACRO REDUCTION): "
-                f"Apply the precise weave pattern ({f_tex}), multi-tone thread colors/flecks ({f_color}), and surface response ({f_light}) from Image 1 "
+                f'Apply the precise weave pattern ({f_tex}), multi-tone thread colors/flecks ({f_color}), and surface response ({f_light}) from Image 1 ("{ref_file}") '
                 "uniformly across 100% of the upholstered body shell (EL CASCO COMPLETO: outer & inner backrest, armrests/descansabrazos, upholstered base rail/faldón, sides) "
                 "AND all cushions with 0% hue shift. "
                 "CRITICAL: Scale down this macro texture dramatically (approx. 97% reduction) so it looks like finely woven fabric from furniture distance, "
@@ -1793,29 +1969,36 @@ class AIPromptServiceV7:
                 f"Negative Prompt:\n{fab_neg}, altered camera angle, altered wood legs, text, watermark, collage."
             )
             vision_task = (
-                f"Image 1 is a close-up FABRIC SWATCH ({f_name}: {f_color}; {f_tex}; {f_light}). "
-                f"Image 2 is a TARGET FURNITURE VIEW '{view_name}' (exact geometry and camera angle).\n"
-                "Write a surgical image-editing prompt in the exact V1+V7 style (INSTRUCTION -> GENERATE -> GEOMETRY & SCENE CONSTRAINT -> CAMERA CONSTRAINT -> "
-                "MATERIAL & SCALING CONSTRAINT -> Negative Prompt) commanding the model to lock Image 2's exact camera angle, silhouette, seams, folds, and wooden/metal parts "
+                f'Image 1 (FILE: "{ref_file}") is a close-up FABRIC SWATCH ({f_name}: {f_color}; {f_tex}; {f_light}). '
+                f'Image 2 (FILE: "{view_file}") is a TARGET FURNITURE VIEW (exact geometry and camera angle).\n'
+                "Write a surgical image-editing prompt in the exact V1+V7 style (INSTRUCTION -> ATTACHED IMAGES -> GENERATE -> GEOMETRY & SCENE CONSTRAINT -> CAMERA CONSTRAINT -> "
+                "MATERIAL & SCALING CONSTRAINT -> Negative Prompt) explicitly naming BOTH exact photo files "
+                f'("{ref_file}" for Image 1 and "{view_file}" for Image 2) and commanding the model to lock Image 2\'s exact camera angle, silhouette, seams, folds, and wooden/metal parts '
                 "while replacing 100% of BOTH the upholstered casco (backrest, armrests, upholstered base rail/sides) AND all cushions with Image 1's exact weave and undertones "
                 f"(~97% macro-to-furniture reduction, 0% hue shift, never flat solid color, never suede/velvet unless specified), on {bg_clause}."
             )
         else:  # clonar_color
-            local_ais = (
-                f"[BATCH VIEW COLOR & FINISH CLONE · {view_name}]\n"
-                f"TASK: Clone the exact color, wood/fabric finish, and surface texture from Image 1 onto the furniture '{furn_item}' in Image 2.\n\n"
+            batch_header = (
                 "ATTACHED IMAGES:\n"
-                "- Image 1 (COLOR & MATERIAL MASTER REFERENCE): Source of truth for exact hue, timber/fabric texture, and sheen.\n"
-                "- Image 2 (TARGET VIEW TO RECOLOR): Keep the EXACT camera angle, 3D silhouette, joinery, folds, and proportions.\n\n"
+                f'- Image 1 (COLOR & MATERIAL MASTER REFERENCE · FILE: "{ref_file}"): Take exact hue, timber/fabric texture, and sheen strictly from photo "{ref_file}".\n'
+                f'- Image 2 (TARGET VIEW TO RECOLOR · FILE: "{view_file}"): Take the target furniture view strictly from photo "{view_file}" — keep its EXACT camera angle, 3D silhouette, joinery, folds, and proportions.\n'
+                f"{match_rule}"
+            )
+            local_ais = (
+                f"[BATCH VIEW COLOR & FINISH CLONE · {view_file}]\n"
+                f'TASK: Clone the exact color, wood/fabric finish, and surface texture from Image 1 ("{ref_file}") onto the furniture \'{furn_item}\' in Image 2 ("{view_file}").\n\n'
+                f"{batch_header}\n\n"
                 "RULES:\n"
-                "- Transfer Image 1's exact color tone and surface finish onto Image 2 cleanly with 0% hue drift.\n"
-                "- Strictly preserve Image 2's camera angle and physical geometry.\n"
+                f'- Transfer Image 1 ("{ref_file}") exact color tone and surface finish onto Image 2 ("{view_file}") cleanly with 0% hue drift.\n'
+                f'- Strictly preserve Image 2 ("{view_file}") camera angle and physical geometry.\n'
                 f"- BACKGROUND: {bg_clause}.{dims_part}{notes_part}\n\n"
                 "Exclude: repeating Image 1's camera angle, altered silhouette, mismatched tone, text, watermark."
             )
             vision_task = (
-                "Image 1 is a COLOR & FINISH MASTER REFERENCE (correct color/material). Image 2 is a TARGET FURNITURE VIEW (correct camera angle & geometry, wrong color).\n"
-                "Write a crisp, production-grade image-generation prompt commanding the model to keep Image 2's EXACT camera angle and 3D geometry "
+                f'Image 1 (FILE: "{ref_file}") is a COLOR & FINISH MASTER REFERENCE (correct color/material). '
+                f'Image 2 (FILE: "{view_file}") is a TARGET FURNITURE VIEW (correct camera angle & geometry, wrong color).\n'
+                "Write a crisp, production-grade image-generation prompt explicitly naming BOTH exact photo files "
+                f'("{ref_file}" for Image 1 and "{view_file}" for Image 2) and commanding the model to keep Image 2\'s EXACT camera angle and 3D geometry '
                 "while transferring Image 1's exact color, grain/weave, and finish with 0% hue shift, on "
                 f"{bg_clause}."
             )
@@ -1855,6 +2038,8 @@ class AIPromptServiceV7:
                 api_key=key,
             )
             txt = (res.text or "").strip() or local_ais
+            if ref_file not in txt or view_file not in txt:
+                txt = f"{batch_header}\n\n{txt}"
             return {
                 "google_ai_studio": txt,
                 "chatgpt_dalle3": txt,
@@ -1893,6 +2078,11 @@ class AIPromptServiceV7:
         batch_ref_bytes: Optional[bytes] = None,
         batch_views: Optional[List[Tuple[str, bytes]]] = None,
         api_key: Optional[str] = None,
+        # Nombres exactos de archivos de fotos copiadas/cargadas:
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filename: str = "",
+        fabric_filename: str = "",
+        batch_ref_filename: str = "",
     ) -> Dict[str, Any]:
         if mode not in MODES:
             raise ValueError(f"Modo V7 desconocido: {mode}")
@@ -1913,10 +2103,12 @@ class AIPromptServiceV7:
         profile_search = f"{furn_item} {medidas_texto} {user_notes_clean}"
         profile = self.detect_furniture_profile(furn_item, profile_search, geom_struct)
 
-        has_wood = bool(wa) or bool(wood_label)
-        has_fabric = bool(fa) or bool(fabric_label)
-        w_label = wood_label or wa.get("name") or "Muestra de madera"
-        f_label = fabric_label or fa.get("name") or "Muestra de tela"
+        has_wood = bool(wa) or bool(wood_label) or bool(wood_filename)
+        has_fabric = bool(fa) or bool(fabric_label) or bool(fabric_filename)
+        w_label = wood_label or wood_filename or wa.get("name") or "Muestra de madera"
+        f_label = fabric_label or fabric_filename or fa.get("name") or "Muestra de tela"
+        w_file_arg = wood_filename or wood_label
+        f_file_arg = fabric_filename or fabric_label
 
         items: List[Dict[str, Any]] = []
         master_ais = ""
@@ -1933,6 +2125,7 @@ class AIPromptServiceV7:
                             profile=profile,
                             medidas_usuario=medidas_texto,
                             user_notes_clean=user_notes_clean,
+                            furniture_filenames=furniture_filenames,
                         )
                     )
                 elif vid == "vista_entorno_cliente":
@@ -1954,6 +2147,9 @@ class AIPromptServiceV7:
                             user_notes_clean=user_notes_clean,
                             classic_numbering=classic_numbering,
                             use_anchor=True,
+                            furniture_filenames=furniture_filenames,
+                            wood_filename=w_file_arg,
+                            fabric_filename=f_file_arg,
                         )
                     )
                 else:
@@ -1976,6 +2172,9 @@ class AIPromptServiceV7:
                             white_bg_enabled=True,
                             classic_numbering=classic_numbering,
                             use_anchor=(vid != "vista_frontal"),
+                            furniture_filenames=furniture_filenames,
+                            wood_filename=w_file_arg,
+                            fabric_filename=f_file_arg,
                         )
                     )
 
@@ -1988,7 +2187,12 @@ class AIPromptServiceV7:
                 has_ref=has_reference_imgs,
                 include_anchor=False,
                 classic_numbering=classic_numbering,
+                furniture_name=furniture_name,
+                furniture_filenames=furniture_filenames,
+                wood_filename=w_file_arg,
+                fabric_filename=f_file_arg,
             )
+            primary_furn_file = slots_master["primary_furn_file"]
             mat_ais, mat_dal = self._build_material_lock_text(
                 profile=profile,
                 furn_item=furn_item,
@@ -1999,6 +2203,9 @@ class AIPromptServiceV7:
                 fabric_idx=slots_master["fabric_idx"],
                 has_wood=has_wood,
                 has_fabric=has_fabric,
+                primary_furn_file=primary_furn_file,
+                wood_file=slots_master["wood_file"],
+                fabric_file=slots_master["fabric_file"],
             )
             room_intro, companions = self._build_environment_room_context(profile, furn_item, lugar_casa)
             dims_bp = []
@@ -2023,7 +2230,7 @@ class AIPromptServiceV7:
 
             master_ais = (
                 "[COMMERCIAL 7-IMAGE CATALOG SERIES · TURN-BY-TURN SEQUENTIAL GENERATION]\n"
-                f"TASK: Generate a complete 7-piece commercial catalog sequence for '{furn_item}' ('{furniture_name}'): "
+                f'TASK: Generate a complete 7-piece commercial catalog sequence for \'{furn_item}\' (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}"): '
                 "5 studio cutouts on pure white (#FFFFFF), 1 isometric technical CAD blueprint, and 1 wide client home interior photo.\n\n"
                 f"{slots_master['header_block']}\n\n"
                 "FROZEN IDENTITY & MATERIALS:\n"
@@ -2048,7 +2255,8 @@ class AIPromptServiceV7:
             )
 
             master_dal = (
-                f"Generate 7 separate standalone commercial images in sequence (do NOT combine into a grid or collage) for '{furn_item}' ('{furniture_name}'):\n"
+                f'Generate 7 separate standalone commercial images in sequence (do NOT combine into a grid or collage) for \'{furn_item}\' (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}"):\n'
+                f"{slots_master['dal_photo_map']}\n"
                 f"1. Direct Front View (0°): {angles['vista_frontal']}\n"
                 f"2. 3/4 Perspective (45°): {angles['vista_perspectiva_3_4']}\n"
                 f"3. Strict Lateral Profile (90°): {angles['vista_lateral']}\n"
@@ -2069,12 +2277,16 @@ class AIPromptServiceV7:
             if vista_id not in ALL_SINGLE_VIEWS:
                 vista_id = "vista_frontal"
             if vista_id == "vista_plano_tecnico":
-                it = self._build_blueprint_item(furn_item, furniture_name, profile, medidas_texto, user_notes_clean)
+                it = self._build_blueprint_item(
+                    furn_item, furniture_name, profile, medidas_texto, user_notes_clean,
+                    furniture_filenames=furniture_filenames,
+                )
             elif vista_id == "vista_entorno_cliente":
                 it = self._build_environment_item(
                     furn_item, furniture_name, profile, geom_struct, existing_mats,
                     wa, fa, has_wood, has_fabric, has_reference_imgs, w_label, f_label,
                     lugar_casa, user_notes_clean, classic_numbering, use_anchor=True,
+                    furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
                 )
             else:
                 it = self._build_single_studio_view_prompt(
@@ -2082,6 +2294,7 @@ class AIPromptServiceV7:
                     wa, fa, has_wood, has_fabric, has_reference_imgs, w_label, f_label,
                     user_notes_clean, white_bg_enabled, classic_numbering,
                     use_anchor=(vista_id in ANCHOR_VIEWS),
+                    furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
                 )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2091,6 +2304,7 @@ class AIPromptServiceV7:
                 material_mode, furn_item, furniture_name, profile, geom_struct, existing_mats,
                 wa, fa, w_label, f_label, user_notes_clean, white_bg_enabled, classic_numbering,
                 camera_angle=ma.get("camera_angle", ""),
+                furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2100,12 +2314,16 @@ class AIPromptServiceV7:
                 furn_item, furniture_name, profile, geom_struct, existing_mats,
                 wa, fa, has_wood, has_fabric, has_reference_imgs, w_label, f_label,
                 lugar_casa, user_notes_clean, classic_numbering, use_anchor=False,
+                furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
 
         elif mode == "plano":
-            it = self._build_blueprint_item(furn_item, furniture_name, profile, medidas_texto, user_notes_clean)
+            it = self._build_blueprint_item(
+                furn_item, furniture_name, profile, medidas_texto, user_notes_clean,
+                furniture_filenames=furniture_filenames,
+            )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
 
@@ -2113,6 +2331,7 @@ class AIPromptServiceV7:
             it = self._build_extraction_item(
                 furn_item, furniture_name, profile, geom_struct, existing_mats,
                 wa, fa, has_wood, has_fabric, w_label, f_label, user_notes_clean, classic_numbering,
+                furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2122,6 +2341,7 @@ class AIPromptServiceV7:
                 furn_item, furniture_name, profile, geom_struct, existing_mats,
                 wa, fa, has_wood, has_fabric, w_label, f_label,
                 user_notes_clean, white_bg_enabled, classic_numbering,
+                furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2131,11 +2351,15 @@ class AIPromptServiceV7:
             if not views:
                 raise ValueError("Sube al menos una vista objetivo para procesar el lote.")
             ref_b = batch_ref_bytes or b""
-            ref_lbl = f_label if mode == "vistas_tela" else "Foto referencia color"
-            guide = (
-                [f"Image 1: Muestra de tela ({ref_lbl})", "Image 2: La vista objetivo correspondiente"]
+            ref_lbl = f_label if mode == "vistas_tela" else (batch_ref_filename or (furniture_filenames[0] if furniture_filenames else "") or "Foto referencia color")
+            ref_fname = (
+                f_file_arg
                 if mode == "vistas_tela"
-                else ["Image 1: Foto del mueble con el color/acabado correcto", "Image 2: La vista objetivo a recolorear"]
+                else (batch_ref_filename or (furniture_filenames[0] if furniture_filenames else "") or furniture_name)
+            )
+            ref_file_canon = self._canonical_photo_filename(
+                ref_fname or ref_lbl,
+                "tela.png" if mode == "vistas_tela" else "referencia_color.png",
             )
 
             def _run(pair: Tuple[str, bytes]) -> Tuple[str, bytes, Dict[str, str]]:
@@ -2150,6 +2374,7 @@ class AIPromptServiceV7:
                     user_notes_clean=user_notes_clean,
                     white_bg_enabled=white_bg_enabled,
                     ref_label=ref_lbl,
+                    ref_filename=ref_file_canon,
                     fabric_analysis=fa if mode == "vistas_tela" else None,
                     api_key=api_key,
                 )
@@ -2158,9 +2383,15 @@ class AIPromptServiceV7:
                 batch_results = list(executor.map(_run, views))
 
             for idx, (vname, vbytes, pdict) in enumerate(batch_results, start=1):
+                v_file_canon = self._canonical_photo_filename(vname, f"vista_{idx}.png")
+                item_guide = (
+                    [f'Image 1: Muestra de tela ("{ref_file_canon}")', f'Image 2: Vista objetivo ("{v_file_canon}")']
+                    if mode == "vistas_tela"
+                    else [f'Image 1: Foto base de color/acabado ("{ref_file_canon}")', f'Image 2: Vista objetivo a recolorear ("{v_file_canon}")']
+                )
                 items.append({
                     "id": f"{mode}_{idx}",
-                    "label": f"Vista {idx}: {vname}",
+                    "label": f"Vista {idx}: {v_file_canon}",
                     "short_name": f"Vista {idx}",
                     "icon": "🧵" if mode == "vistas_tela" else "🧬",
                     "google_ai_studio": pdict["google_ai_studio"],
@@ -2168,7 +2399,7 @@ class AIPromptServiceV7:
                     "midjourney_v6": pdict["midjourney_v6"],
                     "checklist": CHECKLISTS[mode],
                     "needs_anchor": False,
-                    "attachment_guide": guide,
+                    "attachment_guide": item_guide,
                     "preview_bytes": vbytes,
                 })
             master_ais = "\n\n".join(f"=== {it['label'].upper()} ===\n{it['google_ai_studio']}" for it in items)
@@ -2236,6 +2467,9 @@ class AIPromptServiceV7:
         fabric_label: str = "",
         has_reference_imgs: bool = False,
         classic_numbering: bool = False,
+        furniture_filenames: Optional[List[str]] = None,
+        wood_filename: str = "",
+        fabric_filename: str = "",
     ) -> Dict[str, Any]:
         ma = furniture_analysis or {}
         wa = wood_analysis or {}
@@ -2251,10 +2485,12 @@ class AIPromptServiceV7:
         profile_search = f"{furn_item} {medidas_texto} {user_notes_clean}"
         profile = self.detect_furniture_profile(furn_item, profile_search, geom_struct)
 
-        has_wood = bool(wa) or bool(wood_label)
-        has_fabric = bool(fa) or bool(fabric_label)
-        w_label = wood_label or wa.get("name") or "Muestra de madera"
-        f_label = fabric_label or fa.get("name") or "Muestra de tela"
+        has_wood = bool(wa) or bool(wood_label) or bool(wood_filename)
+        has_fabric = bool(fa) or bool(fabric_label) or bool(fabric_filename)
+        w_label = wood_label or wood_filename or wa.get("name") or "Muestra de madera"
+        f_label = fabric_label or fabric_filename or fa.get("name") or "Muestra de tela"
+        w_file_arg = wood_filename or wood_label
+        f_file_arg = fabric_filename or fabric_label
 
         slots = self._build_image_slots(
             furn_item=furn_item,
@@ -2265,7 +2501,12 @@ class AIPromptServiceV7:
             has_ref=has_reference_imgs,
             include_anchor=False,
             classic_numbering=classic_numbering,
+            furniture_name=clean_base_name,
+            furniture_filenames=furniture_filenames,
+            wood_filename=w_file_arg,
+            fabric_filename=f_file_arg,
         )
+        primary_furn_file = slots["primary_furn_file"]
         mat_ais, mat_dal = self._build_material_lock_text(
             profile=profile,
             furn_item=furn_item,
@@ -2276,6 +2517,9 @@ class AIPromptServiceV7:
             fabric_idx=slots["fabric_idx"],
             has_wood=has_wood,
             has_fabric=has_fabric,
+            primary_furn_file=primary_furn_file,
+            wood_file=slots["wood_file"],
+            fabric_file=slots["fabric_file"],
         )
 
         angle_right_ais = (
@@ -2295,7 +2539,7 @@ class AIPromptServiceV7:
 
         prompt_ais = (
             "[COMMERCIAL MASTER CUTOUT · 3/4 FACING RIGHT · PURE WHITE #FFFFFF · ZERO SHADOWS · 2054x2054 PX]\n"
-            f"TASK: Generate ONE standalone ultra-sharp commercial catalog photograph of '{furn_item}' ('{clean_base_name}') "
+            f'TASK: Generate ONE standalone ultra-sharp commercial catalog photograph of \'{furn_item}\' (\'{clean_base_name}\') taken from Image 1 ("{primary_furn_file}") '
             "in a 3/4 perspective facing toward the RIGHT, isolated on pure solid white (#FFFFFF) with ABSOLUTELY ZERO SHADOWS, "
             "formatted at exact 1:1 square 2054x2054 px proportions.\n\n"
             f"{slots['header_block']}\n\n"
@@ -2315,7 +2559,8 @@ class AIPromptServiceV7:
         )
 
         prompt_dal = (
-            f"Standalone 2054x2054 px (1:1 square) commercial catalog photograph of a single {furn_item} ('{clean_base_name}').\n"
+            f'Standalone 2054x2054 px (1:1 square) commercial catalog photograph of a single {furn_item} (\'{clean_base_name}\') taken from Image 1 ("{primary_furn_file}").\n'
+            f"{slots['dal_photo_map']}\n"
             f"Camera & Orientation: {angle_right_ais} Centered in a 1:1 square 2054x2054 frame with balanced white margins.\n"
             "Background & Zero-Shadow Rule: Pure seamless solid digital white (#FFFFFF, RGB 255,255,255) with ABSOLUTELY ZERO SHADOWS — 0% ground shadow, 0% leg contact shadow, 0% drop shadow, and 0% floor reflection.\n"
             f"Materials & Casco Texture: {mat_dal}\n"
