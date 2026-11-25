@@ -576,5 +576,151 @@ check(
     and 'startswith("AIza")' not in _main_src,
 )
 
+# 18. Nombre exacto de foto copiada en prompts (todos los modos + AI Studio + ChatGPT + orden de tarjetas Image 1/2/3)
+from modules.ui_helpers import resolve_copied_photo_filename  # noqa: E402
+from modules.prompt_studio_v7 import build_ordered_photo_thumbs_v7  # noqa: E402
+
+check(
+    "resolve_copied_photo_filename normaliza igual que _canonical_photo_filename",
+    resolve_copied_photo_filename("SILLON ANKARA BEIGE.jpg") == "SILLON ANKARA BEIGE.jpg"
+    and resolve_copied_photo_filename("BOUCLE MARFIL") == "BOUCLE MARFIL.png"
+    and resolve_copied_photo_filename("C:\\fotos\\PAROTA_NATURAL.jpg") == "PAROTA_NATURAL.jpg"
+    and resolve_copied_photo_filename("SILLON ANKARA BEIGE.jpg") == v7._canonical_photo_filename("SILLON ANKARA BEIGE.jpg"),
+)
+
+_thumbs_cat = build_ordered_photo_thumbs_v7(
+    mode="catalogo",
+    material_mode="dual",
+    m_names=["SILLON ANKARA BEIGE.jpg"],
+    m_bytes=[b"m1"],
+    m_source="RENDER",
+    fabric_name="BOUCLE MARFIL.jpg",
+    fabric_bytes=b"f1",
+    wood_name="PAROTA NATURAL.jpg",
+    wood_bytes=b"w1",
+    batch_views_files=[],
+)
+check(
+    "tarjetas copiar foto en catalogo coinciden 1-a-1 con orden del prompt (Image 1 Mueble, Image 2 Madera, Image 3 Tela)",
+    [t[0] for t in _thumbs_cat] == ["SILLON ANKARA BEIGE.jpg", "PAROTA NATURAL.jpg", "BOUCLE MARFIL.jpg"]
+    and _thumbs_cat[0][2].startswith("Image 1 · Mueble")
+    and _thumbs_cat[1][2] == "Image 2 · Madera"
+    and _thumbs_cat[2][2] == "Image 3 · Tela",
+)
+
+_thumbs_mat = build_ordered_photo_thumbs_v7(
+    mode="material",
+    material_mode="dual",
+    m_names=["SILLON ANKARA BEIGE.jpg"],
+    m_bytes=[b"m1"],
+    m_source="RENDER",
+    fabric_name="BOUCLE MARFIL.jpg",
+    fabric_bytes=b"f1",
+    wood_name="PAROTA NATURAL.jpg",
+    wood_bytes=b"w1",
+    batch_views_files=[],
+)
+check(
+    "tarjetas copiar foto en material coinciden 1-a-1 con orden del prompt (Image 1 Tela, Image 2 Madera, Image 3 Mueble)",
+    [t[0] for t in _thumbs_mat] == ["BOUCLE MARFIL.jpg", "PAROTA NATURAL.jpg", "SILLON ANKARA BEIGE.jpg"]
+    and _thumbs_mat[0][2] == "Image 1 · Tela"
+    and _thumbs_mat[1][2] == "Image 2 · Madera"
+    and _thumbs_mat[2][2].startswith("Image 3 · Mueble"),
+)
+
+_r_cat_names = v7.build_prompts(
+    mode="catalogo",
+    furniture_name="SILLON ANKARA BEIGE",
+    tipo_mueble="SILLON",
+    medidas_texto="90 cm frente x 85 cm fondo x 80 cm alto",
+    furniture_filenames=["SILLON ANKARA BEIGE.jpg", "SILLON ANKARA PERFIL.jpg"],
+    wood_label="PAROTA NATURAL",
+    wood_filename="PAROTA NATURAL.jpg",
+    fabric_label="BOUCLE MARFIL",
+    fabric_filename="BOUCLE MARFIL.jpg",
+)
+_v1_ais = _r_cat_names["items"][0]["google_ai_studio"]
+_v1_dal = _r_cat_names["items"][0]["chatgpt_dalle3"]
+_bp_ais = _r_cat_names["items"][5]["google_ai_studio"]
+_env_ais = _r_cat_names["items"][6]["google_ai_studio"]
+check(
+    "catalogo y maestro incrustan nombres exactos de fotos copiadas (multi-ángulo + madera + tela + plano + entorno + ChatGPT)",
+    'FILE: "SILLON ANKARA BEIGE.jpg"' in _v1_ais
+    and 'Image 2 (ADDITIONAL FURNITURE ANGLE · FILE: "SILLON ANKARA PERFIL.jpg")' in _v1_ais
+    and 'Image 3 (WOOD SAMPLE GROUND TRUTH · FILE: "PAROTA NATURAL.jpg")' in _v1_ais
+    and 'Image 4 (FABRIC SWATCH GROUND TRUTH · FILE: "BOUCLE MARFIL.jpg")' in _v1_ais
+    and "PHOTO IDENTIFICATION RULE:" in _v1_ais
+    and 'Image 1 = "SILLON ANKARA BEIGE.jpg"' in _v1_dal
+    and 'Image 4 = "BOUCLE MARFIL.jpg"' in _v1_dal
+    and 'FILE: "SILLON ANKARA BEIGE.jpg"' in _bp_ais
+    and 'FILE: "SILLON ANKARA BEIGE.jpg"' in _env_ais
+    and 'FILE: "SILLON ANKARA BEIGE.jpg"' in _r_cat_names["master_ais"]
+    and 'Image 1 = "SILLON ANKARA BEIGE.jpg"' in _r_cat_names["master_dal"]
+    and 'SILLON ANKARA BEIGE.jpg' in _r_cat_names["items"][0]["attachment_guide"][0],
+)
+
+_r_mat_names = v7.build_prompts(
+    mode="material",
+    material_mode="dual",
+    furniture_name="SOFA MILAN",
+    tipo_mueble="SOFA",
+    furniture_filenames=["SOFA_MILAN_FRENTE.jpg"],
+    wood_label="NOGAL AMERICANO",
+    wood_filename="NOGAL_AMERICANO.jpg",
+    fabric_label="LINO ARENA 04",
+    fabric_filename="LINO_ARENA_04.jpg",
+)
+_m_ais = _r_mat_names["items"][0]["google_ai_studio"]
+_m_dal = _r_mat_names["items"][0]["chatgpt_dalle3"]
+check(
+    "material dual nombra exactamente foto de tela, madera y mueble en AIS, ChatGPT y guía",
+    'Image 1 (FABRIC SWATCH GROUND TRUTH · FILE: "LINO_ARENA_04.jpg")' in _m_ais
+    and 'Image 2 (WOOD SAMPLE GROUND TRUTH · FILE: "NOGAL_AMERICANO.jpg")' in _m_ais
+    and 'Image 3 (TARGET FURNITURE PIECE · FILE: "SOFA_MILAN_FRENTE.jpg")' in _m_ais
+    and 'Image 1 ("LINO_ARENA_04.jpg")' in _m_ais
+    and 'Image 3 ("SOFA_MILAN_FRENTE.jpg")' in _m_ais
+    and 'Image 3 = "SOFA_MILAN_FRENTE.jpg"' in _m_dal
+    and '"SOFA_MILAN_FRENTE.jpg"' in _r_mat_names["items"][0]["attachment_guide"][2],
+)
+
+_r_34_names = v7.build_34_derecha_2054_prompts(
+    furniture_name="SILLA VERONA",
+    tipo_mueble="SILLA",
+    furniture_filenames=["SILLA_VERONA_ORIG.jpg"],
+    fabric_label="BOUCLE CREMA",
+    fabric_filename="BOUCLE_CREMA.jpg",
+)
+check(
+    "3/4 Derecha 2054 incluye nombres exactos de foto copiada en AIS, ChatGPT y guía",
+    'FILE: "SILLA_VERONA_ORIG.jpg"' in _r_34_names["items"][0]["google_ai_studio"]
+    and 'FILE: "BOUCLE_CREMA.jpg"' in _r_34_names["items"][0]["google_ai_studio"]
+    and 'Image 1 = "SILLA_VERONA_ORIG.jpg"' in _r_34_names["items"][0]["chatgpt_dalle3"]
+    and 'SILLA_VERONA_ORIG.jpg' in _r_34_names["items"][0]["attachment_guide"][0],
+)
+
+_r_clone_names = v7.build_prompts(
+    mode="clonar_color",
+    furniture_name="COMEDOR_BASE",
+    tipo_mueble="COMEDOR",
+    furniture_filenames=["COMEDOR_PAROTA_BASE.jpg"],
+    batch_ref_filename="COMEDOR_PAROTA_BASE.jpg",
+    batch_ref_bytes=b"fake_ref",
+    batch_views=[("COMEDOR_VISTA_LATERAL.jpg", b"v1")],
+)
+check(
+    "clonar_color incluye nombre exacto de foto base y foto vista en prompt y guía",
+    'FILE: "COMEDOR_PAROTA_BASE.jpg"' in _r_clone_names["items"][0]["google_ai_studio"]
+    and 'FILE: "COMEDOR_VISTA_LATERAL.jpg"' in _r_clone_names["items"][0]["google_ai_studio"]
+    and '"COMEDOR_PAROTA_BASE.jpg"' in _r_clone_names["items"][0]["attachment_guide"][0]
+    and '"COMEDOR_VISTA_LATERAL.jpg"' in _r_clone_names["items"][0]["attachment_guide"][1],
+)
+
+check(
+    "tira copiar foto propaga nombre de archivo al portapapeles sin writeText",
+    "toNamedPngPayload(" in _strip_html
+    and "SILLON ANKARA.jpg" in _strip_html
+    and "writeText" not in _strip_html,
+)
+
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)

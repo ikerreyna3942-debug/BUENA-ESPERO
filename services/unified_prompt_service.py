@@ -205,13 +205,23 @@ def build_prompts(
     if mode not in MODES:
         raise ValueError(f"Modo desconocido: {mode}")
 
+    effective_foto_refs: Dict[str, str] = dict(foto_refs or {})
+    if furniture_filenames and not effective_foto_refs.get("mueble"):
+        effective_foto_refs["mueble"] = ", ".join(str(x) for x in furniture_filenames if x)
+    if wood_filenames and not effective_foto_refs.get("madera"):
+        effective_foto_refs["madera"] = ", ".join(str(x) for x in wood_filenames if x)
+    if fabric_filenames and not effective_foto_refs.get("tela"):
+        effective_foto_refs["tela"] = ", ".join(str(x) for x in fabric_filenames if x)
+    if reference_filenames and not effective_foto_refs.get("referencia"):
+        effective_foto_refs["referencia"] = ", ".join(str(x) for x in reference_filenames if x)
+
     common = dict(
         furniture_name=furniture_name,
         furniture_analysis=furniture_analysis,
         notas_usuario=notas_usuario,
         tipo_mueble_usuario=tipo_mueble,
         medidas_usuario=medidas_texto,
-        foto_refs=foto_refs,
+        foto_refs=effective_foto_refs or None,
     )
     dims = parse_dimensions(tipo_mueble, medidas_texto)
     result: Dict[str, Any]

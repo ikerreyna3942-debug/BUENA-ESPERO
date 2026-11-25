@@ -14,6 +14,7 @@ from modules.ui_helpers import (
     make_thumbnail_bytes,
     render_copy_button,
     render_loaded_photos_strip,
+    resolve_copied_photo_filename,
 )
 from services.ai_prompt_service_v7 import (
     ALL_SINGLE_VIEWS,
@@ -587,6 +588,69 @@ def _extract_exact_photo_stem(filename: str, fallback: str = "Mueble") -> str:
         if stem:
             return stem
     return (fallback or "Mueble").strip()
+
+
+def build_ordered_photo_thumbs_v7(
+    mode: str,
+    material_mode: str,
+    m_names: List[str],
+    m_bytes: List[bytes],
+    m_source: str,
+    fabric_name: str,
+    fabric_bytes: Optional[bytes],
+    wood_name: str,
+    wood_bytes: Optional[bytes],
+    batch_views_files: List[Tuple[str, bytes]],
+) -> List[Tuple[str, bytes, str]]:
+    """Ordena y etiqueta las tarjetas copiables exactamente en el mismo orden Image 1, Image 2, Image 3... que el prompt activo."""
+    thumbs: List[Tuple[str, bytes, str]] = []
+    furn_src = f"Mueble · {m_source}" if m_source else "Mueble"
+
+    if mode == "material":
+        slot = 1
+        if fabric_bytes and material_mode in ("fabric_only", "dual"):
+            thumbs.append((resolve_copied_photo_filename(fabric_name, "tela.png"), fabric_bytes, f"Image {slot} · Tela"))
+            slot += 1
+        if wood_bytes and material_mode in ("wood_only", "dual"):
+            thumbs.append((resolve_copied_photo_filename(wood_name, "madera.png"), wood_bytes, f"Image {slot} · Madera"))
+            slot += 1
+        for i_m, (nm, raw) in enumerate(zip(m_names, m_bytes), start=1):
+            role_lbl = furn_src if i_m == 1 else f"Mueble #{i_m}"
+            thumbs.append((resolve_copied_photo_filename(nm, f"mueble_{i_m}.png"), raw, f"Image {slot} · {role_lbl}"))
+            slot += 1
+        return thumbs
+
+    if mode == "vistas_tela":
+        if fabric_bytes:
+            thumbs.append((resolve_copied_photo_filename(fabric_name, "tela.png"), fabric_bytes, "Image 1 · Tela"))
+        for i_v, (vn, vb) in enumerate(batch_views_files, start=1):
+            thumbs.append((resolve_copied_photo_filename(vn, f"vista_{i_v}.png"), vb, f"Image 2 · Vista {i_v}"))
+        return thumbs
+
+    if mode == "clonar_color":
+        for i_m, (nm, raw) in enumerate(zip(m_names, m_bytes), start=1):
+            thumbs.append((resolve_copied_photo_filename(nm, f"base_{i_m}.png"), raw, "Image 1 · Color base"))
+        for i_v, (vn, vb) in enumerate(batch_views_files, start=1):
+            thumbs.append((resolve_copied_photo_filename(vn, f"vista_{i_v}.png"), vb, f"Image 2 · Vista {i_v}"))
+        return thumbs
+
+    # Modos estándar: catalogo, vista_suelta, entorno, plano, extraer, hd, y botón 3/4 Derecha
+    # Orden exacto del prompt: Image 1..N Mueble -> Madera -> Tela
+    slot = 1
+    for i_m, (nm, raw) in enumerate(zip(m_names, m_bytes), start=1):
+        role_lbl = furn_src if i_m == 1 else f"Mueble #{i_m}"
+        thumbs.append((resolve_copied_photo_filename(nm, f"mueble_{i_m}.png"), raw, f"Image {slot} · {role_lbl}"))
+        slot += 1
+    if wood_bytes:
+        thumbs.append((resolve_copied_photo_filename(wood_name, "madera.png"), wood_bytes, f"Image {slot} · Madera"))
+        slot += 1
+    if fabric_bytes:
+        thumbs.append((resolve_copied_photo_filename(fabric_name, "tela.png"), fabric_bytes, f"Image {slot} · Tela"))
+        slot += 1
+    for i_v, (vn, vb) in enumerate(batch_views_files, start=1):
+        thumbs.append((resolve_copied_photo_filename(vn, f"vista_{i_v}.png"), vb, f"Image {slot} · Vista {i_v}"))
+        slot += 1
+    return thumbs
 
 
 def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]], key_prefix: str = "v7") -> None:
@@ -1457,16 +1521,19 @@ div[data-baseweb="popover"] > div {
 
             status_slot = st.empty()
 
-            # Fotos seleccionadas (+50% más grandes: 120×120 px) con 1 botón "📋 Copiar original" debajo de cada foto
-            thumbs: List[Tuple[str, bytes, str]] = []
-            for nm, raw in zip(m_names, m_bytes):
-                thumbs.append((nm, raw, f"Mueble · {m_source}" if m_source else "Mueble"))
-            if fabric_bytes:
-                thumbs.append((fabric_name or "Tela", fabric_bytes, "Tela"))
-            if wood_bytes:
-                thumbs.append((wood_name or "Madera", wood_bytes, "Madera"))
-            for vn, vb in batch_views_files:
-                thumbs.append((vn, vb, "Vista"))
+            # Fotos seleccionadas (+50% más grandes: 120×120 px) en el MISMO orden Image 1, Image 2, Image 3 que el prompt
+            thumbs = build_ordered_photo_thumbs_v7(
+                mode=mode,
+                material_mode=material_mode,
+                m_names=m_names,
+                m_bytes=m_bytes,
+                m_source=m_source,
+                fabric_name=fabric_name,
+                fabric_bytes=fabric_bytes,
+                wood_name=wood_name,
+                wood_bytes=wood_bytes,
+                batch_views_files=batch_views_files,
+            )
 
             _render_mini_thumbs(thumbs, key_prefix=f"v7_{ck}")
 
@@ -1479,7 +1546,13 @@ div[data-baseweb="popover"] > div {
             else:
                 status_slot.info("⏳ Analizando foto y generando 3/4 Derecha...")
                 try:
-                    first_photo_name = target_furn_names[0] if target_furn_names else ""
+                    copied_furn_files = [
+                        resolve_copied_photo_filename(fn, f"mueble_{i + 1}.png")
+                        for i, fn in enumerate(target_furn_names)
+                    ]
+                    copied_wood_file = resolve_copied_photo_filename(wood_name, "madera.png") if wood_bytes else ""
+                    copied_fabric_file = resolve_copied_photo_filename(fabric_name, "tela.png") if fabric_bytes else ""
+                    first_photo_name = copied_furn_files[0] if copied_furn_files else ""
                     name = _extract_exact_photo_stem(first_photo_name, fallback=sku_code or "Mueble")
                     notas_ia = "\n".join(
                         p for p in [
@@ -1491,9 +1564,9 @@ div[data-baseweb="popover"] > div {
                     f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
                         furniture_bytes=target_furn_bytes,
                         wood_bytes=wood_bytes,
-                        wood_name=wood_name,
+                        wood_name=copied_wood_file or wood_name,
                         fabric_bytes=fabric_bytes,
-                        fabric_name=fabric_name,
+                        fabric_name=copied_fabric_file or fabric_name,
                         notas_ia=notas_ia,
                     )
                     res = ai_prompt_service_v7.build_34_derecha_2054_prompts(
@@ -1506,13 +1579,16 @@ div[data-baseweb="popover"] > div {
                         medidas_texto=medidas_final,
                         wood_label=wood_name,
                         fabric_label=fabric_name,
+                        furniture_filenames=copied_furn_files,
+                        wood_filename=copied_wood_file,
+                        fabric_filename=copied_fabric_file,
                     )
 
-                    ref_imgs = list(zip(target_furn_names, target_furn_bytes))
+                    ref_imgs = list(zip(copied_furn_files, target_furn_bytes))
                     if wood_bytes:
-                        ref_imgs.append((f"{_extract_exact_photo_stem(wood_name, 'madera')}.jpg", wood_bytes))
+                        ref_imgs.append((copied_wood_file, wood_bytes))
                     if fabric_bytes:
-                        ref_imgs.append((f"{_extract_exact_photo_stem(fabric_name, 'tela')}.jpg", fabric_bytes))
+                        ref_imgs.append((copied_fabric_file, fabric_bytes))
 
                     gen_key = f"v7_gen_id_{ck}"
                     gen_id = int(st.session_state.get(gen_key, 0)) + 1
@@ -1553,10 +1629,20 @@ div[data-baseweb="popover"] > div {
             else:
                 status_slot.info(f"⏳ Analizando foto y generando {mode_label}...")
                 try:
+                    copied_furn_files = [
+                        resolve_copied_photo_filename(fn, f"mueble_{i + 1}.png")
+                        for i, fn in enumerate(m_names)
+                    ]
+                    copied_wood_file = resolve_copied_photo_filename(wood_name, "madera.png") if wood_bytes else ""
+                    copied_fabric_file = resolve_copied_photo_filename(fabric_name, "tela.png") if fabric_bytes else ""
+                    copied_batch_views = [
+                        (resolve_copied_photo_filename(vn, f"vista_{i + 1}.png"), vb)
+                        for i, (vn, vb) in enumerate(batch_views_files)
+                    ]
                     first_photo_name = (
-                        m_names[0]
-                        if m_names
-                        else (batch_views_files[0][0] if batch_views_files else "")
+                        copied_furn_files[0]
+                        if copied_furn_files
+                        else (copied_batch_views[0][0] if copied_batch_views else "")
                     )
                     name = _extract_exact_photo_stem(first_photo_name, fallback=sku_code or "Mueble")
                     notas_ia = "\n".join(
@@ -1570,13 +1656,18 @@ div[data-baseweb="popover"] > div {
                     f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
                         furniture_bytes=m_bytes,
                         wood_bytes=wood_bytes,
-                        wood_name=wood_name,
+                        wood_name=copied_wood_file or wood_name,
                         fabric_bytes=fabric_bytes,
-                        fabric_name=fabric_name,
+                        fabric_name=copied_fabric_file or fabric_name,
                         notas_ia=notas_ia,
                         skip_furniture=skip_f,
                     )
                     batch_ref = fabric_bytes if mode == "vistas_tela" else (m_bytes[0] if mode == "clonar_color" else None)
+                    batch_ref_fname = (
+                        copied_fabric_file
+                        if mode == "vistas_tela"
+                        else (copied_furn_files[0] if (mode == "clonar_color" and copied_furn_files) else "")
+                    )
 
                     res = ai_prompt_service_v7.build_prompts(
                         mode=mode,
@@ -1595,15 +1686,19 @@ div[data-baseweb="popover"] > div {
                         white_bg_enabled=True,
                         classic_numbering=False,
                         batch_ref_bytes=batch_ref,
-                        batch_views=batch_views_files,
+                        batch_views=copied_batch_views,
+                        furniture_filenames=copied_furn_files,
+                        wood_filename=copied_wood_file,
+                        fabric_filename=copied_fabric_file,
+                        batch_ref_filename=batch_ref_fname,
                     )
 
-                    ref_imgs = list(zip(m_names, m_bytes))
+                    ref_imgs = list(zip(copied_furn_files, m_bytes))
                     if wood_bytes:
-                        ref_imgs.append((f"{_extract_exact_photo_stem(wood_name, 'madera')}.jpg", wood_bytes))
+                        ref_imgs.append((copied_wood_file, wood_bytes))
                     if fabric_bytes:
-                        ref_imgs.append((f"{_extract_exact_photo_stem(fabric_name, 'tela')}.jpg", fabric_bytes))
-                    for vn, vb in batch_views_files:
+                        ref_imgs.append((copied_fabric_file, fabric_bytes))
+                    for vn, vb in copied_batch_views:
                         ref_imgs.append((vn, vb))
 
                     gen_key = f"v7_gen_id_{ck}"
