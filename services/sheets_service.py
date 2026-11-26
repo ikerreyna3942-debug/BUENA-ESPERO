@@ -2,9 +2,11 @@ import os
 import re
 import json
 import time
+import tempfile
 import threading
 import unicodedata
 import urllib.request
+from collections import OrderedDict
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import io
@@ -35,6 +37,118 @@ INFO_MIA_DRIVE_ID = "1MJ90Y9Jsjd5jezwLnSUekuR15rcWFYxi"
 SUBIR_DRIVE_ID = "11_rR-qhgM02Sfx9zw7uHU5AwXvTpKD4p"
 PROMPTS_MUEBLES_DRIVE_ID = "1Xc-gaDUJHNSd_XSTob3b39CNYoC9UreX"
 RENDER_DRIVE_ID = PROMPTS_MUEBLES_DRIVE_ID
+
+MAX_DRIVE_DOWNLOAD_BYTES = 30 * 1024 * 1024  # 30 MB tope seguro para evitar OOM en Render 512 MB
+
+
+class _BoundedBytesLRU:
+    """Caché LRU thread-safe con límites estrictos en MB separados para fotos completas y miniaturas."""
+
+    def __init__(
+        self,
+        max_full_entries: int = 10,
+        max_full_bytes: int = 20 * 1024 * 1024,
+        max_thumb_entries: int = 80,
+        max_thumb_bytes: int = 4 * 1024 * 1024,
+    ) -> None:
+        self._lock = threading.Lock()
+        self._full: "OrderedDict[str, bytes]" = OrderedDict()
+        self._full_bytes = 0
+        self._max_full_entries = max_full_entries
+        self._max_full_bytes = max_full_bytes
+        self._thumbs: "OrderedDict[str, bytes]" = OrderedDict()
+        self._thumb_bytes = 0
+        self._max_thumb_entries = max_thumb_entries
+        self._max_thumb_bytes = max_thumb_bytes
+
+    @staticmethod
+    def _is_thumb(key: str) -> bool:
+        return isinstance(key, str) and key.startswith("thumb:")
+
+    def get(self, key: str, default: Optional[bytes] = None) -> Optional[bytes]:
+        with self._lock:
+            store = self._thumbs if self._is_thumb(key) else self._full
+            val = store.get(key)
+            if val is not None:
+                store.move_to_end(key)
+                return val
+            return default
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        with self._lock:
+            store = self._thumbs if self._is_thumb(key) else self._full
+            return key in store
+
+    def __getitem__(self, key: str) -> bytes:
+        val = self.get(key)
+        if val is None:
+            raise KeyError(key)
+        return val
+
+    def __setitem__(self, key: str, value: bytes) -> None:
+        if not isinstance(key, str) or not isinstance(value, (bytes, bytearray)):
+            return
+        data = bytes(value)
+        size = len(data)
+        with self._lock:
+            if self._is_thumb(key):
+                if size > self._max_thumb_bytes:
+                    return
+                if key in self._thumbs:
+                    self._thumb_bytes -= len(self._thumbs.pop(key))
+                while self._thumbs and (
+                    len(self._thumbs) >= self._max_thumb_entries
+                    or (self._thumb_bytes + size) > self._max_thumb_bytes
+                ):
+                    _, ev = self._thumbs.popitem(last=False)
+                    self._thumb_bytes -= len(ev)
+                self._thumbs[key] = data
+                self._thumb_bytes += size
+            else:
+                if size > self._max_full_bytes:
+                    return
+                if key in self._full:
+                    self._full_bytes -= len(self._full.pop(key))
+                while self._full and (
+                    len(self._full) >= self._max_full_entries
+                    or (self._full_bytes + size) > self._max_full_bytes
+                ):
+                    _, ev = self._full.popitem(last=False)
+                    self._full_bytes -= len(ev)
+                self._full[key] = data
+                self._full_bytes += size
+
+    def pop(self, key: str, default: Any = None) -> Any:
+        with self._lock:
+            if self._is_thumb(key):
+                val = self._thumbs.pop(key, None)
+                if val is not None:
+                    self._thumb_bytes -= len(val)
+                    return val
+                return default
+            val = self._full.pop(key, None)
+            if val is not None:
+                self._full_bytes -= len(val)
+                return val
+            return default
+
+    def clear(self) -> None:
+        with self._lock:
+            self._full.clear()
+            self._full_bytes = 0
+            self._thumbs.clear()
+            self._thumb_bytes = 0
+
+    def total_bytes(self) -> int:
+        with self._lock:
+            return self._full_bytes + self._thumb_bytes
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._full) + len(self._thumbs)
+
 
 class SheetsService:
     BUZON_DRIVE_ID = BUZON_DRIVE_ID
@@ -67,9 +181,9 @@ class SheetsService:
         self._drive_link_cache: Dict[str, str] = {}
         self._drive_folder_tree_cache: Dict[str, tuple] = {}
         self._resolved_folder_ids: Dict[str, str] = {}
-        self._drive_file_bytes_cache: Dict[str, bytes] = {}
+        self._drive_file_bytes_cache: _BoundedBytesLRU = _BoundedBytesLRU()
         self._drive_api_lock = threading.Lock()
-        self._catalog_disk_cache_path = Path(__file__).resolve().parent.parent / "drive_catalog_cache.json"
+        self._catalog_disk_cache_path = Path(tempfile.gettempdir()) / "buena_espero_drive_catalog_cache.json"
         self._load_disk_catalog_cache()
         self._sheet_name_datos_general: Optional[str] = None
         self._sheet_name_fotos_norm: Optional[str] = None
@@ -408,8 +522,44 @@ class SheetsService:
         self._drive_link_cache[cache_key] = ""
         return ""
 
+    def _stream_drive_media_http(self, drive_id: str, max_bytes: int = MAX_DRIVE_DOWNLOAD_BYTES) -> Optional[bytes]:
+        """Descarga en streaming por HTTP con Bearer token (thread-safe, sin bloquear _drive_api_lock ni duplicar buffers)."""
+        token = self._get_auth_bearer_token()
+        if not token:
+            return None
+        url = f"https://www.googleapis.com/drive/v3/files/{drive_id}?alt=media&supportsAllDrives=true"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15.0) as resp:
+            clen_hdr = resp.headers.get("Content-Length")
+            if clen_hdr and clen_hdr.isdigit() and int(clen_hdr) > max_bytes:
+                raise RuntimeError(
+                    f"La foto supera el límite seguro de memoria ({int(clen_hdr) / (1024 * 1024):.1f} MB > {max_bytes // (1024 * 1024)} MB)."
+                )
+            chunks: List[bytes] = []
+            total = 0
+            while True:
+                chunk = resp.read(262_144)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise RuntimeError(
+                        f"La foto supera el límite seguro de memoria ({max_bytes // (1024 * 1024)} MB)."
+                    )
+                chunks.append(chunk)
+            data = b"".join(chunks)
+            if data and not data[:15].lstrip().startswith(b"<"):
+                return data
+        return None
+
     def get_drive_file_bytes(self, drive_id: str, raise_on_error: bool = False) -> Optional[bytes]:
-        """Descarga el contenido binario de una imagen directamente desde Google Drive API autenticada (con caché RAM)."""
+        """Descarga el contenido binario de una imagen directamente desde Google Drive API autenticada (caché LRU acotado en MB)."""
         if not drive_id:
             if raise_on_error:
                 raise RuntimeError("Google Drive no está conectado o falta el ID del archivo.")
@@ -423,21 +573,36 @@ class SheetsService:
                 raise RuntimeError("Google Drive no está conectado o falta el ID del archivo.")
             return None
         try:
-            with self._drive_api_lock:
-                request = self.drive_service.files().get_media(fileId=drive_id, supportsAllDrives=True)
-                raw = request.execute()
-                if isinstance(raw, (bytes, bytearray)) and raw:
-                    data = bytes(raw)
-                else:
-                    fh = io.BytesIO()
-                    downloader = MediaIoBaseDownload(fh, request)
-                    done = False
-                    while not done:
-                        _, done = downloader.next_chunk()
-                    data = fh.getvalue()
+            data: Optional[bytes] = None
+            try:
+                data = self._stream_drive_media_http(drive_id)
+            except RuntimeError:
+                raise
+            except Exception:
+                data = None
+
+            if not data:
+                with self._drive_api_lock:
+                    request = self.drive_service.files().get_media(fileId=drive_id, supportsAllDrives=True)
+                    raw = request.execute()
+                    if isinstance(raw, (bytes, bytearray)) and raw:
+                        if len(raw) > MAX_DRIVE_DOWNLOAD_BYTES:
+                            raise RuntimeError(
+                                f"La foto supera el límite seguro de memoria ({MAX_DRIVE_DOWNLOAD_BYTES // (1024 * 1024)} MB)."
+                            )
+                        data = bytes(raw)
+                    elif MediaIoBaseDownload is not None:
+                        fh = io.BytesIO()
+                        downloader = MediaIoBaseDownload(fh, request, chunksize=512 * 1024)
+                        done = False
+                        while not done:
+                            _, done = downloader.next_chunk()
+                            if fh.tell() > MAX_DRIVE_DOWNLOAD_BYTES:
+                                raise RuntimeError(
+                                    f"La foto supera el límite seguro de memoria ({MAX_DRIVE_DOWNLOAD_BYTES // (1024 * 1024)} MB)."
+                                )
+                        data = fh.getvalue()
             if data:
-                if len(self._drive_file_bytes_cache) >= 256:
-                    self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
                 self._drive_file_bytes_cache[drive_id] = data
             return data
         except Exception as e:
@@ -591,23 +756,28 @@ class SheetsService:
     def _download_thumbnail_url(self, url: str) -> Optional[bytes]:
         if not url:
             return None
-        hi_url = re.sub(r"=s\d+", "=s400", url)
+        hi_url = re.sub(r"=s\d+", "=s320", url)
         headers = {"User-Agent": "Mozilla/5.0"}
         token = self._get_auth_bearer_token()
         if token:
             headers["Authorization"] = f"Bearer {token}"
         try:
             req = urllib.request.Request(hi_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
-                t_data = resp.read()
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                t_data = resp.read(1_500_000)
             if t_data and len(t_data) > 100 and not t_data[:15].lstrip().startswith(b"<"):
                 return t_data
         except Exception:
             pass
         return None
 
-    def get_drive_thumbnail_bytes(self, drive_id: str, thumbnail_link: str = "") -> Optional[bytes]:
-        """Obtiene una miniatura ligera (~15 KB) autenticada desde Drive (funciona incluso en archivos privados)."""
+    def get_drive_thumbnail_bytes(
+        self,
+        drive_id: str,
+        thumbnail_link: str = "",
+        allow_full_fallback: bool = False,
+    ) -> Optional[bytes]:
+        """Obtiene una miniatura ligera (~15 KB) autenticada desde Drive sin descargar archivos pesados completos."""
         if not drive_id:
             return None
         thumb_key = f"thumb:{drive_id}"
@@ -620,32 +790,44 @@ class SheetsService:
         if t_url:
             t_data = self._download_thumbnail_url(t_url)
             if t_data:
-                if len(self._drive_file_bytes_cache) >= 256:
-                    self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
                 self._drive_file_bytes_cache[thumb_key] = t_data
                 return t_data
 
         # Si el thumbnailLink venía vacío o vencido (del caché en disco), pedir uno fresco a Drive API
+        file_size = 0
         if self.drive_service:
             try:
                 with self._drive_api_lock:
                     meta = self.drive_service.files().get(
                         fileId=drive_id,
-                        fields="thumbnailLink",
+                        fields="thumbnailLink,size",
                         supportsAllDrives=True,
                     ).execute()
+                try:
+                    file_size = int(meta.get("size") or 0)
+                except Exception:
+                    file_size = 0
                 fresh_url = (meta.get("thumbnailLink") or "").strip()
                 if fresh_url and fresh_url != t_url:
                     t_data = self._download_thumbnail_url(fresh_url)
                     if t_data:
-                        if len(self._drive_file_bytes_cache) >= 256:
-                            self._drive_file_bytes_cache.pop(next(iter(self._drive_file_bytes_cache)), None)
                         self._drive_file_bytes_cache[thumb_key] = t_data
                         return t_data
             except Exception:
                 pass
 
-        return self.get_drive_file_bytes(drive_id)
+        if allow_full_fallback and (file_size == 0 or file_size <= 3_500_000):
+            full_b = self.get_drive_file_bytes(drive_id)
+            if full_b:
+                try:
+                    from modules.ui_helpers import make_thumbnail_bytes
+                    mini = make_thumbnail_bytes(full_b, max_dim=320)
+                    if mini:
+                        self._drive_file_bytes_cache[thumb_key] = mini
+                        return mini
+                except Exception:
+                    return full_b
+        return None
 
     def search_drive_images_live(
         self,

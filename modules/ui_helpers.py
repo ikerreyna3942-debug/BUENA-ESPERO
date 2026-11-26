@@ -1,13 +1,77 @@
 import base64
+from collections import OrderedDict
+import gc
 import hashlib
 import io
 import re
+import threading
 from pathlib import Path
 from typing import Optional, Union
 
 import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
+
+_CACHE_LOCK = threading.Lock()
+_THUMB_CACHE: "OrderedDict[tuple[str, int, int], bytes]" = OrderedDict()
+_THUMB_CACHE_BYTES = 0
+_THUMB_MAX_ENTRIES = 64
+_THUMB_MAX_BYTES = 4 * 1024 * 1024  # 4 MB máximo para miniaturas
+
+_EXACT_COPY_CACHE: "OrderedDict[tuple[str, int], tuple[bytes, str]]" = OrderedDict()
+_EXACT_COPY_CACHE_BYTES = 0
+_EXACT_COPY_MAX_ENTRIES = 12
+_EXACT_COPY_MAX_BYTES = 10 * 1024 * 1024  # 10 MB máximo para copias al portapapeles
+_COPY_MAX_DIM = 1600
+_COPY_PNG_MAX_DIM = 1400
+_COPY_PASSTHROUGH_MAX_BYTES = 1_500_000
+
+
+def _bytes_sig(raw_bytes: bytes) -> tuple[str, int]:
+    """Firma compacta (SHA-1 parcial + tamaño) para cachear sin retener los bytes crudos como llave."""
+    n = len(raw_bytes)
+    h = hashlib.sha1()
+    if n <= 131_072:
+        h.update(raw_bytes)
+    else:
+        h.update(raw_bytes[:65_536])
+        h.update(raw_bytes[n // 2 - 16_384 : n // 2 + 16_384])
+        h.update(raw_bytes[-32_768:])
+    return h.hexdigest(), n
+
+
+def _safe_exif_orientation(img: Image.Image) -> int:
+    try:
+        exif = img.getexif()
+        if exif:
+            return int(exif.get(274, 1) or 1)
+    except Exception:
+        pass
+    return 1
+
+
+def _apply_orientation_if_needed(img: Image.Image, orientation: int) -> Image.Image:
+    if orientation in (None, 1):
+        return img
+    try:
+        return ImageOps.exif_transpose(img)
+    except Exception:
+        return img
+
+
+def _has_real_transparency(img: Image.Image) -> bool:
+    try:
+        if img.mode in ("RGBA", "LA"):
+            alpha = img.getchannel("A")
+            ext = alpha.getextrema()
+            return bool(ext and ext[0] < 255)
+        if img.mode == "P" and "transparency" in img.info:
+            rgba = img.convert("RGBA")
+            ext = rgba.getchannel("A").getextrema()
+            return bool(ext and ext[0] < 255)
+    except Exception:
+        pass
+    return False
 
 
 def render_copy_button(
@@ -116,55 +180,158 @@ def render_copy_button(
     components.html(html_code, height=btn_height)
 
 
-@st.cache_data(max_entries=128, show_spinner=False)
 def prepare_exact_copy_image_bytes(raw_bytes: bytes) -> tuple[bytes, str]:
-    """Prepara la imagen original tal cual (sin recorte ni pérdida de proporción) para copiar al portapapeles."""
+    """Prepara la imagen sin recorte ni pérdida de proporción y con límite seguro de RAM/peso para copiar al portapapeles."""
+    global _EXACT_COPY_CACHE_BYTES
     if not raw_bytes:
         return b"", "image/png"
+
+    sig = _bytes_sig(raw_bytes)
+    with _CACHE_LOCK:
+        cached = _EXACT_COPY_CACHE.get(sig)
+        if cached is not None:
+            _EXACT_COPY_CACHE.move_to_end(sig)
+            return cached
+
+    result: tuple[bytes, str] = (raw_bytes, "image/jpeg")
     try:
         with Image.open(io.BytesIO(raw_bytes)) as img:
-            img = ImageOps.exif_transpose(img)
             fmt = (img.format or "").upper()
-            # Si ya es PNG o JPEG estándar y pesa <= 4.5 MB, conservar bytes originales tal cual
-            if fmt in ("PNG", "JPEG", "JPG") and len(raw_bytes) <= 4_500_000 and img.mode in ("RGB", "RGBA"):
+            orientation = _safe_exif_orientation(img)
+            orig_w, orig_h = img.size
+            max_side = max(orig_w, orig_h)
+
+            # Ruta rápida sin decodificar píxeles: conserva bytes exactos cuando la imagen ya es ligera y estándar
+            if (
+                fmt in ("PNG", "JPEG", "JPG")
+                and img.mode in ("RGB", "RGBA")
+                and orientation == 1
+                and max_side <= _COPY_MAX_DIM
+                and len(raw_bytes) <= _COPY_PASSTHROUGH_MAX_BYTES
+            ):
                 mime = "image/png" if fmt == "PNG" else "image/jpeg"
-                return raw_bytes, mime
-            out = io.BytesIO()
-            if img.mode in ("RGBA", "LA", "P"):
-                img = img.convert("RGBA")
-                img.save(out, format="PNG", optimize=True)
-                return out.getvalue(), "image/png"
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-            img.save(out, format="JPEG", quality=96, subsampling=0, optimize=True)
-            return out.getvalue(), "image/jpeg"
+                result = (raw_bytes, mime)
+            else:
+                if fmt in ("JPEG", "JPG") and max_side > _COPY_MAX_DIM:
+                    try:
+                        img.draft("RGB", (_COPY_MAX_DIM * 2, _COPY_MAX_DIM * 2))
+                    except Exception:
+                        pass
+
+                work = img
+                if max(work.size) > _COPY_MAX_DIM * 2:
+                    factor = max(2, max(work.size) // (_COPY_MAX_DIM * 2))
+                    work = work.reduce(factor)
+                if max(work.size) > _COPY_MAX_DIM:
+                    work.thumbnail((_COPY_MAX_DIM, _COPY_MAX_DIM), Image.Resampling.LANCZOS)
+                if orientation != 1:
+                    work = _apply_orientation_if_needed(work, orientation)
+
+                out = io.BytesIO()
+                if _has_real_transparency(work):
+                    if work.mode != "RGBA":
+                        work = work.convert("RGBA")
+                    if max(work.size) > _COPY_PNG_MAX_DIM:
+                        work.thumbnail((_COPY_PNG_MAX_DIM, _COPY_PNG_MAX_DIM), Image.Resampling.LANCZOS)
+                    work.save(out, format="PNG", compress_level=4)
+                    result = (out.getvalue(), "image/png")
+                else:
+                    if work.mode in ("RGBA", "LA", "P"):
+                        rgba = work if work.mode == "RGBA" else work.convert("RGBA")
+                        bg = Image.new("RGB", rgba.size, (255, 255, 255))
+                        bg.paste(rgba, mask=rgba.split()[-1])
+                        work = bg
+                    elif work.mode != "RGB":
+                        work = work.convert("RGB")
+                    work.save(out, format="JPEG", quality=90)
+                    result = (out.getvalue(), "image/jpeg")
     except Exception:
-        return raw_bytes, "image/jpeg"
+        result = (raw_bytes[:_COPY_PASSTHROUGH_MAX_BYTES], "image/jpeg") if len(raw_bytes) > 4_000_000 else (raw_bytes, "image/jpeg")
+
+    if len(raw_bytes) >= 1_500_000:
+        gc.collect()
+
+    out_len = len(result[0])
+    if out_len <= _EXACT_COPY_MAX_BYTES:
+        with _CACHE_LOCK:
+            if sig in _EXACT_COPY_CACHE:
+                _EXACT_COPY_CACHE_BYTES -= len(_EXACT_COPY_CACHE[sig][0])
+                _EXACT_COPY_CACHE.pop(sig, None)
+            while (
+                _EXACT_COPY_CACHE
+                and (
+                    len(_EXACT_COPY_CACHE) >= _EXACT_COPY_MAX_ENTRIES
+                    or (_EXACT_COPY_CACHE_BYTES + out_len) > _EXACT_COPY_MAX_BYTES
+                )
+            ):
+                _, ev = _EXACT_COPY_CACHE.popitem(last=False)
+                _EXACT_COPY_CACHE_BYTES -= len(ev[0])
+            _EXACT_COPY_CACHE[sig] = result
+            _EXACT_COPY_CACHE_BYTES += out_len
+    return result
 
 
-@st.cache_data(max_entries=256, show_spinner=False)
 def make_thumbnail_bytes(raw_bytes: bytes, max_dim: int = 480) -> bytes:
-    """Genera una miniatura JPEG optimizada en caché para evitar saturar memoria/DOM."""
+    """Genera una miniatura JPEG optimizada en caché acotada en RAM sin decodificar mapas de bits gigantes."""
+    global _THUMB_CACHE_BYTES
     if not raw_bytes:
         return b""
+
+    sig_base = _bytes_sig(raw_bytes)
+    cache_key = (sig_base[0], sig_base[1], int(max_dim))
+    with _CACHE_LOCK:
+        cached = _THUMB_CACHE.get(cache_key)
+        if cached is not None:
+            _THUMB_CACHE.move_to_end(cache_key)
+            return cached
+
+    thumb_out = b""
     try:
         with Image.open(io.BytesIO(raw_bytes)) as img:
-            img = ImageOps.exif_transpose(img)
-            if img.mode in ("RGBA", "LA", "P"):
-                bg = Image.new("RGB", img.size, (245, 245, 245))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                alpha = img.split()[-1] if "A" in img.getbands() else None
-                bg.paste(img, mask=alpha)
-                img = bg
-            elif img.mode != "RGB":
-                img = img.convert("RGB")
-            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            fmt = (img.format or "").upper()
+            orientation = _safe_exif_orientation(img)
+            if fmt in ("JPEG", "JPG") and max(img.size) > max_dim:
+                try:
+                    img.draft("RGB", (max_dim * 2, max_dim * 2))
+                except Exception:
+                    pass
+            work = img
+            if max(work.size) > max_dim * 2:
+                factor = max(2, max(work.size) // (max_dim * 2))
+                work = work.reduce(factor)
+            work.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            if orientation != 1:
+                work = _apply_orientation_if_needed(work, orientation)
+            if work.mode in ("RGBA", "LA", "P"):
+                rgba = work if work.mode == "RGBA" else work.convert("RGBA")
+                bg = Image.new("RGB", rgba.size, (245, 245, 245))
+                bg.paste(rgba, mask=rgba.split()[-1])
+                work = bg
+            elif work.mode != "RGB":
+                work = work.convert("RGB")
             out = io.BytesIO()
-            img.save(out, format="JPEG", quality=82, optimize=True)
-            return out.getvalue()
+            work.save(out, format="JPEG", quality=80)
+            thumb_out = out.getvalue()
     except Exception:
-        return raw_bytes
+        thumb_out = raw_bytes if len(raw_bytes) <= 512_000 else b""
+
+    if thumb_out and len(thumb_out) <= _THUMB_MAX_BYTES:
+        with _CACHE_LOCK:
+            if cache_key in _THUMB_CACHE:
+                _THUMB_CACHE_BYTES -= len(_THUMB_CACHE[cache_key])
+                _THUMB_CACHE.pop(cache_key, None)
+            while (
+                _THUMB_CACHE
+                and (
+                    len(_THUMB_CACHE) >= _THUMB_MAX_ENTRIES
+                    or (_THUMB_CACHE_BYTES + len(thumb_out)) > _THUMB_MAX_BYTES
+                )
+            ):
+                _, ev = _THUMB_CACHE.popitem(last=False)
+                _THUMB_CACHE_BYTES -= len(ev)
+            _THUMB_CACHE[cache_key] = thumb_out
+            _THUMB_CACHE_BYTES += len(thumb_out)
+    return thumb_out
 
 
 def resolve_copied_photo_filename(label: str, fallback: str = "foto.png") -> str:
@@ -195,10 +362,12 @@ def render_loaded_photos_strip(
     for idx, (lbl, raw_b, badge) in enumerate(thumbs):
         if not raw_b:
             continue
-        t_bytes = make_thumbnail_bytes(raw_b, max_dim=max(360, img_px * 3))
+        exact_bytes, exact_mime = prepare_exact_copy_image_bytes(raw_b)
+        if not exact_bytes:
+            continue
+        t_bytes = make_thumbnail_bytes(exact_bytes, max_dim=min(260, max(200, img_px * 2)))
         if not t_bytes:
             continue
-        exact_bytes, exact_mime = prepare_exact_copy_image_bytes(raw_b)
         b64_thumb = base64.b64encode(t_bytes).decode("ascii")
         b64_exact = base64.b64encode(exact_bytes).decode("ascii")
         uid = hashlib.md5(f"{key_prefix}_{idx}_{lbl}_{len(raw_b)}".encode("utf-8")).hexdigest()[:8]
@@ -486,19 +655,20 @@ def render_loaded_photos_strip(
                 var msg = document.getElementById(msgId);
                 if (!btn) return;
 
-                // Pre-calentar Blob PNG al montar la tarjeta para copiar la foto al instante (0ms) dentro del clic
-                var readyPngBlob = decodePngDataUriSync(dataUri);
-                var pngBlobPromise = readyPngBlob ? Promise.resolve(readyPngBlob) : dataUriToPngBlob(dataUri).then(function(b) {{
-                    readyPngBlob = b;
-                    return b;
-                }}).catch(function(err) {{
-                    return null;
-                }});
+                var readyPngBlob = null;
 
                 btn.addEventListener("click", async function() {{
                     btn.disabled = true;
                     if (msg) msg.textContent = "Copiando foto...";
-                    var activePromise = readyPngBlob ? Promise.resolve(readyPngBlob) : (pngBlobPromise.then(function(b) {{ return b || dataUriToPngBlob(dataUri); }}));
+                    if (!readyPngBlob) {{
+                        readyPngBlob = decodePngDataUriSync(dataUri);
+                    }}
+                    var activePromise = readyPngBlob
+                        ? Promise.resolve(readyPngBlob)
+                        : dataUriToPngBlob(dataUri).then(function(b) {{
+                            readyPngBlob = b;
+                            return b;
+                        }});
                     var copiedImage = false;
                     try {{
                         // Nivel 1: Portapapeles directo (ventana actual) — solo imagen PNG, nunca texto
