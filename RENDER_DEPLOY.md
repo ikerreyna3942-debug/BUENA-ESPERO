@@ -15,7 +15,7 @@
 1. Sube los cambios a `main` (Render redeploya solo con `autoDeploy`).
 2. En Render, agrega las variables de la tabla.
 3. Espera el build (≈3 min). El health check es `/_stcore/health`.
-4. Abre la app: la versión por defecto es **V6 Unificado**. Las versiones V1–V5 siguen en el menú lateral como respaldo.
+4. Abre la app: la versión por defecto es **V7 Studio Maestro** (con acceso integrado a **Alta de Fotos**). Las versiones V1–V6 siguen disponibles en el selector superior como respaldo.
 5. Prueba: escribe un SKU → debe llenar tipo y medidas → sube una foto → GENERAR.
 
 ## Plan gratuito

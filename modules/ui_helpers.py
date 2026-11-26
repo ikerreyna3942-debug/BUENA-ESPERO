@@ -12,6 +12,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
 _CACHE_LOCK = threading.Lock()
 _THUMB_CACHE: "OrderedDict[tuple[str, int, int], bytes]" = OrderedDict()
 _THUMB_CACHE_BYTES = 0
@@ -545,18 +551,6 @@ def render_loaded_photos_strip(
                 }});
             }}
 
-            function toNamedPngPayload(targetWin, blob, fileName) {{
-                if (!blob) return blob;
-                try {{
-                    var cleanName = String(fileName || "foto.png").trim() || "foto.png";
-                    var pngName = /\\.png$/i.test(cleanName) ? cleanName : (cleanName.replace(/\\.[^.]+$/, "") + ".png");
-                    if (targetWin && typeof targetWin.File === "function") {{
-                        return new targetWin.File([blob], pngName, {{ type: "image/png" }});
-                    }}
-                }} catch (eFile) {{}}
-                return blob;
-            }}
-
             function writePngToWindowClipboard(targetWin, syncBlob, blobPromise, fileName) {{
                 return new Promise(function(resolve, reject) {{
                     try {{
@@ -565,17 +559,12 @@ def render_loaded_photos_strip(
                             return;
                         }}
                         if (syncBlob) {{
-                            var namedSync = toNamedPngPayload(targetWin, syncBlob, fileName);
-                            var syncItem = new targetWin.ClipboardItem({{ "image/png": namedSync }});
-                            targetWin.navigator.clipboard.write([syncItem]).then(function() {{ resolve(true); }}, function() {{
-                                var rawItem = new targetWin.ClipboardItem({{ "image/png": syncBlob }});
-                                targetWin.navigator.clipboard.write([rawItem]).then(function() {{ resolve(true); }}, reject);
-                            }});
+                            var syncItem = new targetWin.ClipboardItem({{ "image/png": syncBlob }});
+                            targetWin.navigator.clipboard.write([syncItem]).then(function() {{ resolve(true); }}, reject);
                             return;
                         }}
                         try {{
-                            var namedPromise = blobPromise.then(function(b) {{ return toNamedPngPayload(targetWin, b, fileName); }});
-                            var promiseItem = new targetWin.ClipboardItem({{ "image/png": namedPromise }});
+                            var promiseItem = new targetWin.ClipboardItem({{ "image/png": blobPromise }});
                             targetWin.navigator.clipboard.write([promiseItem]).then(function() {{ resolve(true); }}, function() {{
                                 blobPromise.then(function(resolvedBlob) {{
                                     var fbItem = new targetWin.ClipboardItem({{ "image/png": resolvedBlob }});
@@ -633,6 +622,7 @@ def render_loaded_photos_strip(
                         type: "CREATA_PROMPTS_COPY_IMAGE",
                         requestId: reqId,
                         dataUri: dataUri,
+                        dataUrl: dataUri,
                         fileName: fileName || "foto.png"
                     }};
                     for (var i = 0; i < targets.length; i++) {{

@@ -28,6 +28,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageOps
 
 try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
+try:
     from pydantic import BaseModel, Field
 except ImportError:
     class BaseModel:  # type: ignore[no-redef]
@@ -212,10 +218,10 @@ class AIPromptServiceV7:
         if "LEAKED" in up:
             return (
                 "Tu GEMINI_API_KEY actual fue bloqueada por Google porque se detectó filtrada públicamente (Error 403). "
-                "Genera una llave nueva en Google AI Studio y pégala en el botón '🔑 API Key' del encabezado (o en Render > Environment)."
+                "Genera una llave nueva en Google AI Studio y configúrala en la variable de entorno GEMINI_API_KEY (Render > Environment o .env)."
             )
         if "API_KEY_INVALID" in up or "API KEY NOT VALID" in up or "UNAUTHENTICATED" in up or "401" in up:
-            return "La GEMINI_API_KEY no es válida. Verifica la clave en '🔑 API Key'."
+            return "La GEMINI_API_KEY no es válida. Verifica la variable de entorno GEMINI_API_KEY en Render > Environment o en tu archivo .env."
         if "RESOURCE_EXHAUSTED" in up or "429" in up or "QUOTA" in up:
             return "Límite de cuota alcanzado en Gemini API (429). Espera unos segundos o usa una cuenta con facturación activa para generación masiva."
         return f"Aviso de Gemini API: {txt[:220]}"

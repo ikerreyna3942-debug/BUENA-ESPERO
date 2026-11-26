@@ -262,7 +262,7 @@ def cargar_telas_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
     return []
 
 
-@st.cache_data(ttl=1800, max_entries=2, show_spinner="📂 Cargando catálogo de fotos...")
+@st.cache_data(ttl=120, max_entries=2, show_spinner="📂 Cargando catálogo de fotos...")
 def cargar_todo_catalogo_v7(
     refresh_tick: int = 0,
 ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
@@ -292,7 +292,7 @@ def cargar_todo_catalogo_v7(
                 folder_map,
                 recursive=True,
                 max_depth=4,
-                ttl=1800,
+                ttl=120,
             )
     except Exception:
         drive_batches = {}
@@ -318,6 +318,19 @@ def cargar_todo_catalogo_v7(
         m for m in drive_batches.get("MADERAS", []) if m["name"].strip().upper() not in seen_wood
     ]
     return all_muebles, all_telas, all_maderas
+
+
+def invalidate_v7_catalog_caches() -> None:
+    """Limpia los cachés del catálogo V7 para que fotos recién subidas desde cualquier dispositivo aparezcan al instante."""
+    for fn in (cargar_todo_catalogo_v7, cargar_muebles_v7, cargar_telas_v7, cargar_maderas_v7):
+        try:
+            fn.clear()
+        except Exception:
+            pass
+    try:
+        _search_drive_live_cached.clear()
+    except Exception:
+        pass
 
 
 def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
@@ -1069,6 +1082,8 @@ def _clear_v7_form(ck: int) -> None:
     """Limpia fotos, SKU, notas y salida SIN cambiar el modo ni sub-opción activa."""
     clear_prefixes = (
         "v7_result",
+        "v7_last_photo_stem",
+        "v7_last_sku",
         "v7_notas_",
         "v7_sb_",
         "v7_up_",
@@ -1305,13 +1320,28 @@ div[data-baseweb="popover"] > div {
     z-index: 20;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
 }
+@media (pointer: coarse), (hover: none) and (max-width: 1024px) {
+    input,
+    textarea,
+    select,
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea,
+    div[data-baseweb="select"] input {
+        font-size: 16px !important;
+    }
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] > div {
+        min-height: 36px !important;
+        height: auto !important;
+    }
+}
 @media (max-width: 640px) {
     .stButton > button,
     .stDownloadButton > button,
     div[data-testid="stPopover"] button {
-        font-size: 11px !important;
+        font-size: 10.5px !important;
         min-height: 32px !important;
-        padding: 4px 6px !important;
+        padding: 4px 5px !important;
     }
     div[data-testid="stVerticalBlockBorderWrapper"] > div {
         padding: 5px 6px !important;
@@ -1426,13 +1456,9 @@ div[data-baseweb="popover"] > div {
                     key=f"v7_btn_refresh_{ck}",
                     help="Actualizar fotos de RENDER, Cotización y SM S Mueblería",
                 ):
-                    sheets_service._drive_folder_tree_cache.clear()
+                    sheets_service._invalidate_drive_catalog_caches()
                     sheets_service._resolved_folder_ids.clear()
-                    sheets_service._save_disk_catalog_cache()
-                    cargar_todo_catalogo_v7.clear()
-                    cargar_muebles_v7.clear()
-                    cargar_telas_v7.clear()
-                    cargar_maderas_v7.clear()
+                    invalidate_v7_catalog_caches()
                     st.session_state["v7_render_tick"] = tick + 1
                     st.rerun()
 
@@ -1807,7 +1833,7 @@ div[data-baseweb="popover"] > div {
                     help="Ir directo a Alta de Fotos con este mismo nombre",
                 ):
                     st.session_state["v7_last_photo_stem"] = mueble_slug
-                    st.session_state["unified_active_app"] = "🚀 Alta de Fotos"
+                    st.session_state["_pending_active_app"] = "🚀 Alta de Fotos"
                     st.rerun()
 
             items = res.get("items", [])

@@ -178,6 +178,43 @@ with _Image.open(_io.BytesIO(_fmt_room["png"])) as _out_room:
 # 13. Helpers de URL Drive, carpetas de muebles (RENDER, Cotización, SM S Mueblería) y diagnóstico de API key
 from pathlib import PureWindowsPath as _PWP  # noqa: E402
 from services.sheets_service import sheets_service as _ss  # noqa: E402
+
+try:
+    import streamlit as _st_check  # noqa: F401
+except ImportError:
+    import types as _types
+
+    class _StubSessionState(dict):
+        def __getattr__(self, name):
+            try:
+                return self[name]
+            except KeyError as exc:
+                raise AttributeError(name) from exc
+
+        def __setattr__(self, name, value):
+            self[name] = value
+
+    def _stub_cache_data(*args, **kwargs):
+        def _dec(fn):
+            fn.clear = lambda: None
+            return fn
+        return _dec(args[0]) if args and callable(args[0]) else _dec
+
+    _st_mod = _types.ModuleType("streamlit")
+    _st_mod.session_state = _StubSessionState()
+    _st_mod.cache_data = _stub_cache_data
+    _st_mod.rerun = lambda *a, **kw: None
+    _st_mod.set_page_config = lambda *a, **kw: None
+    _st_comp_pkg = _types.ModuleType("streamlit.components")
+    _st_comp_v1 = _types.ModuleType("streamlit.components.v1")
+    _st_comp_v1.html = lambda *a, **kw: None
+    _st_comp_v1.iframe = lambda *a, **kw: None
+    _st_comp_pkg.v1 = _st_comp_v1
+    _st_mod.components = _st_comp_pkg
+    sys.modules["streamlit"] = _st_mod
+    sys.modules["streamlit.components"] = _st_comp_pkg
+    sys.modules["streamlit.components.v1"] = _st_comp_v1
+
 from modules.prompt_studio_v7 import (  # noqa: E402
     FOLDER_MUEBLES_RENDER_DRIVE_ID,
     FOLDER_MUEBLES_SM_MUEBLERIA_DRIVE_ID,
@@ -716,8 +753,11 @@ check(
 )
 
 check(
-    "tira copiar foto propaga nombre de archivo al portapapeles sin writeText",
-    "toNamedPngPayload(" in _strip_html
+    "tira copiar foto usa Blob directo compatible con Safari/iOS y envía dataUri + dataUrl sin writeText",
+    "new targetWin.File(" not in _strip_html
+    and "new File(" not in _strip_html
+    and "dataUri: dataUri" in _strip_html
+    and "dataUrl: dataUri" in _strip_html
     and "SILLON ANKARA.jpg" in _strip_html
     and "writeText" not in _strip_html,
 )
@@ -797,6 +837,394 @@ check(
     and _ss._catalog_disk_cache_path.resolve().parent != _repo_root.resolve()
     and "if q_clean and matches:" in _v7_src
     and "var pngBlobPromise =" not in _strip_html,
+)
+
+# 20. Fix StreamlitAPIException, Zoom Lock, iOS/Android/PC polish, Cola Compartida, Drive fixes, Gemini runtime y Clear
+import concurrent.futures as _cf  # noqa: E402
+import streamlit as _st_live  # noqa: E402
+import main as _main_mod  # noqa: E402
+from services.sheets_service import (  # noqa: E402
+    BUZON_DRIVE_ID as _BUZON_ID,
+    RENDER_DRIVE_ID as _RENDER_ID,
+    SUBIR_DRIVE_ID as _SUBIR_ID,
+)
+from modules.alta_fotos_hub import (  # noqa: E402
+    IMG_AND_DOC_TYPES as _IMG_DOC_TYPES,
+    _clear_alta_form,
+    build_dest_folder_options,
+    is_image_filename,
+)
+from modules.prompt_studio_v7 import _clear_v7_form  # noqa: E402
+
+# 20.1 Staging key _pending_active_app (sin mutar unified_active_app tras crear el widget)
+check(
+    "cambio entre Prompts y Alta de Fotos usa _pending_active_app antes del selectbox (sin StreamlitAPIException)",
+    'st.session_state.pop("_pending_active_app", None)' in _main_src
+    and 'st.session_state["_pending_active_app"] = "🤖 Prompts + IA"' in _main_src
+    and 'st.session_state["_pending_active_app"] = "🚀 Alta de Fotos"' in _v7_src
+    and 'st.session_state["unified_active_app"] = "🚀 Alta de Fotos"' not in _v7_src
+    and _main_src.count('st.session_state["unified_active_app"] =') <= 2,
+)
+
+# 20.2 Zoom Lock + Android / iOS / PC CSS
+_zoom_html = _main_mod.get_zoom_lock_html()
+check(
+    "zoom lock bloquea pinch iOS, multi-touch, ctrl+wheel y ctrl+teclado con guarda __buenaZoomLockInstalled",
+    "__buenaZoomLockInstalled" in _zoom_html
+    and "user-scalable=no" in _zoom_html
+    and "viewport-fit=cover" in _zoom_html
+    and "gesturestart" in _zoom_html
+    and "gesturechange" in _zoom_html
+    and "gestureend" in _zoom_html
+    and "touches.length > 1" in _zoom_html
+    and '"wheel"' in _zoom_html
+    and '"keydown"' in _zoom_html
+    and "touch-action: pan-x pan-y" in _main_src
+    and "-webkit-text-size-adjust: 100%" in _main_src
+    and "@media (pointer: coarse)" in _main_src
+    and "font-size: 16px !important;" in _main_src
+    and "@media (pointer: coarse)" in _v7_src
+    and "font-size: 16px !important;" in _v7_src,
+)
+
+# 20.3 MIME detection (sin extensión, .jfif, .heic, documentos)
+check(
+    "guess_mime_type detecta imágenes (.jfif, .heic, sin ext) y documentos (.pdf, .docx, .xlsx, .csv, .txt, .pptx, .zip)",
+    _ss.guess_mime_type("foto_sin_ext", default="image/png") == "image/png"
+    and _ss.guess_mime_type("foto_sin_ext") == "application/octet-stream"
+    and _ss.guess_mime_type("foto.jfif") == "image/jpeg"
+    and _ss.guess_mime_type("iphone.HEIC") == "image/heic"
+    and _ss.guess_mime_type("cotizacion.pdf") == "application/pdf"
+    and _ss.guess_mime_type("ficha.docx") == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    and _ss.guess_mime_type("precios.xlsx") == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    and _ss.guess_mime_type("lista.csv") == "text/csv"
+    and _ss.guess_mime_type("notas.txt") == "text/plain"
+    and _ss.guess_mime_type("presentacion.pptx") == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    and _ss.guess_mime_type("paquete.zip") == "application/zip",
+)
+
+# 20.4 Carpeta activa de staging (Buzón activo vs papelera -> RENDER, nunca SUBIR PREN) + listado fotos y documentos + invalidación de caché
+class _MockStageFilesApi:
+    def __init__(self, calls, folder_metas, list_items):
+        self._calls = calls
+        self._folder_metas = folder_metas
+        self._list_items = list_items
+
+    def get(self, **kw):
+        self._calls.append(("get", kw))
+        fid = kw.get("fileId", "")
+        if fid in self._folder_metas:
+            return _FakeExec(self._folder_metas[fid])
+        raise RuntimeError("404 not found")
+
+    def list(self, **kw):
+        self._calls.append(("list", kw))
+        q = kw.get("q", "")
+        if "mimeType = 'application/vnd.google-apps.folder'" in q or "mimeType='application/vnd.google-apps.folder'" in q:
+            return _FakeExec({"files": self._list_items.get("folders", [])})
+        return _FakeExec({"files": self._list_items.get("files", [])})
+
+    def create(self, **kw):
+        self._calls.append(("create", kw))
+        return _FakeExec({"id": "created_doc_999", "name": kw["body"]["name"], "webViewLink": "https://drive.google.com/file/d/created_doc_999/view"})
+
+    def update(self, **kw):
+        self._calls.append(("update", kw))
+        return _FakeExec({"id": kw.get("fileId"), "trashed": True})
+
+
+class _MockStageDrive:
+    def __init__(self, calls, folder_metas, list_items):
+        self._calls = calls
+        self._folder_metas = folder_metas
+        self._list_items = list_items
+
+    def files(self):
+        return _MockStageFilesApi(self._calls, self._folder_metas, self._list_items)
+
+    def permissions(self):
+        return _FakePermsApi(self._calls)
+
+
+_stg_calls = []
+_orig_d2 = _ss.drive_service
+_orig_e2 = _ss.ensure_connected
+try:
+    _ss.ensure_connected = lambda: True
+    # Caso A: Buzón en papelera -> debe resolver a RENDER_DRIVE_ID (nunca SUBIR_DRIVE_ID)
+    _ss.drive_service = _MockStageDrive(
+        _stg_calls,
+        folder_metas={_BUZON_ID: {"id": _BUZON_ID, "name": "Buzon", "trashed": True}},
+        list_items={
+            "folders": [{"id": "SUB_RENDER_1"}],
+            "files": [
+                {"id": "img_1", "name": "sillon.heic", "mimeType": "image/heic", "size": "2048", "modifiedTime": "2026-11-26T01:00:00Z", "webViewLink": "https://drive.google.com/file/d/img_1/view"},
+                {"id": "doc_1", "name": "cotizacion.pdf", "mimeType": "application/pdf", "size": "4096", "modifiedTime": "2026-11-26T03:00:00Z", "webViewLink": "https://drive.google.com/file/d/doc_1/view"},
+                {"id": "doc_2", "name": "precios.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "size": "1024", "modifiedTime": "2026-11-26T02:00:00Z"},
+                {"id": "fld_x", "name": "Subcarpeta", "mimeType": "application/vnd.google-apps.folder", "modifiedTime": "2026-11-26T04:00:00Z"},
+                {"id": "dot_x", "name": ".hidden.jpg", "mimeType": "image/jpeg", "modifiedTime": "2026-11-26T05:00:00Z"},
+            ],
+        },
+    )
+    _buzon_active_false = _ss.is_drive_folder_active(_BUZON_ID)
+    _resolved_trashed = _ss.resolve_active_staging_folder_id()
+    _staged_list = _ss.list_shared_staging_files(folder_id=_resolved_trashed)
+
+    # Caso B: Buzón activo -> debe resolver a BUZON_DRIVE_ID
+    _ss.drive_service = _MockStageDrive(
+        _stg_calls,
+        folder_metas={_BUZON_ID: {"id": _BUZON_ID, "name": "Buzon", "trashed": False}},
+        list_items={"folders": [{"id": "SUB_F1"}], "files": [{"id": "hit_1", "name": "Sillon_Ankara.jpg", "mimeType": "image/jpeg"}]},
+    )
+    _buzon_active_true = _ss.is_drive_folder_active(_BUZON_ID)
+    _resolved_active = _ss.resolve_active_staging_folder_id()
+
+    # Caso C: search_drive_images_live acotado a folder_id + subcarpetas
+    _ss._drive_subfolder_ids_cache.clear()
+    _stg_calls.clear()
+    _search_hits = _ss.search_drive_images_live("Sillon Ankara", limit=10, folder_id="ROOT_MUEBLES_99")
+    _search_list_queries = [kw.get("q", "") for tag, kw in _stg_calls if tag == "list"]
+
+    # Caso D: get_or_create_drive_folder escapa comillas simples
+    _stg_calls.clear()
+    _ss.get_or_create_drive_folder("PARENT_1", "O'Brien's Sofa")
+    _folder_queries = [kw.get("q", "") for tag, kw in _stg_calls if tag == "list"]
+
+    # Caso E: upload_file_bytes_to_drive + trash_drive_file invalidan _drive_folder_tree_cache y archivo en disco
+    _ss._drive_folder_tree_cache["dummy:1:4"] = (12345.0, [{"id": "old"}])
+    _ss._save_disk_catalog_cache()
+    _disk_existed_before = _ss._catalog_disk_cache_path.exists()
+    _up_doc_link = _ss.upload_file_bytes_to_drive(b"%PDF-1.4 test", "ficha.pdf", _RENDER_ID)
+    _cache_cleared_on_up = (len(_ss._drive_folder_tree_cache) == 0) and (not _ss._catalog_disk_cache_path.exists())
+
+    _ss._drive_folder_tree_cache["dummy2:1:4"] = (12345.0, [{"id": "old2"}])
+    _ss._save_disk_catalog_cache()
+    _trashed_ok = _ss.trash_drive_file("created_doc_999")
+    _cache_cleared_on_trash = (len(_ss._drive_folder_tree_cache) == 0) and (not _ss._catalog_disk_cache_path.exists())
+
+    # Caso F: publish_photo_and_get_urls devuelve =s2048 (no =s2054)
+    _pub_res = _ss.publish_photo_and_get_urls(b"pngbytes", "SILLON_OUT.png", dest="render")
+finally:
+    _ss.drive_service = _orig_d2
+    _ss.ensure_connected = _orig_e2
+
+check(
+    "is_drive_folder_active y resolve_active_staging_folder_id caen a RENDER (nunca SUBIR PREN) si Buzón está en papelera",
+    (not _buzon_active_false)
+    and _resolved_trashed == _RENDER_ID
+    and _resolved_trashed != _SUBIR_ID
+    and _buzon_active_true
+    and _resolved_active == _BUZON_ID,
+)
+check(
+    "list_shared_staging_files lista fotos y documentos ordenados por fecha desc excluyendo carpetas y ocultos",
+    len(_staged_list) == 3
+    and [x["id"] for x in _staged_list] == ["doc_1", "doc_2", "img_1"]
+    and [x["kind"] for x in _staged_list] == ["document", "document", "image"]
+    and all(k in _staged_list[0] for k in ("id", "name", "mimeType", "kind", "size", "modifiedTime", "webViewLink", "thumbnailLink")),
+)
+check(
+    "search_drive_images_live acota consultas estrictamente a folder_id y subcarpetas",
+    len(_search_hits) == 1
+    and any("'ROOT_MUEBLES_99' in parents" in q and "'SUB_F1' in parents" in q and "name contains 'Sillon'" in q for q in _search_list_queries),
+)
+check(
+    "get_or_create_drive_folder escapa comillas simples en folder_name",
+    any("name='O\\'Brien\\'s Sofa'" in q for q in _folder_queries),
+)
+check(
+    "upload_file_bytes_to_drive y trash_drive_file invalidan caché RAM y JSON temporal en disco + CDN =s2048",
+    _disk_existed_before
+    and bool(_up_doc_link)
+    and _cache_cleared_on_up
+    and _trashed_ok
+    and _cache_cleared_on_trash
+    and _pub_res.get("direct_cdn_url", "").endswith("=s2048")
+    and "=s2054" not in _pub_res.get("direct_cdn_url", ""),
+)
+
+# 20.5 update_product_row_safe pasa tipo correcto y register_many_in_fotos_normalizadas actualiza enlaces obsoletos
+class _MockSheetValues:
+    def __init__(self, rows, batch_calls):
+        self._rows = rows
+        self._batch_calls = batch_calls
+
+    def get(self, **kw):
+        return _FakeExec({"values": self._rows})
+
+    def batchUpdate(self, **kw):
+        self._batch_calls.append(kw)
+        return _FakeExec({})
+
+
+class _MockSpreadsheets:
+    def __init__(self, rows, batch_calls):
+        self._rows = rows
+        self._batch_calls = batch_calls
+
+    def values(self):
+        return _MockSheetValues(self._rows, self._batch_calls)
+
+
+class _MockSheetsApi:
+    def __init__(self, rows, batch_calls):
+        self._rows = rows
+        self._batch_calls = batch_calls
+
+    def spreadsheets(self):
+        return _MockSpreadsheets(self._rows, self._batch_calls)
+
+
+_seen_tipos = []
+_batch_upd_calls = []
+_orig_svc_s = _ss.service
+_orig_ens_s = _ss.ensure_connected
+_orig_buscar = _ss.buscar_link_drive_inteligente
+_orig_tab_dg = _ss._sheet_name_datos_general
+_orig_tab_fn = _ss._sheet_name_fotos_norm
+try:
+    _ss.ensure_connected = lambda: True
+    _ss._sheet_name_datos_general = "DATOS GENERAL"
+    _ss._sheet_name_fotos_norm = "FOTOS NORMALIZADAS"
+    _ss.buscar_link_drive_inteligente = lambda nom, tipo="MUEBLE": (_seen_tipos.append((nom, tipo)) or f"https://drive.google.com/file/d/{tipo.lower()}_id/view")
+    _existing_fn_rows = [
+        ["", "SILLON_OLD", "", "https://drive.google.com/file/d/stale_link/view"],
+    ]
+    _ss.service = _MockSheetsApi(_existing_fn_rows, _batch_upd_calls)
+    _ss.update_product_row_safe(
+        4,
+        {
+            "fotos": {
+                "mueble_nombre": "M1",
+                "tela_nombre": "T1",
+                "madera_nombre": "MD1",
+                "swatch_nombre": "SW1",
+            }
+        },
+    )
+    _batch_fn_calls = []
+    _ss.service = _MockSheetsApi(_existing_fn_rows, _batch_fn_calls)
+    _ss.register_many_in_fotos_normalizadas([
+        {"tipo": "MUEBLE", "nombre": "SILLON_OLD", "link": "https://drive.google.com/file/d/new_fresh_link/view"},
+    ])
+finally:
+    _ss.service = _orig_svc_s
+    _ss.ensure_connected = _orig_ens_s
+    _ss.buscar_link_drive_inteligente = _orig_buscar
+    _ss._sheet_name_datos_general = _orig_tab_dg
+    _ss._sheet_name_fotos_norm = _orig_tab_fn
+
+check(
+    "update_product_row_safe pasa tipo MUEBLE/TELA/MADERA/SWATCH y register_many actualiza enlaces obsoletos",
+    _seen_tipos == [("M1", "MUEBLE"), ("T1", "TELA"), ("MD1", "MADERA"), ("SW1", "SWATCH")]
+    and len(_batch_fn_calls) == 1
+    and _batch_fn_calls[0]["body"]["data"][0]["range"] == "'FOTOS NORMALIZADAS'!D4"
+    and _batch_fn_calls[0]["body"]["data"][0]["values"] == [["https://drive.google.com/file/d/new_fresh_link/view"]],
+)
+
+# 20.6 Alta de Fotos: documentos + Buzón papelera + Limpiar sin reiniciar checkboxes
+_dest_trashed = build_dest_folder_options(buzon_active=False)
+_orig_rerun = _st_live.rerun
+_rerun_hits = []
+try:
+    _st_live.rerun = lambda *a, **kw: _rerun_hits.append(True)
+    _st_live.session_state["v7_last_photo_stem"] = "SILLON_VIEJO"
+    _st_live.session_state["alta_2054"] = True
+    _st_live.session_state["alta_reg"] = False
+    _st_live.session_state["alta_clear_tick"] = 0
+    _clear_alta_form(0)
+    _alta_clear_ok = (
+        "v7_last_photo_stem" not in _st_live.session_state
+        and _st_live.session_state.get("alta_2054") is True
+        and _st_live.session_state.get("alta_reg") is False
+        and _st_live.session_state.get("alta_clear_tick") == 1
+    )
+
+    # 20.7 _clear_v7_form limpia v7_last_photo_stem y v7_last_sku preservando modo y sub-opciones
+    _st_live.session_state.update({
+        "v7_keep_mode": "Tela / Madera",
+        "v7_keep_matmode": "Solo tela",
+        "v7_keep_vista": "3/4 Derecha",
+        "v7_keep_room": "Sala",
+        "v7_keep_folder": "🛋️ RENDER",
+        "v7_last_photo_stem": "SILLON_VIEJO",
+        "v7_last_sku": "SKU-999",
+        "v7_result": {"items": []},
+        "sku_input_v7": "SKU-999",
+        "clear_key_v7": 2,
+    })
+    _clear_v7_form(2)
+    _v7_clear_ok = (
+        "v7_last_photo_stem" not in _st_live.session_state
+        and "v7_last_sku" not in _st_live.session_state
+        and "v7_result" not in _st_live.session_state
+        and "sku_input_v7" not in _st_live.session_state
+        and _st_live.session_state.get("v7_keep_mode") == "Tela / Madera"
+        and _st_live.session_state.get("v7_keep_matmode") == "Solo tela"
+        and _st_live.session_state.get("v7_keep_vista") == "3/4 Derecha"
+        and _st_live.session_state.get("v7_keep_room") == "Sala"
+        and _st_live.session_state.get("v7_keep_folder") == "🛋️ RENDER"
+        and _st_live.session_state.get("clear_key_v7") == 3
+    )
+finally:
+    _st_live.rerun = _orig_rerun
+
+check(
+    "Alta de Fotos soporta documentos, marca Buzón en papelera con fallback RENDER y Limpiar conserva checkboxes",
+    "pdf" in _IMG_DOC_TYPES
+    and "docx" in _IMG_DOC_TYPES
+    and "xlsx" in _IMG_DOC_TYPES
+    and not is_image_filename("cotizacion.pdf")
+    and resolve_upload_filename("cotizacion.pdf", "COT_01", 1, 1, True) == ("COT_01.pdf", "COT_01")
+    and any("papelera" in k and v[0] == _RENDER_ID for k, v in _dest_trashed.items())
+    and _alta_clear_ok,
+)
+check(
+    "_clear_v7_form limpia v7_last_photo_stem y v7_last_sku preservando modo/sub-opciones y TTL catálogo = 120s",
+    _v7_clear_ok
+    and "@st.cache_data(ttl=120" in _v7_src,
+)
+
+# 20.8 HEIC + Gemini runtime (8s/16s + aislamiento por hilo) + format_gemini_error + RENDER_DEPLOY.md
+_req_txt = (_repo_root / "requirements.txt").read_text(encoding="utf-8")
+_ui_src = (_repo_root / "modules" / "ui_helpers.py").read_text(encoding="utf-8")
+_ai_src = (_repo_root / "services" / "ai_prompt_service_v7.py").read_text(encoding="utf-8")
+_deploy_md = (_repo_root / "RENDER_DEPLOY.md").read_text(encoding="utf-8")
+
+_gr.reset_runtime_state()
+
+
+def _worker_meta(idx: int):
+    def _h(model, contents, config=None):
+        if idx == 0:
+            raise RuntimeError("401 UNAUTHENTICATED")
+        return _FakeGeminiResp('{"ok": true}')
+
+    cli = _FakeGenaiClient(_h)
+    try:
+        _gr.call_gemini_fast(cli, ["test"], api_key=f"k_{idx}")
+    except Exception:
+        pass
+    return _gr.get_last_vision_meta()
+
+
+with _cf.ThreadPoolExecutor(max_workers=2) as _ex_meta:
+    _m0_fut = _ex_meta.submit(_worker_meta, 0)
+    _m1_fut = _ex_meta.submit(_worker_meta, 1)
+    _m0, _m1 = _m0_fut.result(), _m1_fut.result()
+_gr.reset_runtime_state()
+
+check(
+    "HEIC, gemini_runtime (8s/16s + meta por hilo), format_gemini_error sin botón inexistente y RENDER_DEPLOY V7",
+    "pillow-heif>=0.18.0" in _req_txt
+    and "register_heif_opener()" in _ui_src
+    and "register_heif_opener()" in _ai_src
+    and _gr.DEFAULT_TIMEOUT_MS == 8_000
+    and _gr.MAX_WALL_SECONDS == 16.0
+    and (_m0["used_ai"] is False and _m1["used_ai"] is True)
+    and "🔑 API Key" not in v7.format_gemini_error(RuntimeError("403 LEAKED"))
+    and "🔑 API Key" not in v7.format_gemini_error(RuntimeError("401 API_KEY_INVALID"))
+    and "V7" in _deploy_md,
 )
 
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
