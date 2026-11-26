@@ -249,7 +249,7 @@ def prepare_exact_copy_image_bytes(raw_bytes: bytes) -> tuple[bytes, str]:
                         work = bg
                     elif work.mode != "RGB":
                         work = work.convert("RGB")
-                    work.save(out, format="JPEG", quality=90)
+                    work.save(out, format="JPEG", quality=92, subsampling=0)
                     result = (out.getvalue(), "image/jpeg")
     except Exception:
         result = (raw_bytes[:_COPY_PASSTHROUGH_MAX_BYTES], "image/jpeg") if len(raw_bytes) > 4_000_000 else (raw_bytes, "image/jpeg")

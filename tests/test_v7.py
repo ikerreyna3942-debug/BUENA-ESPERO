@@ -1307,5 +1307,90 @@ check(
     and "white_bg_enabled=(mode != \"hd\")" in _v7_src,
 )
 
+# 20.10 Fidelidad quirúrgica de telas en V7 (figuras/patrones, colores sin compresión y 0% contaminación del tapiz viejo)
+_pat_im = _Image.new("RGB", (96, 96), (235, 228, 215))
+for _py in range(96):
+    for _px in range(96):
+        if ((_px // 12) + (_py // 12)) % 2 == 0:
+            _pat_im.putpixel((_px, _py), (186, 82, 54))  # figura terracota sobre crema
+_pat_buf = _io.BytesIO()
+_pat_im.save(_pat_buf, format="PNG")
+_pat_png = _pat_buf.getvalue()
+
+_lossless_prep = v7._prepare_image(_pat_png, max_dim=1024, lossless=True)
+_loc_fab_ana = v7._analyze_fabric_pixels_local(_pat_png, sample_name="JACQUARD_TERRACOTA.png")
+check(
+    "_prepare_image(lossless=True) conserva píxeles exactos sin JPEG (como V1) y _analyze_fabric_pixels_local detecta figuras y color real",
+    _lossless_prep.getpixel((2, 2)) == (186, 82, 54)
+    and _lossless_prep.getpixel((16, 2)) == (235, 228, 215)
+    and _loc_fab_ana["has_visible_pattern"] is True
+    and "terracota" in _loc_fab_ana["color_description"].lower(),
+)
+
+_r_pat_mat = v7.build_prompts(
+    mode="material",
+    material_mode="fabric_only",
+    furniture_name="SOFA ROMA",
+    tipo_mueble="SOFA",
+    furniture_analysis={
+        "furniture_item": "curved 3-seater sofa",
+        "camera_angle": "eye-level 3/4 view facing right",
+        "geometric_structure": "3-seater sofa with rounded armrests and oak legs",
+        "existing_materials": "old dark navy blue fabric upholstery and oak legs",
+    },
+    fabric_label="JACQUARD TERRACOTA",
+    fabric_filename="JACQUARD_TERRACOTA.png",
+    fabric_analysis={
+        "name": "Geometric Terracotta & Cream Jacquard",
+        "color_description": "base crema cálido con figuras geométricas terracota intenso",
+        "texture_detail": "raised woven jacquard figures over tight linen ground",
+        "light_interaction": "Soft matte textile",
+        "pattern_and_figures": "repeating interlocking geometric diamond figures in terracotta over warm cream ground",
+        "has_visible_pattern": True,
+    },
+    furniture_filenames=["SOFA_ROMA_AZUL.jpg"],
+)
+_p_pat_ais = _r_pat_mat["items"][0]["google_ai_studio"]
+check(
+    "V7 material Solo Tela clona figuras 1:1, bloquea deriva cromática estilo V1 y descarta tapiz viejo",
+    "1:1 FIGURES, MOTIFS & PATTERN REPLICATION" in _p_pat_ais
+    and "repeating interlocking geometric diamond figures" in _p_pat_ais
+    and "absolute single truth for upholstery figures, color, and texture" in _p_pat_ais
+    and "no warming, no cooling" in _p_pat_ais
+    and "Completely discard 100% of the old upholstery color and fabric" in _p_pat_ais
+    and "EL CASCO COMPLETO" in _p_pat_ais
+    and "97%" in _p_pat_ais
+    and "erased pattern" in _p_pat_ais
+    and "old dark navy blue" not in _p_pat_ais,
+)
+
+_r_34_no_bleed = v7.build_34_derecha_2054_prompts(
+    furniture_name="SOFA ROMA",
+    tipo_mueble="SOFA",
+    furniture_analysis={
+        "furniture_item": "3-seater sofa",
+        "geometric_structure": "3-seater sofa with oak legs",
+        "existing_materials": "old dark navy blue velvet upholstery with oak legs",
+    },
+    fabric_label="JACQUARD TERRACOTA",
+    fabric_filename="JACQUARD_TERRACOTA.png",
+    fabric_analysis={
+        "name": "Geometric Terracotta Jacquard",
+        "color_description": "terracota y crema",
+        "texture_detail": "raised woven jacquard weave",
+        "light_interaction": "Soft matte textile",
+        "pattern_and_figures": "geometric diamond jacquard motifs",
+        "has_visible_pattern": True,
+    },
+    furniture_filenames=["SOFA_ROMA_AZUL.jpg"],
+)
+_p_34_nb = _r_34_no_bleed["items"][0]["google_ai_studio"]
+check(
+    "V7 3/4 Derecha y Catálogo eliminan contaminación del color viejo del mueble al aplicar tela nueva con figuras",
+    "100% OLD-FABRIC ERASURE" in _p_34_nb
+    and "1:1 FIGURES, MOTIFS & PATTERN REPLICATION" in _p_34_nb
+    and "old dark navy blue velvet" not in _p_34_nb,
+)
+
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)
