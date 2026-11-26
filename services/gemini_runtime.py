@@ -2,11 +2,11 @@
 Runtime compartido y rápido para llamadas a Gemini Vision (V1–V7).
 
 Resuelve los bloqueos de 20–55 s en producción:
-  * Configura timeout explícito (8 s por modelo) y attempts=1
+  * Configura timeout explícito (>= 10 s por modelo, mínimo exigido por Gemini API) y attempts=1
     para evitar los 5 reintentos con backoff exponencial del SDK ante HTTP 503.
   * Aplica ThinkingConfig(thinking_level="MINIMAL"/"LOW") en modelos Gemini 3.x Flash
     para que el análisis visual estructurado responda en ~1.5–3 s en lugar de agotar tiempo.
-  * Mantiene cooldown por modelo ante 503/504/429/404 y presupuesto máximo de tiempo total (16 s),
+  * Mantiene cooldown por modelo ante 503/504/429/404 y presupuesto máximo de tiempo total (20 s),
     garantizando entrega rápida de prompts incluso si el primer modelo agota tiempo o está saturado.
   * Respeta GEMINI_API_KEY configurada en entorno (incluyendo llaves AIza de 39 caracteres)
     y solo recurre a la llave de respaldo si la principal falta o es rechazada (401/403).
@@ -25,11 +25,12 @@ VISION_MODELS: List[Tuple[str, Optional[str]]] = [
     ("gemini-3.6-flash", "MINIMAL"),
     ("gemini-3.8-flash", "LOW"),
     ("gemini-3.1-flash-lite", "MINIMAL"),
+    ("gemini-2.5-flash", None),
 ]
 
-# Presupuesto por modelo (8 s) y total (16 s) para permitir al menos un respaldo si el modelo #1 expira.
-DEFAULT_TIMEOUT_MS = 8_000
-MAX_WALL_SECONDS = 16.0
+# La API de Gemini exige un deadline mínimo de 10 s (10000 ms) en X-Server-Timeout.
+DEFAULT_TIMEOUT_MS = 10_000
+MAX_WALL_SECONDS = 20.0
 TRANSIENT_COOLDOWN_SECONDS = 60.0
 NOT_FOUND_COOLDOWN_SECONDS = 600.0
 
@@ -138,11 +139,11 @@ def _is_transient_error(err: Exception) -> bool:
 
 
 def build_genai_client(api_key: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Any:
-    """Crea y cachea un cliente google-genai con timeout explícito y sin reintentos largos."""
+    """Crea y cachea un cliente google-genai con timeout explícito (>= 10 s) y sin reintentos largos."""
     key = (api_key or "").strip()
     if not key:
         return None
-    eff_timeout = max(4_000, int(timeout_ms))
+    eff_timeout = max(10_000, int(timeout_ms))
     cache_key = (key, eff_timeout)
     with _LOCK:
         cached = _CLIENTS.get(cache_key)

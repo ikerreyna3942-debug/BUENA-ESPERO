@@ -1215,16 +1215,96 @@ with _cf.ThreadPoolExecutor(max_workers=2) as _ex_meta:
 _gr.reset_runtime_state()
 
 check(
-    "HEIC, gemini_runtime (8s/16s + meta por hilo), format_gemini_error sin botón inexistente y RENDER_DEPLOY V7",
+    "HEIC, gemini_runtime (10s min API deadline / 20s + meta por hilo), format_gemini_error sin botón inexistente y RENDER_DEPLOY V7",
     "pillow-heif>=0.18.0" in _req_txt
     and "register_heif_opener()" in _ui_src
     and "register_heif_opener()" in _ai_src
-    and _gr.DEFAULT_TIMEOUT_MS == 8_000
-    and _gr.MAX_WALL_SECONDS == 16.0
+    and _gr.DEFAULT_TIMEOUT_MS == 10_000
+    and _gr.MAX_WALL_SECONDS == 20.0
     and (_m0["used_ai"] is False and _m1["used_ai"] is True)
     and "🔑 API Key" not in v7.format_gemini_error(RuntimeError("403 LEAKED"))
     and "🔑 API Key" not in v7.format_gemini_error(RuntimeError("401 API_KEY_INVALID"))
     and "V7" in _deploy_md,
+)
+
+# 20.9 HD 8K: muestra plana (tela/madera) vs mueble real — nunca inventa sillón ni fondo #FFFFFF en muestras
+_swatch_im = _Image.new("RGB", (120, 100), (212, 203, 198))
+for _sy in range(100):
+    for _sx in range(120):
+        _delta = ((_sx * 7 + _sy * 13) % 13) - 6
+        _swatch_im.putpixel((_sx, _sy), (212 + _delta, 203 + _delta, 198 + _delta))
+_swatch_buf = _io.BytesIO()
+_swatch_im.save(_swatch_buf, format="PNG")
+_swatch_png = _swatch_buf.getvalue()
+
+_furn_im = _Image.new("RGB", (120, 100), (255, 255, 255))
+for _fy in range(25, 80):
+    for _fx in range(30, 90):
+        _furn_im.putpixel((_fx, _fy), (120, 85, 55))
+_furn_buf = _io.BytesIO()
+_furn_im.save(_furn_buf, format="PNG")
+_furn_png = _furn_buf.getvalue()
+
+check(
+    "_is_flat_swatch_image distingue muestra plana de tela/madera frente a mueble sobre fondo blanco",
+    v7._is_flat_swatch_image(_swatch_png) is True
+    and v7._is_flat_swatch_image(_furn_png) is False,
+)
+
+_ana_sw = v7.analyze_furniture_for_enhancement(_swatch_png, api_key="")
+_res_hd_sw = v7.build_prompts(
+    mode="hd",
+    furniture_name="Captura de pantalla 2026-11-26 104912",
+    furniture_analysis=_ana_sw,
+    white_bg_enabled=False,
+    furniture_filenames=["Captura de pantalla 2026-11-26 104912.png"],
+)
+_hd_sw_ais = _res_hd_sw["items"][0]["google_ai_studio"]
+check(
+    "HD 8K sobre muestra plana bloquea alucinación de mueble y conserva textura full-bleed sin fondo #FFFFFF",
+    _ana_sw.get("is_material_swatch") is True
+    and "MACRO SWATCH & TEXTURE SUPER-RESOLUTION" in _hd_sw_ais
+    and "FLAT 2D SWATCH ONLY" in _hd_sw_ais
+    and "Do NOT generate, invent, or render any chair, armchair, sofa" in _hd_sw_ais
+    and "contemporary architectural furniture piece" not in _hd_sw_ais
+    and "Pure seamless solid white catalog studio background (#FFFFFF)" not in _hd_sw_ais,
+)
+
+_ana_furn = v7.analyze_furniture_for_enhancement(_furn_png, notas_usuario="Tipo de mueble: Sillón", api_key="")
+_res_hd_furn = v7.build_prompts(
+    mode="hd",
+    furniture_name="Sillon Roble",
+    furniture_analysis=_ana_furn,
+    tipo_mueble="Sillón",
+    white_bg_enabled=False,
+    furniture_filenames=["Sillon Roble.png"],
+)
+_hd_furn_ais = _res_hd_furn["items"][0]["google_ai_studio"]
+check(
+    "HD 8K sobre mueble real aplica STRICT 1:1 SUBJECT LOCK y conserva encuadre/fondo original",
+    _ana_furn.get("is_material_swatch") is False
+    and "STRICT 1:1 SUBJECT LOCK" in _hd_furn_ais
+    and "original background" in _hd_furn_ais,
+)
+
+_thumbs_hd_tela = build_ordered_photo_thumbs_v7(
+    mode="hd",
+    material_mode="fabric_only",
+    m_names=[],
+    m_bytes=[],
+    m_source="",
+    fabric_name="LINO BEIGE.png",
+    fabric_bytes=_swatch_png,
+    wood_name="",
+    wood_bytes=None,
+    batch_views_files=[],
+)
+check(
+    "HD 8K permite mejorar directamente una Tela o Madera seleccionada sin exigir foto de mueble",
+    len(_thumbs_hd_tela) == 1
+    and _thumbs_hd_tela[0][0] == "LINO BEIGE.png"
+    and "Image 1 · Tela" in _thumbs_hd_tela[0][2]
+    and "white_bg_enabled=(mode != \"hd\")" in _v7_src,
 )
 
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")

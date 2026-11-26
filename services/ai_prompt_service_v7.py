@@ -25,7 +25,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageStat
 
 try:
     import pillow_heif
@@ -56,14 +56,18 @@ class MaterialAnalysisV7(BaseModel):
 
 
 class FurnitureAnalysisV7(BaseModel):
-    furniture_item: str = Field(description="Tipo de mueble y estilo arquitectónico")
+    furniture_item: str = Field(description="Tipo de mueble y estilo, o descripción de la muestra plana si es textura/tela/madera")
     camera_angle: str = Field(description="Ángulo de cámara observado")
     lighting_direction: str = Field(description="Dirección de iluminación")
-    geometric_structure: str = Field(description="Topología 3D, silueta, ensambles y estructura")
+    geometric_structure: str = Field(description="Topología 3D, silueta y estructura, o textura plana 2D de borde a borde si es muestra")
     wood_and_finish_analysis: str = Field(description="Especie de madera, veta y acabado")
     upholstery_analysis: str = Field(description="Tapicería y color o 'Sin tapicería'")
     existing_materials: str = Field(description="Resumen técnico integral de materiales")
     wood_details: Optional[str] = Field(default="", description="Detalle específico de madera")
+    is_material_swatch: Optional[bool] = Field(
+        default=False,
+        description="True únicamente si la imagen principal es una muestra/textura plana de material (tela, madera, piel, piedra) sin un mueble 3D",
+    )
 
 
 MODES: Dict[str, str] = {
@@ -387,6 +391,83 @@ class AIPromptServiceV7:
             print(f"[AIPromptServiceV7] Error analyzing material: {e}")
             return default_material
 
+    _FURNITURE_KEYWORDS: Tuple[str, ...] = (
+        "espejo", "mirror", "luna",
+        "buro", "buró", "noche", "velador", "nightstand",
+        "cama", "bed", "cabecera", "headboard",
+        "sofa", "sofá", "sillon", "sillón", "silla", "chair", "butaca", "poltrona", "banca", "bench", "banqueta", "stool", "taburete",
+        "mesa", "table", "escritorio", "desk", "comedor", "consola", "arrimo",
+        "credenza", "aparador", "comoda", "cómoda", "librero", "armario", "gabinete", "buffet", "dresser",
+    )
+    _SWATCH_KEYWORDS: Tuple[str, ...] = (
+        "muestra", "swatch", "textura", "tramado", "tejido plano",
+        "fabric sample", "wood sample", "solo tela", "solo madera",
+    )
+
+    @staticmethod
+    def _is_flat_swatch_image(img_bytes: Optional[bytes]) -> bool:
+        """Detecta localmente (<2 ms) si una imagen es una muestra/textura plana de borde a borde (tela, madera, piel, piedra) y no un mueble 3D."""
+        if not img_bytes or not isinstance(img_bytes, (bytes, bytearray)) or len(img_bytes) < 64:
+            return False
+        try:
+            with Image.open(io.BytesIO(img_bytes)) as src:
+                im = src.convert("RGB").resize((64, 64), Image.Resampling.BILINEAR)
+            max_std = max(ImageStat.Stat(im).stddev)
+            # Descarta lienzos sintéticos de 1 solo color plano (<0.8) o escenas de alto contraste (>32)
+            if max_std < 0.8 or max_std >= 32.0:
+                return False
+
+            border_r, border_g, border_b = 0.0, 0.0, 0.0
+            border_n = 0
+            white_b = 0
+            dark_b = 0
+            center_r, center_g, center_b = 0.0, 0.0, 0.0
+            center_n = 0
+
+            for y in range(64):
+                for x in range(64):
+                    r, g, b = im.getpixel((x, y))
+                    if x < 4 or x >= 60 or y < 4 or y >= 60:
+                        border_r += r
+                        border_g += g
+                        border_b += b
+                        border_n += 1
+                        if r > 240 and g > 240 and b > 240:
+                            white_b += 1
+                        elif r < 18 and g < 18 and b < 18:
+                            dark_b += 1
+                    elif 16 <= x < 48 and 16 <= y < 48:
+                        center_r += r
+                        center_g += g
+                        center_b += b
+                        center_n += 1
+
+            if border_n == 0 or center_n == 0:
+                return False
+            if (white_b / border_n) >= 0.20 or (dark_b / border_n) >= 0.20:
+                return False
+
+            center_mean = (center_r / center_n, center_g / center_n, center_b / center_n)
+            border_mean = (border_r / border_n, border_g / border_n, border_b / border_n)
+            center_border_diff = max(abs(center_mean[c] - border_mean[c]) for c in range(3))
+            if center_border_diff >= 22.0:
+                return False
+
+            cell_means = [
+                ImageStat.Stat(im.crop((gx * 16, gy * 16, (gx + 1) * 16, (gy + 1) * 16))).mean
+                for gy in range(4)
+                for gx in range(4)
+            ]
+            grid_max_diff = max(
+                abs(a[c] - b[c])
+                for a in cell_means
+                for b in cell_means
+                for c in range(3)
+            )
+            return grid_max_diff < 68.0
+        except Exception:
+            return False
+
     def analyze_furniture_for_enhancement(
         self,
         furniture_bytes: Any,
@@ -398,29 +479,51 @@ class AIPromptServiceV7:
     ) -> Dict[str, Any]:
         notes_clean = (notas_usuario or "").strip()
         lower_notes = notes_clean.lower()
-        inferred_type = "contemporary architectural furniture piece"
-        if any(w in lower_notes for w in ("espejo", "mirror", "luna")):
-            inferred_type = "minimalist wooden wall mirror with reflective glass"
-        elif any(w in lower_notes for w in ("buro", "buró", "noche", "velador", "nightstand")):
-            inferred_type = "modern wooden nightstand / buró"
-        elif "cama" in lower_notes or "bed" in lower_notes:
-            inferred_type = "minimalist low-profile platform bed frame"
-        elif any(w in lower_notes for w in ("sofa", "sofá", "sillon", "sillón", "silla", "butaca")):
-            inferred_type = "contemporary upholstered seating piece"
-        elif any(w in lower_notes for w in ("mesa", "table", "escritorio", "comedor", "consola")):
-            inferred_type = "architectural table"
-        elif any(w in lower_notes for w in ("credenza", "aparador", "comoda", "cómoda", "librero")):
-            inferred_type = "architectural storage credenza / dresser"
 
-        fallback = FurnitureAnalysisV7(
-            furniture_item=inferred_type,
-            camera_angle="reference angle in attached photo",
-            lighting_direction="balanced soft studio fill",
-            geometric_structure="exact 3D silhouette, joinery, leg architecture, and physical proportions directly from the attached furniture photo",
-            wood_and_finish_analysis="authentic timber tone, grain, and surface sheen from the attached reference",
-            upholstery_analysis="authentic textile weave and tone from the attached reference",
-            existing_materials="authentic materials, colors, and surface finishes directly from the attached reference",
-        ).model_dump()
+        raw_list = furniture_bytes if isinstance(furniture_bytes, list) else [furniture_bytes]
+        primary_fb = next((fb for fb in raw_list if isinstance(fb, (bytes, bytearray)) and fb), None)
+
+        explicit_furn = any(w in lower_notes for w in self._FURNITURE_KEYWORDS)
+        explicit_swatch = any(w in lower_notes for w in self._SWATCH_KEYWORDS)
+        local_swatch = (not explicit_furn) and (explicit_swatch or self._is_flat_swatch_image(primary_fb))
+
+        if local_swatch:
+            fallback = FurnitureAnalysisV7(
+                furniture_item="flat close-up material / textile texture swatch",
+                camera_angle="flat full-bleed 90° macro top-down view",
+                lighting_direction="even diffused macro surface lighting",
+                geometric_structure="flat full-bleed 2D surface texture filling 100% of the frame from edge to edge with zero 3D furniture objects",
+                wood_and_finish_analysis="as shown in the flat surface sample",
+                upholstery_analysis="authentic woven fibers, threads, and color undertones directly from the flat swatch",
+                existing_materials="exact authentic surface weave, grain, fibers, and color tones directly from the attached swatch",
+                is_material_swatch=True,
+            ).model_dump()
+        else:
+            inferred_type = "exact subject shown in the attached photo"
+            if any(w in lower_notes for w in ("espejo", "mirror", "luna")):
+                inferred_type = "minimalist wooden wall mirror with reflective glass"
+            elif any(w in lower_notes for w in ("buro", "buró", "noche", "velador", "nightstand")):
+                inferred_type = "modern wooden nightstand / buró"
+            elif "cama" in lower_notes or "bed" in lower_notes:
+                inferred_type = "minimalist low-profile platform bed frame"
+            elif any(w in lower_notes for w in ("sofa", "sofá", "sillon", "sillón", "silla", "butaca")):
+                inferred_type = "contemporary upholstered seating piece"
+            elif any(w in lower_notes for w in ("mesa", "table", "escritorio", "comedor", "consola")):
+                inferred_type = "architectural table"
+            elif any(w in lower_notes for w in ("credenza", "aparador", "comoda", "cómoda", "librero")):
+                inferred_type = "architectural storage credenza / dresser"
+
+            fallback = FurnitureAnalysisV7(
+                furniture_item=inferred_type,
+                camera_angle="reference angle in attached photo",
+                lighting_direction="balanced soft studio fill",
+                geometric_structure="exact 3D silhouette, contours, structure, and physical proportions directly from the attached photo",
+                wood_and_finish_analysis="authentic surface tone, grain, and sheen from the attached reference",
+                upholstery_analysis="authentic textile weave and tone from the attached reference",
+                existing_materials="authentic materials, colors, and surface finishes directly from the attached reference",
+                is_material_swatch=False,
+            ).model_dump()
+
         fallback["has_wood_sample"] = bool(wood_bytes)
         fallback["has_fabric_sample"] = bool(fabric_bytes)
 
@@ -436,7 +539,7 @@ class AIPromptServiceV7:
                 return fallback
 
             actual_imgs: List[Image.Image] = []
-            for fb in (furniture_bytes if isinstance(furniture_bytes, list) else [furniture_bytes])[:2]:
+            for fb in raw_list[:2]:
                 if fb:
                     actual_imgs.append(self._prepare_image(fb, max_dim=768))
 
@@ -456,10 +559,15 @@ class AIPromptServiceV7:
                     ref_imgs.append(self._prepare_image(rb, max_dim=512))
 
             prompt = (
-                "You are an expert furniture visualizer and commercial product photographer. "
-                "Analyze the furniture photo(s) (and any attached material swatches) to produce a concise, accurate "
-                "3D geometric & camera specification: item type/style, EXACT camera_angle and framing "
-                "(e.g. 'strict eye-level 3/4 view facing right', 'horizontal side profile'), "
+                "You are an expert furniture visualizer, materials specialist, and commercial product photographer. "
+                "IMPORTANT FIRST STEP: Check whether the primary image shows a 3D piece of furniture/decor OR a flat close-up "
+                "material swatch / surface texture sample (e.g. fabric weave close-up, wood grain board, leather or stone texture "
+                "filling the frame from edge to edge with NO 3D furniture object). "
+                "If it is a flat material swatch/texture with no 3D furniture piece, set is_material_swatch=true, describe the exact "
+                "material/weave/grain in furniture_item (e.g. 'flat beige woven upholstery fabric swatch'), set camera_angle='flat full-bleed 90° macro top-down view', "
+                "and set geometric_structure='flat full-bleed 2D surface texture filling 100% of the frame edge-to-edge with zero 3D furniture objects'. "
+                "Otherwise set is_material_swatch=false and produce a concise, accurate 3D geometric & camera specification: "
+                "item type/style, EXACT camera_angle and framing (e.g. 'strict eye-level 3/4 view facing right', 'horizontal side profile'), "
                 "exact geometric_structure (silhouette, cushions, seams, folds, legs/base), "
                 "lighting_direction, wood_and_finish_analysis, and upholstery_analysis."
             )
@@ -486,6 +594,12 @@ class AIPromptServiceV7:
                 w = data.get("wood_and_finish_analysis", "")
                 u = data.get("upholstery_analysis", "")
                 data["existing_materials"] = f"{w}, {u}".strip(", ")
+            if explicit_furn:
+                data["is_material_swatch"] = False
+            elif explicit_swatch:
+                data["is_material_swatch"] = True
+            else:
+                data["is_material_swatch"] = bool(data.get("is_material_swatch", False))
             data["has_wood_sample"] = bool(wood_imgs)
             data["has_fabric_sample"] = bool(fab_imgs)
             return data
@@ -1842,7 +1956,80 @@ class AIPromptServiceV7:
         furniture_filenames: Optional[List[str]] = None,
         wood_filename: str = "",
         fabric_filename: str = "",
+        is_material_swatch: bool = False,
     ) -> Dict[str, Any]:
+        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
+
+        if is_material_swatch:
+            raw_furn = [str(x).strip() for x in (furniture_filenames or []) if str(x or "").strip()]
+            primary_furn_file = self._canonical_photo_filename(
+                raw_furn[0] if raw_furn else (furniture_name or "muestra.png"),
+                "muestra.png",
+            )
+            swatch_desc = (
+                furn_item
+                if furn_item and "exact subject" not in furn_item.lower()
+                else "flat close-up material / textile texture swatch"
+            )
+            mat_desc = existing_mats or "authentic woven fibers, threads, grain, and color undertones from Image 1"
+
+            prompt_ais = (
+                "[8K ULTRA-HD MACRO SWATCH & TEXTURE SUPER-RESOLUTION · STRICT 1:1 IMAGE LOCK]\n"
+                f'TASK: Upscale and remaster the EXACT flat material / surface swatch shown in Image 1 ("{primary_furn_file}") '
+                f"('{furniture_name}' — {swatch_desc}) into razor-sharp 8K macro photographic clarity, preserving 100% of its "
+                "full-bleed framing, weave/grain structure, and exact color tones.\n\n"
+                "ATTACHED SOURCE IMAGE:\n"
+                f'- Image 1 (SOURCE MATERIAL SWATCH · FILE: "{primary_furn_file}"): Exact flat surface/textile/material sample '
+                f'("{primary_furn_file}") to deblur and upscale 1:1.\n\n'
+                "CRITICAL ANTI-HALLUCINATION LOCK (DO NOT INVENT FURNITURE):\n"
+                "- FLAT 2D SWATCH ONLY: Image 1 is a flat close-up material/texture sample, NOT a 3D piece of furniture.\n"
+                "- STRICTLY FORBIDDEN: Do NOT generate, invent, or render any chair, armchair, sofa, table, bed, cushion, "
+                "wooden frame, joinery, legs, 3D object, room scene, or white studio border (#FFFFFF).\n"
+                "- FULL-BLEED 1:1 FRAMING: Keep the flat surface texture filling 100% of the canvas from edge to edge at the exact "
+                "same zoom scale, camera angle, and thread/grain alignment as Image 1.\n\n"
+                "8K MACRO CLARITY & COLOR FIDELITY:\n"
+                "- ELIMINATE ARTIFACTS: Completely remove pixelation, low-resolution screenshot blur, compression blocks, and digital noise.\n"
+                f"- MICRO-TEXTURE RECONSTRUCTION: Restore crisp individual woven yarn threads, micro-fibers, pores, or natural grain relief ({mat_desc}) "
+                "at tack-sharp f/11 macro focus without plastic smoothing or artificial sharpening halos.\n"
+                "- ZERO COLOR DRIFT: Preserve the 100% exact original hue, warmth, brightness, and subtle multi-tone thread/grain flecks "
+                f"visible in Image 1 with 0% tint shift.{notes_ais}\n\n"
+                "Exclude: furniture, chair, armchair, sofa, table, cushions, wooden frame, joinery, legs, 3D object, room background, "
+                "white border, studio backdrop, drop shadow, blur, pixelation, jpeg artifacts, plastic smoothing, color shift, text, watermark."
+            )
+
+            prompt_dal = (
+                f'8K Ultra-HD 1:1 macro super-resolution remaster of the exact flat material/textile swatch in Image 1 ("{primary_furn_file}" · \'{furniture_name}\').\n'
+                f'Attached Source: Image 1 = "{primary_furn_file}" (flat full-bleed surface swatch — NOT a piece of furniture).\n'
+                "CRITICAL RULE: Do NOT generate or invent any chair, armchair, sofa, table, cushion, wooden frame, legs, 3D object, or white studio background. "
+                "Keep the flat texture filling 100% of the frame from edge to edge exactly like Image 1.\n"
+                f"Remove all blur, pixelation, and screenshot compression while reconstructing crisp 8K micro-fibers/grain ({mat_desc}) with 0% color or warmth shift.\n"
+                f"{'User directives: ' + user_notes_clean if user_notes_clean else ''}\n"
+                "Avoid: furniture, chair, sofa, wooden frame, 3d object, white border, blur, pixelation, color shift, text, watermark."
+            )
+
+            prompt_mj = (
+                f"8k ultra-sharp macro top-down flat full-bleed texture remaster of {swatch_desc}, {mat_desc}, "
+                "edge-to-edge flat surface sample, tack-sharp micro fibers and weave, f/11 macro 100MP --ar 1:1 --v 6.1 --style raw "
+                "--no furniture, chair, armchair, sofa, table, wooden frame, legs, cushions, white background, room, blur, pixelated, color shift"
+            )
+
+            return {
+                "id": "hd",
+                "label": "✨ Mejora HD 8K",
+                "short_name": "Mejora HD",
+                "icon": "✨",
+                "google_ai_studio": prompt_ais,
+                "chatgpt_dalle3": prompt_dal,
+                "midjourney_v6": prompt_mj,
+                "checklist": [
+                    "¿Se conservó como muestra/textura plana de borde a borde SIN inventar ningún mueble ni margen blanco?",
+                    "¿Aumentó la nitidez real del tejido o veta a 8K eliminando el pixelado/borrosidad?",
+                    "¿Se mantuvo exactamente el mismo tono, calidez y escala del tramado original?",
+                ],
+                "needs_anchor": False,
+                "attachment_guide": [f'Image 1: Muestra / textura original a mejorar en 8K ("{primary_furn_file}")'],
+            }
+
         slots = self._build_image_slots(
             furn_item=furn_item,
             has_wood=has_wood,
@@ -1858,54 +2045,72 @@ class AIPromptServiceV7:
             fabric_filename=fabric_filename,
         )
         primary_furn_file = slots["primary_furn_file"]
-        mat_ais, mat_dal = self._build_material_lock_text(
-            profile=profile,
-            furn_item=furn_item,
-            existing_mats=existing_mats,
-            wa=wa,
-            fa=fa,
-            wood_idx=slots["wood_idx"],
-            fabric_idx=slots["fabric_idx"],
-            has_wood=has_wood,
-            has_fabric=has_fabric,
-            primary_furn_file=primary_furn_file,
-            wood_file=slots["wood_file"],
-            fabric_file=slots["fabric_file"],
-        )
+        if has_wood or has_fabric:
+            mat_ais, mat_dal = self._build_material_lock_text(
+                profile=profile,
+                furn_item=furn_item,
+                existing_mats=existing_mats,
+                wa=wa,
+                fa=fa,
+                wood_idx=slots["wood_idx"],
+                fabric_idx=slots["fabric_idx"],
+                has_wood=has_wood,
+                has_fabric=has_fabric,
+                primary_furn_file=primary_furn_file,
+                wood_file=slots["wood_file"],
+                fabric_file=slots["fabric_file"],
+            )
+        else:
+            mat_ais = (
+                f'- ORIGINAL SURFACE & MATERIAL LOCK (from Image 1 ("{primary_furn_file}")): Faithfully preserve ONLY the exact '
+                f"authentic materials, textures, colors, and surface finishes actually visible in Image 1 ({existing_mats}) "
+                "with 0% color/hue shift and without inventing wood, stone, or metal parts that are not present."
+            )
+            mat_dal = (
+                f'Faithfully preserve ONLY the exact authentic materials, textures, and color tones visible in Image 1 ("{primary_furn_file}") ({existing_mats}).'
+            )
+
         bg_line = (
             "Pure seamless solid white catalog studio background (#FFFFFF) with zero drop shadows."
             if white_bg_enabled
-            else f'Preserve the exact original background, scene lighting, and framing from Image 1 ("{primary_furn_file}") while upgrading sharpness to 8K.'
+            else (
+                f'Preserve the exact original background, scene lighting, and framing from Image 1 ("{primary_furn_file}") '
+                "(if Image 1 already has a white studio background, keep pure solid #FFFFFF; otherwise preserve its exact original "
+                "background and framing without replacing or cropping it) while upgrading sharpness to 8K."
+            )
         )
-        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
 
         prompt_ais = (
             "[8K ULTRA-HD COMMERCIAL RESTORATION · ZERO COLOR OR GEOMETRY DRIFT]\n"
             f'TASK: Remaster \'{furn_item}\' (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}") into ultra-sharp 8K medium-format clarity '
-            "without altering color, tone, material identity, or silhouette.\n\n"
+            "without altering color, tone, material identity, framing, or silhouette.\n\n"
             f"{slots['header_block']}\n\n"
             "CLARITY & RESTORATION:\n"
             "- ELIMINATE ARTIFACTS: Remove pixelation, blur, compression noise, and softness completely.\n"
-            "- MACRO TEXTURE: Restore crisp wood grain pores, joinery seams, and individual textile threads naturally without plastic smoothing.\n"
+            "- MACRO TEXTURE: Sharpen only the authentic surface micro-textures actually visible in Image 1 "
+            "(textile weave threads, seam stitching, wood grain pores, or smooth surfaces) naturally without plastic smoothing or inventing materials.\n"
             "- FOCUS STACKING: Deep f/11 edge-to-edge sharpness from foreground edge to rear contours.\n\n"
             "STRICT PRESERVATION LOCK:\n"
+            f'- STRICT 1:1 SUBJECT LOCK: Enhance ONLY what actually exists inside Image 1 ("{primary_furn_file}"). '
+            "NEVER invent, add, or substitute furniture frames, wooden legs, joinery, cushions, or props that are not visible in Image 1.\n"
             f"{mat_ais}\n"
             f"- GEOMETRY LOCK: {profile['geometry_rule']}{dim_ais}{mirror_ais}{notes_ais}\n"
             f"- BACKGROUND: {bg_line}\n\n"
-            f"Exclude: blurry, pixelated, jpeg artifacts, plastic smoothing, color shift, hue change, redesigned silhouette, CGI look, text, watermark{profile['neg_add']}."
+            f"Exclude: blurry, pixelated, jpeg artifacts, plastic smoothing, color shift, hue change, redesigned silhouette, invented furniture parts, CGI look, text, watermark{profile['neg_add']}."
         )
 
         prompt_dal = (
-            f'8K Ultra-HD photographic remaster of the exact {furn_item} (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}").\n'
+            f'8K Ultra-HD 1:1 photographic remaster of the exact {furn_item} (\'{furniture_name}\') taken from Image 1 ("{primary_furn_file}").\n'
             f"{slots['dal_photo_map']}\n"
-            "Remove all blur, pixelation, and compression artifacts while preserving 100% identical color, warmth, wood grain, fabric weave, and geometry.\n"
+            "Enhance ONLY what actually exists inside Image 1 — NEVER invent new furniture frames, legs, joinery, or objects. "
+            "Remove all blur, pixelation, and compression artifacts while preserving 100% identical color, warmth, surface micro-texture, and geometry.\n"
             f"Materials: {mat_dal}\n"
             f"Geometry: {profile['geometry_rule']} {profile['dimensions_rule']}\n"
             f"Environment: {bg_line}\n"
             f"{'User directives: ' + user_notes_clean if user_notes_clean else ''}\n"
-            "Avoid: blur, compression noise, color shift, plastic skin/wood, redesigned shape, text, watermark."
+            "Avoid: blur, compression noise, color shift, plastic smoothing, redesigned shape, invented furniture parts, text, watermark."
         )
 
         prompt_mj = (
@@ -2361,11 +2566,32 @@ class AIPromptServiceV7:
             midjourney = it.get("midjourney_v6", "")
 
         elif mode == "hd":
+            explicit_furn_hd = any(
+                w in f"{tipo_mueble or ''} {user_notes_clean}".lower()
+                for w in self._FURNITURE_KEYWORDS
+            )
+            explicit_swatch_hd = any(
+                w in f"{tipo_mueble or ''} {furniture_name or ''} {user_notes_clean}".lower()
+                for w in self._SWATCH_KEYWORDS
+            )
+            ai_swatch_flag = bool(ma.get("is_material_swatch")) or any(
+                t in f"{ma.get('furniture_item', '')} {ma.get('geometric_structure', '')}".lower()
+                for t in (
+                    "material swatch",
+                    "fabric swatch",
+                    "texture swatch",
+                    "wood sample",
+                    "flat full-bleed 2d",
+                    "zero 3d furniture",
+                )
+            )
+            is_hd_swatch = (not explicit_furn_hd) and (explicit_swatch_hd or ai_swatch_flag)
             it = self._build_hd_item(
                 furn_item, furniture_name, profile, geom_struct, existing_mats,
                 wa, fa, has_wood, has_fabric, w_label, f_label,
                 user_notes_clean, white_bg_enabled, classic_numbering,
                 furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
+                is_material_swatch=is_hd_swatch,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")

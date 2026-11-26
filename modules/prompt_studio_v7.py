@@ -648,6 +648,14 @@ def build_ordered_photo_thumbs_v7(
             thumbs.append((resolve_copied_photo_filename(vn, f"vista_{i_v}.png"), vb, f"Image 2 · Vista {i_v}"))
         return thumbs
 
+    if mode == "hd" and not m_bytes:
+        if fabric_bytes:
+            thumbs.append((resolve_copied_photo_filename(fabric_name, "tela.png"), fabric_bytes, "Image 1 · Tela"))
+            return thumbs
+        if wood_bytes:
+            thumbs.append((resolve_copied_photo_filename(wood_name, "madera.png"), wood_bytes, "Image 1 · Madera"))
+            return thumbs
+
     # Modos estándar: catalogo, vista_suelta, entorno, plano, extraer, hd, y botón 3/4 Derecha
     # Orden exacto del prompt: Image 1..N Mueble -> Madera -> Tela
     slot = 1
@@ -1658,6 +1666,32 @@ div[data-baseweb="popover"] > div {
         # ------------------------------------------------------------------ BOTÓN 1: GENERAR MODO SELECCIONADO
         if go:
             err = None
+            eff_m_bytes = m_bytes
+            eff_m_names = m_names
+            eff_wood_bytes = wood_bytes
+            eff_wood_name = wood_name
+            eff_fabric_bytes = fabric_bytes
+            eff_fabric_name = fabric_name
+            hd_swatch_hint = ""
+
+            if mode == "hd" and not eff_m_bytes and (fabric_bytes or wood_bytes):
+                if fabric_bytes:
+                    eff_m_bytes = [fabric_bytes]
+                    eff_m_names = [fabric_name or "tela.png"]
+                    eff_fabric_bytes = None
+                    eff_fabric_name = ""
+                    eff_wood_bytes = None
+                    eff_wood_name = ""
+                    hd_swatch_hint = "muestra de tela / swatch textil plano"
+                elif wood_bytes:
+                    eff_m_bytes = [wood_bytes]
+                    eff_m_names = [wood_name or "madera.png"]
+                    eff_wood_bytes = None
+                    eff_wood_name = ""
+                    eff_fabric_bytes = None
+                    eff_fabric_name = ""
+                    hd_swatch_hint = "muestra de madera / wood sample plano"
+
             if mode == "vistas_tela":
                 if not batch_views_files:
                     err = "⚠️ Sube las vistas."
@@ -1667,8 +1701,8 @@ div[data-baseweb="popover"] > div {
                 if not m_bytes or not batch_views_files:
                     err = "⚠️ Sube color base y vistas."
             else:
-                if not m_bytes:
-                    err = "⚠️ Elige o sube la foto del mueble."
+                if not eff_m_bytes:
+                    err = "⚠️ Elige o sube la foto a mejorar." if mode == "hd" else "⚠️ Elige o sube la foto del mueble."
                 elif mode == "material" and material_mode in ("wood_only", "dual") and not wood_bytes:
                     err = "⚠️ Selecciona madera."
                 elif mode == "material" and material_mode in ("fabric_only", "dual") and not fabric_bytes:
@@ -1681,10 +1715,10 @@ div[data-baseweb="popover"] > div {
                 try:
                     copied_furn_files = [
                         resolve_copied_photo_filename(fn, f"mueble_{i + 1}.png")
-                        for i, fn in enumerate(m_names)
+                        for i, fn in enumerate(eff_m_names)
                     ]
-                    copied_wood_file = resolve_copied_photo_filename(wood_name, "madera.png") if wood_bytes else ""
-                    copied_fabric_file = resolve_copied_photo_filename(fabric_name, "tela.png") if fabric_bytes else ""
+                    copied_wood_file = resolve_copied_photo_filename(eff_wood_name, "madera.png") if eff_wood_bytes else ""
+                    copied_fabric_file = resolve_copied_photo_filename(eff_fabric_name, "tela.png") if eff_fabric_bytes else ""
                     copied_batch_views = [
                         (resolve_copied_photo_filename(vn, f"vista_{i + 1}.png"), vb)
                         for i, (vn, vb) in enumerate(batch_views_files)
@@ -1695,24 +1729,27 @@ div[data-baseweb="popover"] > div {
                         else (copied_batch_views[0][0] if copied_batch_views else "")
                     )
                     name = _extract_exact_photo_stem(first_photo_name, fallback=sku_code or "Mueble")
+                    eff_tipo = tipo or hd_swatch_hint
                     notas_ia = "\n".join(
                         p for p in [
-                            f"Tipo de mueble: {tipo}" if tipo else "",
+                            f"Tipo de mueble: {eff_tipo}" if eff_tipo else "",
                             f"Medidas exactas: {medidas_final}" if medidas_final else "",
                             notas.strip(),
                         ] if p
                     )
                     skip_f = mode in ("vistas_tela", "clonar_color")
                     f_ana, w_ana, t_ana = ai_prompt_service_v7.analyze_all_parallel(
-                        furniture_bytes=m_bytes,
-                        wood_bytes=wood_bytes,
-                        wood_name=copied_wood_file or wood_name,
-                        fabric_bytes=fabric_bytes,
-                        fabric_name=copied_fabric_file or fabric_name,
+                        furniture_bytes=eff_m_bytes,
+                        wood_bytes=eff_wood_bytes,
+                        wood_name=copied_wood_file or eff_wood_name,
+                        fabric_bytes=eff_fabric_bytes,
+                        fabric_name=copied_fabric_file or eff_fabric_name,
                         notas_ia=notas_ia,
                         skip_furniture=skip_f,
                     )
-                    batch_ref = fabric_bytes if mode == "vistas_tela" else (m_bytes[0] if mode == "clonar_color" else None)
+                    if hd_swatch_hint:
+                        f_ana["is_material_swatch"] = True
+                    batch_ref = fabric_bytes if mode == "vistas_tela" else (eff_m_bytes[0] if mode == "clonar_color" else None)
                     batch_ref_fname = (
                         copied_fabric_file
                         if mode == "vistas_tela"
@@ -1726,14 +1763,14 @@ div[data-baseweb="popover"] > div {
                         wood_analysis=w_ana,
                         fabric_analysis=t_ana,
                         notas_usuario=notas.strip(),
-                        tipo_mueble=tipo,
+                        tipo_mueble=eff_tipo,
                         medidas_texto=medidas_final,
                         lugar_casa=lugar_casa,
                         vista_id=vista_id,
                         material_mode=material_mode,
-                        wood_label=wood_name,
-                        fabric_label=fabric_name,
-                        white_bg_enabled=True,
+                        wood_label=eff_wood_name,
+                        fabric_label=eff_fabric_name,
+                        white_bg_enabled=(mode != "hd"),
                         classic_numbering=False,
                         batch_ref_bytes=batch_ref,
                         batch_views=copied_batch_views,
@@ -1745,12 +1782,12 @@ div[data-baseweb="popover"] > div {
 
                     ref_imgs = [
                         (fn, prepare_exact_copy_image_bytes(raw)[0])
-                        for fn, raw in zip(copied_furn_files, m_bytes)
+                        for fn, raw in zip(copied_furn_files, eff_m_bytes)
                     ]
-                    if wood_bytes:
-                        ref_imgs.append((copied_wood_file, prepare_exact_copy_image_bytes(wood_bytes)[0]))
-                    if fabric_bytes:
-                        ref_imgs.append((copied_fabric_file, prepare_exact_copy_image_bytes(fabric_bytes)[0]))
+                    if eff_wood_bytes:
+                        ref_imgs.append((copied_wood_file, prepare_exact_copy_image_bytes(eff_wood_bytes)[0]))
+                    if eff_fabric_bytes:
+                        ref_imgs.append((copied_fabric_file, prepare_exact_copy_image_bytes(eff_fabric_bytes)[0]))
                     for vn, vb in copied_batch_views:
                         ref_imgs.append((vn, prepare_exact_copy_image_bytes(vb)[0]))
 
