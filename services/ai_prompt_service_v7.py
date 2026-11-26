@@ -28,6 +28,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageOps
 
 try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
+try:
     from pydantic import BaseModel, Field
 except ImportError:
     class BaseModel:  # type: ignore[no-redef]
@@ -212,10 +218,10 @@ class AIPromptServiceV7:
         if "LEAKED" in up:
             return (
                 "Tu GEMINI_API_KEY actual fue bloqueada por Google porque se detectó filtrada públicamente (Error 403). "
-                "Genera una llave nueva en Google AI Studio y pégala en el botón '🔑 API Key' del encabezado (o en Render > Environment)."
+                "Genera una llave nueva en Google AI Studio y configúrala en la variable de entorno GEMINI_API_KEY (Render > Environment o .env)."
             )
         if "API_KEY_INVALID" in up or "API KEY NOT VALID" in up or "UNAUTHENTICATED" in up or "401" in up:
-            return "La GEMINI_API_KEY no es válida. Verifica la clave en '🔑 API Key'."
+            return "La GEMINI_API_KEY no es válida. Verifica la variable de entorno GEMINI_API_KEY en Render > Environment o en tu archivo .env."
         if "RESOURCE_EXHAUSTED" in up or "429" in up or "QUOTA" in up:
             return "Límite de cuota alcanzado en Gemini API (429). Espera unos segundos o usa una cuenta con facturación activa para generación masiva."
         return f"Aviso de Gemini API: {txt[:220]}"
@@ -267,20 +273,38 @@ class AIPromptServiceV7:
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 512) -> Image.Image:
         with Image.open(io.BytesIO(img_bytes)) as src:
-            img = ImageOps.exif_transpose(src)
+            fmt = (src.format or "").upper()
+            orientation = 1
+            try:
+                exif = src.getexif()
+                if exif:
+                    orientation = int(exif.get(274, 1) or 1)
+            except Exception:
+                orientation = 1
+            if fmt in ("JPEG", "JPG") and max(src.size) > max_dim:
+                try:
+                    src.draft("RGB", (max_dim * 2, max_dim * 2))
+                except Exception:
+                    pass
+            img = src
+            if max(img.size) > max_dim * 2:
+                img = img.reduce(max(2, max(img.size) // (max_dim * 2)))
+            if max(img.size) > max_dim:
+                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            if orientation not in (None, 1):
+                try:
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass
             if img.mode in ("RGBA", "LA", "P"):
-                bg = Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                alpha = img.split()[-1] if "A" in img.getbands() else None
-                bg.paste(img, mask=alpha)
+                rgba = img.convert("RGBA")
+                bg = Image.new("RGB", rgba.size, (255, 255, 255))
+                bg.paste(rgba, mask=rgba.split()[-1])
                 img = bg
             elif img.mode != "RGB":
                 img = img.convert("RGB")
-            if max(img.size) > max_dim:
-                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=78, optimize=True)
+            img.save(buf, format="JPEG", quality=78)
         buf.seek(0)
         with Image.open(buf) as compressed:
             compressed.load()

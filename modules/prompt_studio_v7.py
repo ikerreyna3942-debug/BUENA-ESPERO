@@ -12,6 +12,7 @@ from modules.sku_banner import render_sku_autofill_bar
 from modules.ui_helpers import (
     load_drive_file_cached,
     make_thumbnail_bytes,
+    prepare_exact_copy_image_bytes,
     render_copy_button,
     render_loaded_photos_strip,
     resolve_copied_photo_filename,
@@ -188,7 +189,7 @@ def _merge_telas_lists(*lists: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return merged
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=60, max_entries=4, show_spinner=False)
 def cargar_muebles_v7(folder_key: str = "ALL", refresh_tick: int = 0) -> List[Dict[str, str]]:
     """Carga muebles de las carpetas configuradas (RENDER, Cotización, SM S Mueblería)."""
     _ = refresh_tick
@@ -225,7 +226,7 @@ def cargar_muebles_v7(folder_key: str = "ALL", refresh_tick: int = 0) -> List[Di
     return merged
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, max_entries=2, show_spinner=False)
 def cargar_maderas_v7(include_drive: bool = True, refresh_tick: int = 0) -> List[Dict[str, str]]:
     _ = refresh_tick
     app_dir = Path(__file__).resolve().parent.parent
@@ -241,7 +242,7 @@ def cargar_maderas_v7(include_drive: bool = True, refresh_tick: int = 0) -> List
     return local_maderas + [m for m in drive_maderas if m["name"].strip().upper() not in seen]
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, max_entries=2, show_spinner=False)
 def cargar_telas_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
     _ = refresh_tick
     try:
@@ -261,7 +262,7 @@ def cargar_telas_v7(refresh_tick: int = 0) -> List[Dict[str, str]]:
     return []
 
 
-@st.cache_data(ttl=1800, show_spinner="📂 Cargando catálogo de fotos...")
+@st.cache_data(ttl=120, max_entries=2, show_spinner="📂 Cargando catálogo de fotos...")
 def cargar_todo_catalogo_v7(
     refresh_tick: int = 0,
 ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
@@ -291,7 +292,7 @@ def cargar_todo_catalogo_v7(
                 folder_map,
                 recursive=True,
                 max_depth=4,
-                ttl=1800,
+                ttl=120,
             )
     except Exception:
         drive_batches = {}
@@ -317,6 +318,19 @@ def cargar_todo_catalogo_v7(
         m for m in drive_batches.get("MADERAS", []) if m["name"].strip().upper() not in seen_wood
     ]
     return all_muebles, all_telas, all_maderas
+
+
+def invalidate_v7_catalog_caches() -> None:
+    """Limpia los cachés del catálogo V7 para que fotos recién subidas desde cualquier dispositivo aparezcan al instante."""
+    for fn in (cargar_todo_catalogo_v7, cargar_muebles_v7, cargar_telas_v7, cargar_maderas_v7):
+        try:
+            fn.clear()
+        except Exception:
+            pass
+    try:
+        _search_drive_live_cached.clear()
+    except Exception:
+        pass
 
 
 def _read_files(files: Any) -> Tuple[List[bytes], List[str]]:
@@ -661,10 +675,10 @@ def _render_mini_thumbs(thumbs: List[Tuple[str, bytes, str]], key_prefix: str = 
 
 
 def _load_drive_thumb_cached(file_id: str, thumbnail_link: str = "") -> Optional[bytes]:
-    """Descarga miniatura autenticada (funciona incluso si el archivo es privado) sin cachear None."""
+    """Descarga miniatura ligera autenticada (nunca descarga archivos crudos pesados en búsquedas)."""
     if not file_id:
         return None
-    return sheets_service.get_drive_thumbnail_bytes(file_id, thumbnail_link)
+    return sheets_service.get_drive_thumbnail_bytes(file_id, thumbnail_link, allow_full_fallback=False)
 
 
 def _get_search_preview_src(
@@ -710,7 +724,7 @@ def _preview_catalog_photo_cb(ck: int, item: Dict[str, str]) -> None:
     st.session_state[f"v7_preview_item_{ck}"] = dict(item)
 
 
-@st.cache_data(ttl=600, max_entries=64, show_spinner=False)
+@st.cache_data(ttl=600, max_entries=32, show_spinner=False)
 def _search_drive_live_cached(query_str: str) -> List[Dict[str, str]]:
     hits: List[Dict[str, str]] = []
     seen = set()
@@ -826,7 +840,14 @@ def _render_floating_photo_menu(
                 label_visibility="collapsed",
             )
 
+        q_clean = q_text.strip()
+        explicit_prev = st.session_state.get(f"v7_preview_item_{ck}")
+        has_explicit_prev = isinstance(explicit_prev, dict) and bool(explicit_prev.get("name"))
+
+        # Evitar copiar/ordenar miles de entradas en cada rerun cuando el usuario no ha buscado nada
         pool: List[Dict[str, str]] = []
+        total_in_cat = 0
+        idle_cap = 18 if not q_clean else 0
         if cat_filter in ("📁 Todas", "🛋️ Muebles", "🛋️ RENDER", "💰 Cotización", "🏪 SM S Mueblería"):
             for m in all_muebles:
                 src = m.get("source") or "RENDER"
@@ -836,6 +857,10 @@ def _render_floating_photo_menu(
                     continue
                 if cat_filter == "🏪 SM S Mueblería" and src != "SM S Mueblería":
                     continue
+                total_in_cat += 1
+                is_act = bool(active_names_upper and (m.get("name", "").strip().upper() in active_names_upper))
+                if idle_cap and len(pool) >= idle_cap and not is_act:
+                    continue
                 item_m = dict(m)
                 item_m["kind"] = "mueble"
                 item_m["source"] = src
@@ -843,6 +868,10 @@ def _render_floating_photo_menu(
                 pool.append(item_m)
         if cat_filter in ("📁 Todas", "🧵 Telas"):
             for t in all_telas:
+                total_in_cat += 1
+                is_act = bool(active_names_upper and (t.get("name", "").strip().upper() in active_names_upper))
+                if idle_cap and len(pool) >= idle_cap and not is_act:
+                    continue
                 item_t = dict(t)
                 item_t["kind"] = "fabric"
                 item_t["source"] = "Telas"
@@ -850,16 +879,20 @@ def _render_floating_photo_menu(
                 pool.append(item_t)
         if cat_filter in ("📁 Todas", "🪵 Maderas"):
             for w in all_maderas:
+                total_in_cat += 1
+                is_act = bool(active_names_upper and (w.get("name", "").strip().upper() in active_names_upper))
+                if idle_cap and len(pool) >= idle_cap and not is_act:
+                    continue
                 item_w = dict(w)
                 item_w["kind"] = "wood"
                 item_w["source"] = "Maderas"
                 item_w["badge"] = "🪵 Madera"
                 pool.append(item_w)
 
-        matches = filter_catalog_photos_by_name(pool, q_text, active_names_upper)
+        matches = filter_catalog_photos_by_name(pool, q_clean, active_names_upper)
 
-        if q_text.strip() and len(q_text.strip()) >= 3 and not matches:
-            for lh in _search_drive_live_cached(q_text.strip()):
+        if q_clean and len(q_clean) >= 3 and not matches:
+            for lh in _search_drive_live_cached(q_clean):
                 clean_nm = os.path.splitext(lh.get("name", ""))[0].strip() or lh.get("name", "Foto")
                 src_lh = lh.get("source") or "Drive"
                 matches.append({
@@ -873,23 +906,24 @@ def _render_floating_photo_menu(
                 })
 
         # 3. VISUALIZADOR DE FOTO (+50% MÁS GRANDE: 198×198 px)
-        explicit_prev = st.session_state.get(f"v7_preview_item_{ck}")
+        # Solo descarga miniatura por red cuando el usuario busca por nombre o pulsa 👁️ (nunca al seleccionar 1 foto con el popover cerrado)
         preview_target: Optional[Dict[str, str]] = None
-        if q_text.strip() and matches:
-            if isinstance(explicit_prev, dict) and any(
+        allow_prev_network = bool(q_clean or has_explicit_prev)
+        if q_clean and matches:
+            if has_explicit_prev and any(
                 x.get("name") == explicit_prev.get("name") and x.get("source") == explicit_prev.get("source")
                 for x in matches
             ):
                 preview_target = explicit_prev
             else:
                 preview_target = matches[0]
-        elif isinstance(explicit_prev, dict) and explicit_prev.get("name"):
+        elif has_explicit_prev:
             preview_target = explicit_prev
         elif matches:
             preview_target = matches[0]
 
         if preview_target:
-            prev_src = _get_search_preview_src(preview_target, max_dim=480, allow_network=True)
+            prev_src = _get_search_preview_src(preview_target, max_dim=320, allow_network=allow_prev_network)
             p_name = preview_target.get("name", "Foto")
             p_badge = preview_target.get("badge", "📁 Foto")
             p_kind = preview_target.get("kind", "mueble")
@@ -909,7 +943,7 @@ def _render_floating_photo_menu(
                 else (
                     '<div style="width:198px;height:198px;border-radius:9px;border:1px dashed #334155;'
                     'background:#0F172A;display:flex;align-items:center;justify-content:center;'
-                    'font-size:11px;color:#64748B;flex-shrink:0;">🖼️ Sin vista previa</div>'
+                    'font-size:11px;color:#64748B;flex-shrink:0;">🖼️ Pulsa 👁️ o busca por nombre</div>'
                 )
             )
             st.markdown(
@@ -932,30 +966,31 @@ def _render_floating_photo_menu(
                 args=(ck, p_kind, preview_target),
             )
 
-        # Pre-cargar miniaturas autenticadas en paralelo de los primeros 12 resultados visibles
-        if matches:
+        # Pre-cargar miniaturas ligeras (<= 6, 3 hilos, sin descarga de archivo completo) SOLO cuando el usuario busca activamente
+        if q_clean and matches:
             top_to_warm = [
-                m for m in matches[:12]
+                m for m in matches[:6]
                 if m.get("id")
                 and f"thumb:{m['id']}" not in sheets_service._drive_file_bytes_cache
                 and m["id"] not in sheets_service._drive_file_bytes_cache
             ]
             if top_to_warm:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(top_to_warm))) as ex:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(3, len(top_to_warm))) as ex:
                     for _ in ex.map(
                         lambda m: sheets_service.get_drive_thumbnail_bytes(
-                            m["id"], m.get("thumbnailLink", "")
+                            m["id"], m.get("thumbnailLink", ""), allow_full_fallback=False
                         ),
                         top_to_warm,
                     ):
                         pass
 
+        shown_count = len(matches) if q_clean else total_in_cat
         st.caption(
-            f"🔎 {len(matches)} resultado{'s' if len(matches) != 1 else ''}"
-            + (f" para «{q_text.strip()}»" if q_text.strip() else " disponibles (pulsa 👁️ para ver en grande o ➕ para cargar)")
+            f"🔎 {shown_count} resultado{'s' if shown_count != 1 else ''}"
+            + (f" para «{q_clean}»" if q_clean else " disponibles (escribe para filtrar o pulsa 👁️ / ➕)")
         )
 
-        max_rows = 35 if q_text.strip() else 24
+        max_rows = 20 if q_clean else 12
         with st.container(height=270, border=True):
             if not matches:
                 st.caption("No se encontraron fotos con ese nombre.")
@@ -968,8 +1003,7 @@ def _render_floating_photo_menu(
                         it_name.strip().upper() in active_names_upper
                         or (it.get("filename", "").strip().upper() in active_names_upper)
                     )
-                    allow_net_row = bool(idx_m < 12)
-                    row_thumb_src = _get_search_preview_src(it, max_dim=180, allow_network=allow_net_row)
+                    row_thumb_src = _get_search_preview_src(it, max_dim=140, allow_network=False)
                     thumb_html = (
                         f'<img class="selected-photo-thumb" src="{row_thumb_src}" '
                         f'style="width:66px;height:66px;object-fit:cover;border-radius:6px;border:1px solid #334155;'
@@ -1048,6 +1082,8 @@ def _clear_v7_form(ck: int) -> None:
     """Limpia fotos, SKU, notas y salida SIN cambiar el modo ni sub-opción activa."""
     clear_prefixes = (
         "v7_result",
+        "v7_last_photo_stem",
+        "v7_last_sku",
         "v7_notas_",
         "v7_sb_",
         "v7_up_",
@@ -1284,13 +1320,28 @@ div[data-baseweb="popover"] > div {
     z-index: 20;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
 }
+@media (pointer: coarse), (hover: none) and (max-width: 1024px) {
+    input,
+    textarea,
+    select,
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea,
+    div[data-baseweb="select"] input {
+        font-size: 16px !important;
+    }
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] > div {
+        min-height: 36px !important;
+        height: auto !important;
+    }
+}
 @media (max-width: 640px) {
     .stButton > button,
     .stDownloadButton > button,
     div[data-testid="stPopover"] button {
-        font-size: 11px !important;
+        font-size: 10.5px !important;
         min-height: 32px !important;
-        padding: 4px 6px !important;
+        padding: 4px 5px !important;
     }
     div[data-testid="stVerticalBlockBorderWrapper"] > div {
         padding: 5px 6px !important;
@@ -1405,13 +1456,9 @@ div[data-baseweb="popover"] > div {
                     key=f"v7_btn_refresh_{ck}",
                     help="Actualizar fotos de RENDER, Cotización y SM S Mueblería",
                 ):
-                    sheets_service._drive_folder_tree_cache.clear()
+                    sheets_service._invalidate_drive_catalog_caches()
                     sheets_service._resolved_folder_ids.clear()
-                    sheets_service._save_disk_catalog_cache()
-                    cargar_todo_catalogo_v7.clear()
-                    cargar_muebles_v7.clear()
-                    cargar_telas_v7.clear()
-                    cargar_maderas_v7.clear()
+                    invalidate_v7_catalog_caches()
                     st.session_state["v7_render_tick"] = tick + 1
                     st.rerun()
 
@@ -1584,11 +1631,14 @@ div[data-baseweb="popover"] > div {
                         fabric_filename=copied_fabric_file,
                     )
 
-                    ref_imgs = list(zip(copied_furn_files, target_furn_bytes))
+                    ref_imgs = [
+                        (fn, prepare_exact_copy_image_bytes(raw)[0])
+                        for fn, raw in zip(copied_furn_files, target_furn_bytes)
+                    ]
                     if wood_bytes:
-                        ref_imgs.append((copied_wood_file, wood_bytes))
+                        ref_imgs.append((copied_wood_file, prepare_exact_copy_image_bytes(wood_bytes)[0]))
                     if fabric_bytes:
-                        ref_imgs.append((copied_fabric_file, fabric_bytes))
+                        ref_imgs.append((copied_fabric_file, prepare_exact_copy_image_bytes(fabric_bytes)[0]))
 
                     gen_key = f"v7_gen_id_{ck}"
                     gen_id = int(st.session_state.get(gen_key, 0)) + 1
@@ -1693,13 +1743,16 @@ div[data-baseweb="popover"] > div {
                         batch_ref_filename=batch_ref_fname,
                     )
 
-                    ref_imgs = list(zip(copied_furn_files, m_bytes))
+                    ref_imgs = [
+                        (fn, prepare_exact_copy_image_bytes(raw)[0])
+                        for fn, raw in zip(copied_furn_files, m_bytes)
+                    ]
                     if wood_bytes:
-                        ref_imgs.append((copied_wood_file, wood_bytes))
+                        ref_imgs.append((copied_wood_file, prepare_exact_copy_image_bytes(wood_bytes)[0]))
                     if fabric_bytes:
-                        ref_imgs.append((copied_fabric_file, fabric_bytes))
+                        ref_imgs.append((copied_fabric_file, prepare_exact_copy_image_bytes(fabric_bytes)[0]))
                     for vn, vb in copied_batch_views:
-                        ref_imgs.append((vn, vb))
+                        ref_imgs.append((vn, prepare_exact_copy_image_bytes(vb)[0]))
 
                     gen_key = f"v7_gen_id_{ck}"
                     gen_id = int(st.session_state.get(gen_key, 0)) + 1
@@ -1762,9 +1815,11 @@ div[data-baseweb="popover"] > div {
                             key=f"v7_ext_jpg_{ck}_{gen_id}",
                         )
             with h_zip:
+                if "_zip_bytes_cache" not in res:
+                    res["_zip_bytes_cache"] = _build_zip(res, include_images=True)
                 st.download_button(
                     "📦 ZIP",
-                    data=_build_zip(res, include_images=True),
+                    data=res["_zip_bytes_cache"],
                     file_name=f"{mueble_slug}.zip",
                     mime="application/zip",
                     use_container_width=True,
@@ -1778,7 +1833,7 @@ div[data-baseweb="popover"] > div {
                     help="Ir directo a Alta de Fotos con este mismo nombre",
                 ):
                     st.session_state["v7_last_photo_stem"] = mueble_slug
-                    st.session_state["unified_active_app"] = "🚀 Alta de Fotos"
+                    st.session_state["_pending_active_app"] = "🚀 Alta de Fotos"
                     st.rerun()
 
             items = res.get("items", [])

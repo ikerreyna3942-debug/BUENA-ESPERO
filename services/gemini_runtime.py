@@ -2,12 +2,12 @@
 Runtime compartido y rápido para llamadas a Gemini Vision (V1–V7).
 
 Resuelve los bloqueos de 20–55 s en producción:
-  * Configura timeout explícito (>= 10 s, mínimo requerido por la API) y attempts=1
+  * Configura timeout explícito (8 s por modelo) y attempts=1
     para evitar los 5 reintentos con backoff exponencial del SDK ante HTTP 503.
   * Aplica ThinkingConfig(thinking_level="MINIMAL"/"LOW") en modelos Gemini 3.x Flash
     para que el análisis visual estructurado responda en ~1.5–3 s en lugar de agotar tiempo.
-  * Mantiene cooldown por modelo ante 503/504/429/404 y presupuesto máximo de tiempo total,
-    garantizando entrega rápida de prompts incluso si Gemini está saturado.
+  * Mantiene cooldown por modelo ante 503/504/429/404 y presupuesto máximo de tiempo total (16 s),
+    garantizando entrega rápida de prompts incluso si el primer modelo agota tiempo o está saturado.
   * Respeta GEMINI_API_KEY configurada en entorno (incluyendo llaves AIza de 39 caracteres)
     y solo recurre a la llave de respaldo si la principal falta o es rechazada (401/403).
 """
@@ -27,13 +27,15 @@ VISION_MODELS: List[Tuple[str, Optional[str]]] = [
     ("gemini-3.1-flash-lite", "MINIMAL"),
 ]
 
-# La API de Gemini exige un deadline mínimo de 10 s (10000 ms).
-DEFAULT_TIMEOUT_MS = 10_000
-MAX_WALL_SECONDS = 11.0
+# Presupuesto por modelo (8 s) y total (16 s) para permitir al menos un respaldo si el modelo #1 expira.
+DEFAULT_TIMEOUT_MS = 8_000
+MAX_WALL_SECONDS = 16.0
 TRANSIENT_COOLDOWN_SECONDS = 60.0
 NOT_FOUND_COOLDOWN_SECONDS = 600.0
 
 _LOCK = threading.Lock()
+_META_LOCK = threading.Lock()
+_THREAD_VISION_META = threading.local()
 _CLIENTS: Dict[Tuple[str, int], Any] = {}
 _PREFERRED_MODEL: Optional[str] = None
 _MODEL_COOLDOWN_UNTIL: Dict[str, float] = {}
@@ -45,19 +47,31 @@ _LAST_VISION_META: Dict[str, Any] = {
 }
 
 
+def _set_last_vision_meta(used_ai: bool, model: str, error: str) -> None:
+    snap = {"used_ai": bool(used_ai), "model": str(model or ""), "error": str(error or "")}
+    _THREAD_VISION_META.meta = snap
+    with _META_LOCK:
+        _LAST_VISION_META.update(snap)
+
+
 def reset_runtime_state() -> None:
     """Reinicia estado compartido (útil para pruebas unitarias)."""
     global _PREFERRED_MODEL
+    _THREAD_VISION_META.meta = None
     with _LOCK:
         _CLIENTS.clear()
         _PREFERRED_MODEL = None
         _MODEL_COOLDOWN_UNTIL.clear()
         _REJECTED_KEYS.clear()
+    with _META_LOCK:
         _LAST_VISION_META.update({"used_ai": False, "model": "", "error": ""})
 
 
 def get_last_vision_meta() -> Dict[str, Any]:
-    with _LOCK:
+    t_meta = getattr(_THREAD_VISION_META, "meta", None)
+    if isinstance(t_meta, dict):
+        return dict(t_meta)
+    with _META_LOCK:
         return dict(_LAST_VISION_META)
 
 
@@ -128,7 +142,7 @@ def build_genai_client(api_key: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> An
     key = (api_key or "").strip()
     if not key:
         return None
-    eff_timeout = max(10_000, int(timeout_ms))
+    eff_timeout = max(4_000, int(timeout_ms))
     cache_key = (key, eff_timeout)
     with _LOCK:
         cached = _CLIENTS.get(cache_key)
@@ -221,7 +235,7 @@ def call_gemini_fast(
     Ejecuta generate_content de forma acotada en tiempo:
       - Omite modelos en cooldown reciente (503/504/429/404).
       - Aplica ThinkingConfig adecuado a cada modelo Gemini 3.x Flash.
-      - Respeta un presupuesto total de tiempo (por defecto 14 s).
+      - Respeta un presupuesto total de tiempo (por defecto 16 s).
       - Si api_key falla por 401/403/LEAKED y hay fallback_key distinta, reintenta
         automáticamente con fallback_key y marca la llave rechazada en memoria.
     """
@@ -229,8 +243,7 @@ def call_gemini_fast(
     candidates = _ordered_candidates(now)
     if not candidates:
         err_msg = "Modelos Gemini temporalmente saturados (en espera de enfriamiento); usando respaldo rápido."
-        with _LOCK:
-            _LAST_VISION_META.update({"used_ai": False, "model": "", "error": err_msg})
+        _set_last_vision_meta(False, "", err_msg)
         raise RuntimeError(err_msg)
 
     started = time.monotonic()
@@ -257,7 +270,7 @@ def call_gemini_fast(
                 global _PREFERRED_MODEL
                 _PREFERRED_MODEL = model_name
                 _MODEL_COOLDOWN_UNTIL.pop(model_name, None)
-                _LAST_VISION_META.update({"used_ai": True, "model": model_name, "error": ""})
+            _set_last_vision_meta(True, model_name, "")
             return res
         except Exception as exc:
             # Si falló únicamente por thinking_level no soportado, reintentar sin thinking_config
@@ -271,7 +284,7 @@ def call_gemini_fast(
                     with _LOCK:
                         _PREFERRED_MODEL = model_name
                         _MODEL_COOLDOWN_UNTIL.pop(model_name, None)
-                        _LAST_VISION_META.update({"used_ai": True, "model": model_name, "error": ""})
+                    _set_last_vision_meta(True, model_name, "")
                     return res
                 except Exception as exc_retry:
                     exc = exc_retry
@@ -291,8 +304,7 @@ def call_gemini_fast(
                             max_wall_seconds=max(4.0, max_wall_seconds - (time.monotonic() - started)),
                             timeout_ms=timeout_ms,
                         )
-                with _LOCK:
-                    _LAST_VISION_META.update({"used_ai": False, "model": "", "error": str(exc)[:220]})
+                _set_last_vision_meta(False, "", str(exc)[:220])
                 raise
 
             if _is_not_found_error(exc):
@@ -308,6 +320,5 @@ def call_gemini_fast(
             last_err = exc
 
     err_out = last_err if last_err is not None else RuntimeError("Tiempo agotado conectando con Gemini API")
-    with _LOCK:
-        _LAST_VISION_META.update({"used_ai": False, "model": "", "error": str(err_out)[:220]})
+    _set_last_vision_meta(False, "", str(err_out)[:220])
     raise err_out
