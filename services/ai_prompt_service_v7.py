@@ -267,20 +267,38 @@ class AIPromptServiceV7:
 
     def _prepare_image(self, img_bytes: bytes, max_dim: int = 512) -> Image.Image:
         with Image.open(io.BytesIO(img_bytes)) as src:
-            img = ImageOps.exif_transpose(src)
+            fmt = (src.format or "").upper()
+            orientation = 1
+            try:
+                exif = src.getexif()
+                if exif:
+                    orientation = int(exif.get(274, 1) or 1)
+            except Exception:
+                orientation = 1
+            if fmt in ("JPEG", "JPG") and max(src.size) > max_dim:
+                try:
+                    src.draft("RGB", (max_dim * 2, max_dim * 2))
+                except Exception:
+                    pass
+            img = src
+            if max(img.size) > max_dim * 2:
+                img = img.reduce(max(2, max(img.size) // (max_dim * 2)))
+            if max(img.size) > max_dim:
+                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            if orientation not in (None, 1):
+                try:
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass
             if img.mode in ("RGBA", "LA", "P"):
-                bg = Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                alpha = img.split()[-1] if "A" in img.getbands() else None
-                bg.paste(img, mask=alpha)
+                rgba = img.convert("RGBA")
+                bg = Image.new("RGB", rgba.size, (255, 255, 255))
+                bg.paste(rgba, mask=rgba.split()[-1])
                 img = bg
             elif img.mode != "RGB":
                 img = img.convert("RGB")
-            if max(img.size) > max_dim:
-                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=78, optimize=True)
+            img.save(buf, format="JPEG", quality=78)
         buf.seek(0)
         with Image.open(buf) as compressed:
             compressed.load()

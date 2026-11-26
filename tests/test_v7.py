@@ -722,5 +722,82 @@ check(
     and "writeText" not in _strip_html,
 )
 
+# 19. Estabilidad Render 512 MB (evitar reinicio OOM al seleccionar 1 foto pesada)
+from services.sheets_service import _BoundedBytesLRU  # noqa: E402
+from modules.ui_helpers import make_thumbnail_bytes as _make_thumb  # noqa: E402
+
+_big_img = _Image.new("RGB", (4000, 3000), (220, 210, 195))
+for _bx in range(0, 4000, 40):
+    _big_img.putpixel((_bx, 1500), (80, 60, 45))
+_big_buf = _io.BytesIO()
+_big_img.save(_big_buf, format="PNG")
+_big_raw = _big_buf.getvalue()
+
+_cp_big_b, _cp_big_m = prepare_exact_copy_image_bytes(_big_raw)
+with _Image.open(_io.BytesIO(_cp_big_b)) as _cp_big_im:
+    _w_big, _h_big = _cp_big_im.size
+    check(
+        "prepare_exact_copy_image_bytes acota fotos gigantes a <=1600px conservando proporción y <1MB",
+        max(_w_big, _h_big) <= 1600
+        and abs((_w_big / _h_big) - (4000 / 3000)) < 0.02
+        and len(_cp_big_b) < 1_000_000
+        and _cp_big_m == "image/jpeg",
+    )
+
+_big_thumb = _make_thumb(_big_raw, max_dim=260)
+with _Image.open(_io.BytesIO(_big_thumb)) as _bt_im:
+    check(
+        "make_thumbnail_bytes reduce foto gigante a miniatura ligera <=260px",
+        max(_bt_im.size) <= 260 and len(_big_thumb) < 60_000,
+    )
+
+_lru = _BoundedBytesLRU(max_full_entries=3, max_full_bytes=1024, max_thumb_entries=3, max_thumb_bytes=512)
+_lru["f1"] = b"a" * 600
+_lru["f2"] = b"b" * 600
+_lru["thumb:t1"] = b"t" * 300
+_lru["thumb:t2"] = b"u" * 300
+check(
+    "_BoundedBytesLRU aplica tope estricto en bytes por pool sin borrar miniaturas al eviccionar fotos",
+    "f1" not in _lru
+    and "f2" in _lru
+    and "thumb:t1" not in _lru
+    and "thumb:t2" in _lru
+    and _lru.total_bytes() <= 1024 + 512,
+)
+
+_full_dl_called = []
+_orig_get_full = _ss.get_drive_file_bytes
+_orig_dl_thumb = _ss._download_thumbnail_url
+_orig_drive_t = _ss.drive_service
+_orig_ensure_t = _ss.ensure_connected
+try:
+    _ss.ensure_connected = lambda: True
+    _ss.drive_service = None
+    _ss._download_thumbnail_url = lambda url: None
+    _ss.get_drive_file_bytes = lambda fid, raise_on_error=False: (_full_dl_called.append(fid) or b"raw")
+    _th_none = _ss.get_drive_thumbnail_bytes("no_thumb_id_xyz", "https://expired.invalid/t=s220", allow_full_fallback=False)
+finally:
+    _ss.get_drive_file_bytes = _orig_get_full
+    _ss._download_thumbnail_url = _orig_dl_thumb
+    _ss.drive_service = _orig_drive_t
+    _ss.ensure_connected = _orig_ensure_t
+
+check(
+    "get_drive_thumbnail_bytes nunca descarga archivo completo pesado cuando allow_full_fallback=False",
+    _th_none is None and len(_full_dl_called) == 0,
+)
+
+_repo_root = Path(__file__).resolve().parent.parent
+_render_yaml = (_repo_root / "render.yaml").read_text(encoding="utf-8")
+check(
+    "configuración Render/Streamlit evita reinicios (fileWatcherType=none, sin compresión WS, MALLOC_ARENA_MAX, caché fuera del repo, popover ocioso sin red)",
+    'fileWatcherType = "none"' in _cfg_toml
+    and "enableWebsocketCompression = false" in _cfg_toml
+    and "MALLOC_ARENA_MAX" in _render_yaml
+    and _ss._catalog_disk_cache_path.resolve().parent != _repo_root.resolve()
+    and "if q_clean and matches:" in _v7_src
+    and "var pngBlobPromise =" not in _strip_html,
+)
+
 print(f"\n{'OK' if not FAILS else 'FALLARON: ' + ', '.join(FAILS)}")
 sys.exit(1 if FAILS else 0)

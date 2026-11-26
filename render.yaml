@@ -10,6 +10,12 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: STREAMLIT_SERVER_FILE_WATCHER_TYPE
+        value: none
       - key: GEMINI_API_KEY
         sync: false
       - key: GOOGLE_OAUTH_CREDENTIALS_JSON

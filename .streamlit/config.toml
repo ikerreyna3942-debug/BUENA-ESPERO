@@ -7,9 +7,10 @@ textColor="#FFFFFF"
 
 [server]
 headless = true
+fileWatcherType = "none"
 enableCORS = false
 enableXsrfProtection = false
-enableWebsocketCompression = true
+enableWebsocketCompression = false
 maxMessageSize = 50
 maxUploadSize = 50
 
