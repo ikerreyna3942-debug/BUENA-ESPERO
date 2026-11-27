@@ -298,14 +298,14 @@ def main():
         if active_app == "🤖 Prompts + IA":
             ver_raw = st.selectbox(
                 "Versión:",
-                ["🤖 V7", "V6", "V5", "V4", "V3", "V2", "V1"],
+                ["🤖 V8", "V7", "V6", "V5", "V4", "V3", "V2", "V1"],
                 index=0,
                 key="sidebar_version",
                 label_visibility="collapsed",
             )
-            version = "V7" if "V7" in ver_raw else ver_raw
+            version = "V8" if "V8" in ver_raw else ("V7" if "V7" in ver_raw else ver_raw)
         else:
-            version = "V7"
+            version = "V8"
             if st.button("← Prompts", use_container_width=True, key="btn_back_prompts"):
                 st.session_state["_pending_active_app"] = "🤖 Prompts + IA"
                 st.rerun()
@@ -328,7 +328,10 @@ def main():
         render_alta_fotos_hub()
         return
 
-    if version == "V7":
+    if version == "V8":
+        from modules.prompt_studio_v8 import render_prompt_studio_v8
+        render_prompt_studio_v8()
+    elif version == "V7":
         from modules.prompt_studio_v7 import render_prompt_studio_v7
         render_prompt_studio_v7()
     elif version == "V6":
