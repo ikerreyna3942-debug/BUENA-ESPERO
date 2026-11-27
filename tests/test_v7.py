@@ -1,4 +1,5 @@
 """Pruebas del Estudio V7. Ejecutar: python tests/test_v7.py"""
+import contextlib
 import sys
 from pathlib import Path
 
@@ -28,6 +29,19 @@ def build(mode: str, tipo: str, medidas: str, **kw):
         medidas_texto=medidas,
         **kw,
     )
+
+
+@contextlib.contextmanager
+def _offline_ai_clients(*services):
+    """Stub svc.get_client -> None in try/finally so offline prompt/analysis tests never invoke live Gemini APIs."""
+    originals = [(svc, svc.get_client) for svc in services]
+    for svc, _ in originals:
+        svc.get_client = lambda *a, **kw: None  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        for svc, orig in originals:
+            svc.get_client = orig  # type: ignore[method-assign]
 
 
 # 1. Dimensiones y categorías
@@ -83,24 +97,25 @@ rm_orig_bg = build("hd", "SILLA", "55 cm frente x 55 cm fondo x 85 cm alto", whi
 check("hd sin fondo blanco conserva escena original", "original background" in rm_orig_bg["items"][0]["google_ai_studio"])
 
 # 7. Modos lote (V4 integrados): vistas_tela y clonar_color en modo local
-r_vt = build(
-    "vistas_tela",
-    "SOFA",
-    "210 cm frente x 90 cm fondo x 80 cm alto",
-    fabric_label="LINO ARENA",
-    batch_ref_bytes=b"fake_fabric",
-    batch_views=[("frente.jpg", b"v1"), ("lateral.jpg", b"v2")],
-)
-check("vistas_tela lote 2 vistas", len(r_vt["items"]) == 2 and "LINO ARENA" in r_vt["items"][0]["google_ai_studio"])
+with _offline_ai_clients(v7):
+    r_vt = build(
+        "vistas_tela",
+        "SOFA",
+        "210 cm frente x 90 cm fondo x 80 cm alto",
+        fabric_label="LINO ARENA",
+        batch_ref_bytes=b"fake_fabric",
+        batch_views=[("frente.jpg", b"v1"), ("lateral.jpg", b"v2")],
+    )
+    check("vistas_tela lote 2 vistas", len(r_vt["items"]) == 2 and "LINO ARENA" in r_vt["items"][0]["google_ai_studio"])
 
-r_cc = build(
-    "clonar_color",
-    "MESA",
-    "120 cm frente x 60 cm fondo x 45 cm alto",
-    batch_ref_bytes=b"fake_ref",
-    batch_views=[("v1.jpg", b"v1"), ("v2.jpg", b"v2"), ("v3.jpg", b"v3")],
-)
-check("clonar_color lote 3 vistas", len(r_cc["items"]) == 3 and "COLOR & MATERIAL MASTER" in r_cc["items"][0]["google_ai_studio"])
+    r_cc = build(
+        "clonar_color",
+        "MESA",
+        "120 cm frente x 60 cm fondo x 45 cm alto",
+        batch_ref_bytes=b"fake_ref",
+        batch_views=[("v1.jpg", b"v1"), ("v2.jpg", b"v2"), ("v3.jpg", b"v3")],
+    )
+    check("clonar_color lote 3 vistas", len(r_cc["items"]) == 3 and "COLOR & MATERIAL MASTER" in r_cc["items"][0]["google_ai_studio"])
 
 # 8. Consistencia de catálogo de modos y mejoras solicitadas
 check("9 modos registrados", len(MODES) == 9)
@@ -179,20 +194,27 @@ with _Image.open(_io.BytesIO(_fmt_room["png"])) as _out_room:
 from pathlib import PureWindowsPath as _PWP  # noqa: E402
 from services.sheets_service import sheets_service as _ss  # noqa: E402
 
+class _StubSessionState(dict):
+    def __getattr__(self, name: str):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value) -> None:
+        self[name] = value
+
+    def __delattr__(self, name: str) -> None:
+        try:
+            del self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
 try:
     import streamlit as _st_check  # noqa: F401
 except ImportError:
     import types as _types
-
-    class _StubSessionState(dict):
-        def __getattr__(self, name):
-            try:
-                return self[name]
-            except KeyError as exc:
-                raise AttributeError(name) from exc
-
-        def __setattr__(self, name, value):
-            self[name] = value
 
     def _stub_cache_data(*args, **kwargs):
         def _dec(fn):
@@ -214,6 +236,27 @@ except ImportError:
     sys.modules["streamlit"] = _st_mod
     sys.modules["streamlit.components"] = _st_comp_pkg
     sys.modules["streamlit.components.v1"] = _st_comp_v1
+
+
+@contextlib.contextmanager
+def _isolated_streamlit_session(st_mod, on_rerun=None):
+    """Install a persistent dict-backed session_state & stubbed rerun, restoring originals in finally.
+
+    Required because real streamlit>=1.40 in bare mode (without `streamlit run`) returns a fresh
+    throwaway SessionState on every operation, discarding mutations made by _clear_*_form().
+    """
+    orig_state = getattr(st_mod, "session_state", None)
+    orig_rerun = getattr(st_mod, "rerun", None)
+    fake_state = _StubSessionState()
+    st_mod.session_state = fake_state
+    st_mod.rerun = on_rerun if on_rerun is not None else (lambda *a, **kw: None)
+    try:
+        yield fake_state
+    finally:
+        if orig_state is not None:
+            st_mod.session_state = orig_state
+        if orig_rerun is not None:
+            st_mod.rerun = orig_rerun
 
 from modules.prompt_studio_v7 import (  # noqa: E402
     FOLDER_MUEBLES_RENDER_DRIVE_ID,
@@ -352,20 +395,21 @@ check(
     "velvet" not in r_velvet["items"][0]["google_ai_studio"].split("Negative Prompt:")[-1].lower(),
 )
 
-r_vt_ana = build(
-    "vistas_tela",
-    "SOFA",
-    "210 cm frente x 90 cm fondo x 80 cm alto",
-    fabric_label="BOUCLE SAL",
-    fabric_analysis={
-        "name": "Heathered Bouclé",
-        "color_description": "arena con hilos taupe",
-        "texture_detail": "tightly twisted bouclé loops",
-        "light_interaction": "matte",
-    },
-    batch_ref_bytes=b"fake_fabric",
-    batch_views=[("frente.jpg", b"v1")],
-)
+with _offline_ai_clients(v7):
+    r_vt_ana = build(
+        "vistas_tela",
+        "SOFA",
+        "210 cm frente x 90 cm fondo x 80 cm alto",
+        fabric_label="BOUCLE SAL",
+        fabric_analysis={
+            "name": "Heathered Bouclé",
+            "color_description": "arena con hilos taupe",
+            "texture_detail": "tightly twisted bouclé loops",
+            "light_interaction": "matte",
+        },
+        batch_ref_bytes=b"fake_fabric",
+        batch_views=[("frente.jpg", b"v1")],
+    )
 check(
     "V1+V7 vistas_tela inyecta análisis de tela en lote",
     "tightly twisted bouclé loops" in r_vt_ana["items"][0]["google_ai_studio"]
@@ -735,15 +779,16 @@ check(
     and 'SILLA_VERONA_ORIG.jpg' in _r_34_names["items"][0]["attachment_guide"][0],
 )
 
-_r_clone_names = v7.build_prompts(
-    mode="clonar_color",
-    furniture_name="COMEDOR_BASE",
-    tipo_mueble="COMEDOR",
-    furniture_filenames=["COMEDOR_PAROTA_BASE.jpg"],
-    batch_ref_filename="COMEDOR_PAROTA_BASE.jpg",
-    batch_ref_bytes=b"fake_ref",
-    batch_views=[("COMEDOR_VISTA_LATERAL.jpg", b"v1")],
-)
+with _offline_ai_clients(v7):
+    _r_clone_names = v7.build_prompts(
+        mode="clonar_color",
+        furniture_name="COMEDOR_BASE",
+        tipo_mueble="COMEDOR",
+        furniture_filenames=["COMEDOR_PAROTA_BASE.jpg"],
+        batch_ref_filename="COMEDOR_PAROTA_BASE.jpg",
+        batch_ref_bytes=b"fake_ref",
+        batch_views=[("COMEDOR_VISTA_LATERAL.jpg", b"v1")],
+    )
 check(
     "clonar_color incluye nombre exacto de foto base y foto vista en prompt y guía",
     'FILE: "COMEDOR_PAROTA_BASE.jpg"' in _r_clone_names["items"][0]["google_ai_studio"]
@@ -1124,10 +1169,8 @@ check(
 
 # 20.6 Alta de Fotos: documentos + Buzón papelera + Limpiar sin reiniciar checkboxes
 _dest_trashed = build_dest_folder_options(buzon_active=False)
-_orig_rerun = _st_live.rerun
 _rerun_hits = []
-try:
-    _st_live.rerun = lambda *a, **kw: _rerun_hits.append(True)
+with _isolated_streamlit_session(_st_live, on_rerun=lambda *a, **kw: _rerun_hits.append(True)):
     _st_live.session_state["v7_last_photo_stem"] = "SILLON_VIEJO"
     _st_live.session_state["alta_2054"] = True
     _st_live.session_state["alta_reg"] = False
@@ -1166,8 +1209,6 @@ try:
         and _st_live.session_state.get("v7_keep_folder") == "🛋️ RENDER"
         and _st_live.session_state.get("clear_key_v7") == 3
     )
-finally:
-    _st_live.rerun = _orig_rerun
 
 check(
     "Alta de Fotos soporta documentos, marca Buzón en papelera con fallback RENDER y Limpiar conserva checkboxes",
@@ -1251,41 +1292,42 @@ check(
     and v7._is_flat_swatch_image(_furn_png) is False,
 )
 
-_ana_sw = v7.analyze_furniture_for_enhancement(_swatch_png, api_key="")
-_res_hd_sw = v7.build_prompts(
-    mode="hd",
-    furniture_name="Captura de pantalla 2026-11-26 104912",
-    furniture_analysis=_ana_sw,
-    white_bg_enabled=False,
-    furniture_filenames=["Captura de pantalla 2026-11-26 104912.png"],
-)
-_hd_sw_ais = _res_hd_sw["items"][0]["google_ai_studio"]
-check(
-    "HD 8K sobre muestra plana bloquea alucinación de mueble y conserva textura full-bleed sin fondo #FFFFFF",
-    _ana_sw.get("is_material_swatch") is True
-    and "MACRO SWATCH & TEXTURE SUPER-RESOLUTION" in _hd_sw_ais
-    and "FLAT 2D SWATCH ONLY" in _hd_sw_ais
-    and "Do NOT generate, invent, or render any chair, armchair, sofa" in _hd_sw_ais
-    and "contemporary architectural furniture piece" not in _hd_sw_ais
-    and "Pure seamless solid white catalog studio background (#FFFFFF)" not in _hd_sw_ais,
-)
+with _offline_ai_clients(v7):
+    _ana_sw = v7.analyze_furniture_for_enhancement(_swatch_png, api_key="")
+    _res_hd_sw = v7.build_prompts(
+        mode="hd",
+        furniture_name="Captura de pantalla 2026-11-26 104912",
+        furniture_analysis=_ana_sw,
+        white_bg_enabled=False,
+        furniture_filenames=["Captura de pantalla 2026-11-26 104912.png"],
+    )
+    _hd_sw_ais = _res_hd_sw["items"][0]["google_ai_studio"]
+    check(
+        "HD 8K sobre muestra plana bloquea alucinación de mueble y conserva textura full-bleed sin fondo #FFFFFF",
+        _ana_sw.get("is_material_swatch") is True
+        and "MACRO SWATCH & TEXTURE SUPER-RESOLUTION" in _hd_sw_ais
+        and "FLAT 2D SWATCH ONLY" in _hd_sw_ais
+        and "Do NOT generate, invent, or render any chair, armchair, sofa" in _hd_sw_ais
+        and "contemporary architectural furniture piece" not in _hd_sw_ais
+        and "Pure seamless solid white catalog studio background (#FFFFFF)" not in _hd_sw_ais,
+    )
 
-_ana_furn = v7.analyze_furniture_for_enhancement(_furn_png, notas_usuario="Tipo de mueble: Sillón", api_key="")
-_res_hd_furn = v7.build_prompts(
-    mode="hd",
-    furniture_name="Sillon Roble",
-    furniture_analysis=_ana_furn,
-    tipo_mueble="Sillón",
-    white_bg_enabled=False,
-    furniture_filenames=["Sillon Roble.png"],
-)
-_hd_furn_ais = _res_hd_furn["items"][0]["google_ai_studio"]
-check(
-    "HD 8K sobre mueble real aplica STRICT 1:1 SUBJECT LOCK y conserva encuadre/fondo original",
-    _ana_furn.get("is_material_swatch") is False
-    and "STRICT 1:1 SUBJECT LOCK" in _hd_furn_ais
-    and "original background" in _hd_furn_ais,
-)
+    _ana_furn = v7.analyze_furniture_for_enhancement(_furn_png, notas_usuario="Tipo de mueble: Sillón", api_key="")
+    _res_hd_furn = v7.build_prompts(
+        mode="hd",
+        furniture_name="Sillon Roble",
+        furniture_analysis=_ana_furn,
+        tipo_mueble="Sillón",
+        white_bg_enabled=False,
+        furniture_filenames=["Sillon Roble.png"],
+    )
+    _hd_furn_ais = _res_hd_furn["items"][0]["google_ai_studio"]
+    check(
+        "HD 8K sobre mueble real aplica STRICT 1:1 SUBJECT LOCK y conserva encuadre/fondo original",
+        _ana_furn.get("is_material_swatch") is False
+        and "STRICT 1:1 SUBJECT LOCK" in _hd_furn_ais
+        and "original background" in _hd_furn_ais,
+    )
 
 _thumbs_hd_tela = build_ordered_photo_thumbs_v7(
     mode="hd",
