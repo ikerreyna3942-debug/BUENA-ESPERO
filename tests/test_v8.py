@@ -1053,7 +1053,7 @@ class TestV8StudioUIAndZeroRegression(unittest.TestCase):
 
     def test_main_py_v8_version_options_normalization_and_routing(self) -> None:
         main_src = (REPO_ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn('["🤖 V8", "V7", "V6", "V5", "V4", "V3", "V2", "V1"]', main_src)
+        self.assertIn('["🤖 V8", "V7", "V6", "V1"]', main_src)
         self.assertIn('"V8" if "V8" in ver_raw', main_src)
         self.assertIn("from modules.prompt_studio_v8 import render_prompt_studio_v8", main_src)
         self.assertIn("render_prompt_studio_v8()", main_src)

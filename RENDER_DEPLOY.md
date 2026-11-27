@@ -15,7 +15,7 @@
 1. Sube los cambios a `main` (Render redeploya solo con `autoDeploy`).
 2. En Render, agrega las variables de la tabla.
 3. Espera el build (≈3 min). El health check es `/_stcore/health`.
-4. Abre la app: la versión por defecto es **V7 Studio Maestro** (con acceso integrado a **Alta de Fotos**). Las versiones V1–V6 siguen disponibles en el selector superior como respaldo.
+4. Abre la app: la versión por defecto es **🤖 V8** (con acceso integrado a **Alta de Fotos**). Las versiones **V7**, **V6** y **V1** siguen disponibles en el selector superior como respaldo.
 5. Prueba: escribe un SKU → debe llenar tipo y medidas → sube una foto → GENERAR.
 
 ## Plan gratuito
@@ -29,7 +29,11 @@ El servicio se duerme tras ~15 min sin uso y tarda ~30–60 s en despertar. Es n
 4. Opcional: hacer el repo privado.
 
 ## Pruebas locales
-```
+```bash
 python tests/test_unified.py
+python tests/test_v7.py
+python -m unittest tests/test_v8.py -v
+python -m unittest tests/test_gemini_contract.py -v
+python -m unittest tests/test_observability.py -v
 streamlit run main.py
 ```
