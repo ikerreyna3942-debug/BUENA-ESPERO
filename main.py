@@ -327,21 +327,28 @@ def main():
             unsafe_allow_html=True,
         )
 
+    from services.observability import set_run_context
+
     if active_app == "🚀 Alta de Fotos":
+        set_run_context("alta_fotos")
         from modules.alta_fotos_hub import render_alta_fotos_hub
         render_alta_fotos_hub()
         return
 
     if version == "V8":
+        set_run_context("studio_v8")
         from modules.prompt_studio_v8 import render_prompt_studio_v8
         render_prompt_studio_v8()
     elif version == "V7":
+        set_run_context("studio_v7")
         from modules.prompt_studio_v7 import render_prompt_studio_v7
         render_prompt_studio_v7()
     elif version == "V6":
+        set_run_context("studio_v6")
         from modules.prompt_studio_unified import render_prompt_studio_unified
         render_prompt_studio_unified()
     else:
+        set_run_context("studio_v1")
         from modules.prompt_studio_v1 import render_prompt_studio
         render_prompt_studio()
 

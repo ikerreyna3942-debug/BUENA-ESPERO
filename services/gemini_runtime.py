@@ -49,7 +49,18 @@ _LAST_VISION_META: Dict[str, Any] = {
 
 
 def _set_last_vision_meta(used_ai: bool, model: str, error: str) -> None:
-    snap = {"used_ai": bool(used_ai), "model": str(model or ""), "error": str(error or "")}
+    err_clean = ""
+    if error:
+        try:
+            from services.observability import safe_error_text
+
+            err_clean = safe_error_text(error, max_len=220)
+        except Exception:
+            try:
+                err_clean = str(error)[:220]
+            except Exception:
+                err_clean = "<error>"
+    snap = {"used_ai": bool(used_ai), "model": str(model or ""), "error": err_clean}
     _THREAD_VISION_META.meta = snap
     with _META_LOCK:
         _LAST_VISION_META.update(snap)
@@ -94,7 +105,10 @@ def mark_key_rejected(key: str) -> None:
 
 
 def is_auth_error(err: Exception) -> bool:
-    txt = str(err).upper()
+    try:
+        txt = str(err).upper()
+    except Exception:
+        return False
     return any(
         tok in txt
         for tok in (
@@ -110,17 +124,28 @@ def is_auth_error(err: Exception) -> bool:
 
 
 def _is_not_found_error(err: Exception) -> bool:
-    txt = str(err).upper()
+    try:
+        txt = str(err).upper()
+    except Exception:
+        return False
     return "404" in txt or "NOT_FOUND" in txt or "NO LONGER AVAILABLE" in txt
 
 
 def _is_thinking_arg_error(err: Exception) -> bool:
-    txt = str(err).upper()
+    try:
+        txt = str(err).upper()
+    except Exception:
+        return False
     return "THINKING" in txt and ("400" in txt or "INVALID_ARGUMENT" in txt or "NOT SUPPORTED" in txt)
 
 
 def _is_transient_error(err: Exception) -> bool:
-    txt = str(err).upper()
+    if isinstance(err, TimeoutError):
+        return True
+    try:
+        txt = str(err).upper()
+    except Exception:
+        return False
     return any(
         tok in txt
         for tok in (
@@ -240,11 +265,22 @@ def call_gemini_fast(
       - Si api_key falla por 401/403/LEAKED y hay fallback_key distinta, reintenta
         automáticamente con fallback_key y marca la llave rechazada en memoria.
     """
+    from services.observability import classify_error, log_event, observe_call, safe_error_text
+
     now = time.time()
     candidates = _ordered_candidates(now)
     if not candidates:
         err_msg = "Modelos Gemini temporalmente saturados (en espera de enfriamiento); usando respaldo rápido."
         _set_last_vision_meta(False, "", err_msg)
+        log_event(
+            "gemini.vision.cooldown_all_skipped",
+            service="gemini_runtime",
+            operation="call_gemini_fast",
+            level="warning",
+            status="cooldown_skip",
+            error_class="quota_429",
+            meta={"models_total": len(VISION_MODELS)},
+        )
         raise RuntimeError(err_msg)
 
     started = time.monotonic()
@@ -252,21 +288,51 @@ def call_gemini_fast(
     active_client = client
     active_key = (api_key or "").strip()
     fb_key = (fallback_key or "").strip()
+    attempt_num = 0
 
     for model_name, thinking_level in candidates:
         if (time.monotonic() - started) >= max_wall_seconds:
+            log_event(
+                "gemini.vision.wall_budget_exceeded",
+                service="gemini_runtime",
+                operation="call_gemini_fast",
+                level="warning",
+                status="degraded",
+                duration_ms=round((time.monotonic() - started) * 1000.0, 2),
+                error_class="timeout",
+                attempt=attempt_num,
+                meta={"max_wall_seconds": max_wall_seconds},
+            )
             break
         with _LOCK:
             if time.time() < _MODEL_COOLDOWN_UNTIL.get(model_name, 0.0):
+                log_event(
+                    "gemini.vision.model_cooldown_skip",
+                    service="gemini_runtime",
+                    operation="call_gemini_fast",
+                    level="warning",
+                    status="cooldown_skip",
+                    model=model_name,
+                    attempt=attempt_num,
+                )
                 continue
 
+        attempt_num += 1
         eff_config = _attach_thinking_config(config, thinking_level)
+        attempt_started = time.monotonic()
         try:
-            res = active_client.models.generate_content(
+            with observe_call(
+                "gemini_runtime",
+                "vision_generate_content",
                 model=model_name,
-                contents=contents,
-                config=eff_config,
-            )
+                attempt=attempt_num,
+                meta={"thinking_level": thinking_level or "default"},
+            ):
+                res = active_client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=eff_config,
+                )
             with _LOCK:
                 global _PREFERRED_MODEL
                 _PREFERRED_MODEL = model_name
@@ -276,12 +342,29 @@ def call_gemini_fast(
         except Exception as exc:
             # Si falló únicamente por thinking_level no soportado, reintentar sin thinking_config
             if thinking_level and _is_thinking_arg_error(exc) and (time.monotonic() - started) < max_wall_seconds:
+                log_event(
+                    "gemini.vision.thinking_retry",
+                    service="gemini_runtime",
+                    operation="call_gemini_fast",
+                    level="warning",
+                    status="retry",
+                    model=model_name,
+                    error_class=classify_error(exc),
+                    attempt=attempt_num,
+                )
                 try:
-                    res = active_client.models.generate_content(
+                    with observe_call(
+                        "gemini_runtime",
+                        "vision_generate_content",
                         model=model_name,
-                        contents=contents,
-                        config=config,
-                    )
+                        attempt=attempt_num,
+                        meta={"thinking_level": "disabled_retry"},
+                    ):
+                        res = active_client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=config,
+                        )
                     with _LOCK:
                         _PREFERRED_MODEL = model_name
                         _MODEL_COOLDOWN_UNTIL.pop(model_name, None)
@@ -290,10 +373,24 @@ def call_gemini_fast(
                 except Exception as exc_retry:
                     exc = exc_retry
 
+            err_class = classify_error(exc)
+            elapsed_ms = round((time.monotonic() - attempt_started) * 1000.0, 2)
+
             if is_auth_error(exc):
                 if active_key:
                     mark_key_rejected(active_key)
                 if fb_key and fb_key != active_key and not is_key_rejected(fb_key):
+                    log_event(
+                        "gemini.vision.auth_fallback",
+                        service="gemini_runtime",
+                        operation="call_gemini_fast",
+                        level="warning",
+                        status="fallback",
+                        duration_ms=elapsed_ms,
+                        model=model_name,
+                        error_class="auth_401_403",
+                        attempt=attempt_num,
+                    )
                     fb_client = build_genai_client(fb_key, timeout_ms=timeout_ms)
                     if fb_client is not None:
                         return call_gemini_fast(
@@ -305,7 +402,19 @@ def call_gemini_fast(
                             max_wall_seconds=max(4.0, max_wall_seconds - (time.monotonic() - started)),
                             timeout_ms=timeout_ms,
                         )
-                _set_last_vision_meta(False, "", str(exc)[:220])
+                log_event(
+                    "gemini.vision.auth_failed",
+                    service="gemini_runtime",
+                    operation="call_gemini_fast",
+                    level="error",
+                    status="error",
+                    duration_ms=elapsed_ms,
+                    model=model_name,
+                    error_class="auth_401_403",
+                    attempt=attempt_num,
+                    meta={"error": safe_error_text(exc, 220)},
+                )
+                _set_last_vision_meta(False, "", safe_error_text(exc, 220))
                 raise
 
             if _is_not_found_error(exc):
@@ -313,13 +422,48 @@ def call_gemini_fast(
                     _MODEL_COOLDOWN_UNTIL[model_name] = time.time() + NOT_FOUND_COOLDOWN_SECONDS
                     if _PREFERRED_MODEL == model_name:
                         _PREFERRED_MODEL = None
+                log_event(
+                    "gemini.vision.model_not_found_cooldown",
+                    service="gemini_runtime",
+                    operation="call_gemini_fast",
+                    level="warning",
+                    status="degraded",
+                    duration_ms=elapsed_ms,
+                    model=model_name,
+                    error_class="not_found_404",
+                    attempt=attempt_num,
+                    meta={"cooldown_s": NOT_FOUND_COOLDOWN_SECONDS},
+                )
             elif _is_transient_error(exc):
                 with _LOCK:
                     _MODEL_COOLDOWN_UNTIL[model_name] = time.time() + TRANSIENT_COOLDOWN_SECONDS
                     if _PREFERRED_MODEL == model_name:
                         _PREFERRED_MODEL = None
+                log_event(
+                    "gemini.vision.transient_cooldown",
+                    service="gemini_runtime",
+                    operation="call_gemini_fast",
+                    level="warning",
+                    status="degraded",
+                    duration_ms=elapsed_ms,
+                    model=model_name,
+                    error_class=err_class,
+                    attempt=attempt_num,
+                    meta={"cooldown_s": TRANSIENT_COOLDOWN_SECONDS},
+                )
             last_err = exc
 
     err_out = last_err if last_err is not None else RuntimeError("Tiempo agotado conectando con Gemini API")
-    _set_last_vision_meta(False, "", str(err_out)[:220])
+    log_event(
+        "gemini.vision.all_models_failed",
+        service="gemini_runtime",
+        operation="call_gemini_fast",
+        level="error",
+        status="error",
+        duration_ms=round((time.monotonic() - started) * 1000.0, 2),
+        error_class=classify_error(err_out),
+        attempt=attempt_num,
+        meta={"error": safe_error_text(err_out, 220)},
+    )
+    _set_last_vision_meta(False, "", safe_error_text(err_out, 220))
     raise err_out
