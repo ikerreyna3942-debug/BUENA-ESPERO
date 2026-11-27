@@ -7,8 +7,9 @@ Extiende las capacidades de V7 sin modificar ninguna línea de V1–V7:
   * Generación multimodal real: allow_flux_fallback=False por defecto y prioridad a modelos reales
     de imagen Gemini (gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview)
     con guardia de pureza de borde blanco #FFFFFF (5% exterior >= 95%).
-  * Análisis policromático V8 pre-calibrado +30%: ejecuta extract_clean_swatch_roi_v8 +
-    calibrate_fabric_lightness_v8(boost=0.30) + analyze_fabric_multitone_v8 antes de Vision.
+  * Arquitectura limpia de 2 fotos en modo Tela (Image 1 Mueble HD + Image 2 Lienzo Maestro de Escala
+    y Calibración CIELAB, sin 3.ª foto macro competidora; 3 fotos únicamente con Madera + Tela) con
+    soporte dinámico a directivas de claridad/escala en Notas del usuario sin contradicciones.
   * Paquete único sincronizado de referencias (build_v8_reference_pack): alinea exactamente
     Image 1..N entre prompts (AI Studio, ChatGPT, Midjourney), attachment_guide, tira 76x76 px y ZIP.
 """
@@ -16,30 +17,38 @@ Extiende las capacidades de V7 sin modificar ninguna línea de V1–V7:
 from __future__ import annotations
 
 import base64
+from collections import OrderedDict
 import concurrent.futures
+import hashlib
 import io
 import json
+import math
 import os
+import re
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from services.ai_prompt_service_v7 import (
     ALL_SINGLE_VIEWS,
     ANCHOR_VIEWS,
     CHECKLISTS,
     MODES,
-    ROOM_PRESETS,
+    ROOM_PRESETS as ROOM_PRESETS,
     VIEW_IDS,
     AIPromptServiceV7,
-    FurnitureAnalysisV7,
     MaterialAnalysisV7,
     _COMMON_CHECKS,
 )
 from services.fabric_composer_v8 import (
     V8ConditioningArtifacts,
+    V8UserFabricDirectives,
     _apply_ratio_preserving_rgb_ceiling,
+    _has_v8_specific_width_hint,
+    _infer_cutout_width_cm_from_bytes_v8,
+    _to_rgb_white_safe,
     analyze_fabric_multitone_v8,
     build_v8_conditioning_canvas,
     calibrate_fabric_lightness_v8,
@@ -50,8 +59,7 @@ from services.fabric_composer_v8 import (
     infer_furniture_width_cm_v8,
     make_toroidal_seamless_tile_v8,
     make_v8_canvas_filename,
-    make_v8_mosaic_filename,
-    make_v8_swatch_filename,
+    parse_v8_user_fabric_directives,
     resolve_v8_furniture_type_hint,
 )
 
@@ -69,6 +77,225 @@ DEFAULT_V8_IMAGE_MODELS: List[str] = [
     "gemini-nano-banana-2.1",
     "gemini-3-pro-image",
 ]
+
+_VT_CACHE_LOCK = threading.Lock()
+_VT_SWATCH_CACHE: "OrderedDict[str, Image.Image]" = OrderedDict()
+_VT_SWATCH_CACHE_MAX = 8
+_VT_VIEW_CACHE: "OrderedDict[str, Tuple[str, bytes]]" = OrderedDict()
+_VT_VIEW_CACHE_MAX = 16
+
+
+def _vt_bytes_sig(raw: Optional[bytes]) -> str:
+    if not raw:
+        return "empty"
+    h = hashlib.sha1()
+    n = len(raw)
+    h.update(n.to_bytes(8, "little", signed=False))
+    if n <= 65_536:
+        h.update(raw)
+    else:
+        h.update(raw[:24_576])
+        h.update(raw[n // 2 - 8_192 : n // 2 + 8_192])
+        h.update(raw[-24_576:])
+    return h.hexdigest()
+
+
+def clear_vistas_tela_v8_cache() -> None:
+    with _VT_CACHE_LOCK:
+        _VT_SWATCH_CACHE.clear()
+        _VT_VIEW_CACHE.clear()
+
+
+def _resolve_v8_fabric_params(
+    custom_notes: str = "",
+    boost: Optional[float] = None,
+    texture_scale_factor: Optional[float] = None,
+) -> Tuple[V8UserFabricDirectives, float, float]:
+    """Resuelve directivas de tela desde Notas respetando argumentos explícitos si fueron pasados."""
+    directives = parse_v8_user_fabric_directives(custom_notes)
+    eff_boost = float(boost) if boost is not None else float(directives.effective_boost)
+    eff_tsf = (
+        max(0.50, min(1.50, float(texture_scale_factor)))
+        if texture_scale_factor is not None
+        else float(directives.texture_scale_factor)
+    )
+    return directives, eff_boost, eff_tsf
+
+
+def _describe_v8_calibration_labels(
+    directives: Optional[V8UserFabricDirectives] = None,
+    eff_boost: Optional[float] = None,
+) -> Dict[str, str]:
+    """Genera etiquetas coherentes de calibración y escala sin hardcodear '+30%' cuando hay override."""
+    d = directives or V8UserFabricDirectives()
+    b_val = float(eff_boost) if eff_boost is not None else float(d.effective_boost)
+    b_pct = int(round(b_val * 100.0))
+
+    if d.lightness_mode == "lighter":
+        if d.lightness_user_pct:
+            pct = abs(int(d.lightness_user_pct))
+            cal_tag_en = f"user-requested +{pct}% lighter tone (V8 CIELAB boost +{b_pct}%)"
+            cal_tag_short = f"+{pct}% más claro"
+            cal_es_desc = f"+{pct}% más claro solicitado por usuario (CIELAB +{b_pct}%)"
+        else:
+            cal_tag_en = "user-requested lighter fabric tone (V8 CIELAB calibrated)"
+            cal_tag_short = "tono más claro"
+            cal_es_desc = "tono más claro solicitado por usuario"
+    elif d.lightness_mode == "darker":
+        if d.lightness_user_pct:
+            pct = int(d.lightness_user_pct)
+            cal_tag_en = f"user-requested {pct}% darker tone (V8 CIELAB {b_pct:+d}%)"
+            cal_tag_short = f"{pct}% más oscuro"
+            cal_es_desc = f"{pct}% más oscuro solicitado por usuario"
+        else:
+            cal_tag_en = "user-requested darker fabric tone (V8 CIELAB calibrated)"
+            cal_tag_short = "tono más oscuro"
+            cal_es_desc = "tono más oscuro solicitado por usuario"
+    elif d.lightness_mode == "original":
+        cal_tag_en = "exact original swatch lightness (0% artificial lightening)"
+        cal_tag_short = "tono original (0%)"
+        cal_es_desc = "tono original exacto sin aclarado (0%)"
+    elif d.lightness_mode == "softer_light":
+        cal_tag_en = "subtle +10% moderated lightness (user-requested softer brightening)"
+        cal_tag_short = "+10% suave"
+        cal_es_desc = "+10% claridad suave solicitada"
+    elif abs(b_val - 0.30) < 1e-4:
+        cal_tag_en = "+30% studio lightness calibration"
+        cal_tag_short = "+30% V8"
+        cal_es_desc = "+30% claridad de estudio"
+    elif abs(b_val) < 1e-6:
+        cal_tag_en = "exact original swatch lightness (0% artificial lightening)"
+        cal_tag_short = "tono original (0%)"
+        cal_es_desc = "tono original exacto sin aclarado (0%)"
+    else:
+        cal_tag_en = f"{b_pct:+d}% CIELAB studio lightness calibration"
+        cal_tag_short = f"{b_pct:+d}% V8"
+        cal_es_desc = f"{b_pct:+d}% claridad calibrada en CIELAB"
+
+    if d.scale_mode == "smaller":
+        pct_abs = abs(int(d.scale_user_pct)) if d.scale_user_pct else max(5, int(round((1.0 - d.texture_scale_factor) * 100.0)))
+        scale_short = f"textura -{pct_abs}%"
+        scale_pct_abs = str(pct_abs)
+    elif d.scale_mode == "larger":
+        pct_abs = abs(int(d.scale_user_pct)) if d.scale_user_pct else max(5, int(round((d.texture_scale_factor - 1.0) * 100.0)))
+        scale_short = f"textura +{pct_abs}%"
+        scale_pct_abs = str(pct_abs)
+    else:
+        scale_short = "escala 1:1"
+        scale_pct_abs = "0"
+
+    if d.lightness_overridden and d.scale_overridden:
+        header_tag = f"{cal_tag_short.upper()} · {scale_short.upper()}"
+    elif d.lightness_overridden:
+        header_tag = cal_tag_short.upper()
+    elif d.scale_overridden:
+        header_tag = f"{cal_tag_short} · {scale_short.upper()}"
+    else:
+        header_tag = cal_tag_short
+
+    return {
+        "cal_tag_en": cal_tag_en,
+        "cal_tag_short": cal_tag_short,
+        "cal_es_desc": cal_es_desc,
+        "scale_short": scale_short,
+        "scale_pct_abs": scale_pct_abs,
+        "header_tag": header_tag,
+    }
+
+
+def _sanitize_stale_v8_color_desc(
+    color_desc: str,
+    directives: Optional[V8UserFabricDirectives],
+    cal_lbls: Dict[str, str],
+) -> str:
+    """Evita fugas de '+30%' si el llamador pasó un fabric_analysis precalculado junto a Notas con override."""
+    desc = str(color_desc or "").strip()
+    if not desc or not directives or not directives.lightness_overridden:
+        return desc
+    desc = desc.replace("+30% claridad de estudio", cal_lbls["cal_es_desc"])
+    desc = re.sub(r"\+30%\s*V8", cal_lbls["cal_tag_short"], desc)
+    desc = re.sub(r"\+30%", cal_lbls["cal_tag_short"], desc)
+    return desc
+
+
+def _extract_v8_pack_total_tiles(precomputed_pack: Optional[List[Dict[str, Any]]]) -> Optional[int]:
+    if not precomputed_pack:
+        return None
+    for entry in precomputed_pack:
+        if isinstance(entry, dict) and entry.get("role") == "v8_scale_canvas" and entry.get("total_tiles"):
+            try:
+                tv = int(entry["total_tiles"])
+                if tv > 0:
+                    return tv
+            except Exception:
+                pass
+    return None
+
+
+def _format_v8_user_notes_block(
+    directives: V8UserFabricDirectives,
+    has_fabric: bool,
+    canvas_idx: Optional[int] = None,
+    canvas_file: str = "",
+    style: str = "ais",
+    mode_style: str = "bullet",
+) -> str:
+    """
+    Formatea las Notas del usuario sin contradicciones ni doble aplicación:
+      - Sin tela o sin override de tela: emite las Notas originales tal cual.
+      - Con tela + override: reconcilia explícitamente que el ajuste textil YA está renderizado en píxeles
+        en Image {canvas_idx} (DO NOT DOUBLE-APPLY), conservando activas las notas residuales no textiles.
+    """
+    raw = (directives.raw_notes or "").strip()
+    if not raw:
+        return ""
+
+    if not has_fabric or not directives.has_any_override:
+        if style == "dal":
+            return f" Mandatory user directives: {raw}."
+        if mode_style == "block":
+            return f"\n\nUSER SPECIAL DIRECTIVES: {raw}"
+        return f"\n- MANDATORY USER NOTES: {raw}"
+
+    cal_lbls = _describe_v8_calibration_labels(directives)
+    c_idx = canvas_idx or 2
+    canvas_ref = f'Image {c_idx} ("{canvas_file}")' if canvas_file else f"Image {c_idx}"
+
+    applied_parts: List[str] = []
+    if directives.lightness_overridden:
+        applied_parts.append(cal_lbls["cal_tag_short"])
+    if directives.scale_overridden:
+        applied_parts.append(cal_lbls["scale_short"])
+    applied_desc = " + ".join(applied_parts) or cal_lbls["header_tag"]
+
+    matched_phrases = "; ".join(
+        p for p in (directives.matched_lightness_phrase, directives.matched_scale_phrase) if p
+    ) or raw
+    residual = (directives.residual_non_fabric_notes or "").strip()
+
+    if style == "dal":
+        recon_dal = (
+            f' User fabric calibration ("{matched_phrases}" -> {applied_desc}) is ALREADY pixel-calibrated in '
+            f"{canvas_ref} — match {canvas_ref} directly without double-applying or reverting."
+        )
+        if residual:
+            return f" Mandatory user directives: {residual}.{recon_dal}"
+        return recon_dal
+
+    prefix = "\n\n" if mode_style == "block" else "\n- "
+    if residual:
+        return (
+            f"{prefix}MANDATORY USER DIRECTIVES (APPLY TO SCENE/FURNITURE): {residual}"
+            f"{prefix}USER FABRIC CALIBRATION RECONCILIATION (ALREADY BAKED INTO {canvas_ref} — DO NOT DOUBLE-APPLY): "
+            f'The fabric adjustment ("{matched_phrases}" -> {applied_desc}) is ALREADY pixel-rendered in {canvas_ref}. '
+            f"Match {canvas_ref} faithfully — do NOT double-apply or revert it."
+        )
+    return (
+        f"{prefix}USER FABRIC CALIBRATION RECONCILIATION (ALREADY BAKED INTO {canvas_ref} — DO NOT DOUBLE-APPLY): "
+        f'The user requested: "{raw}". The requested fabric calibration ({applied_desc}) is ALREADY pixel-rendered in '
+        f"{canvas_ref}. Match {canvas_ref} faithfully — do NOT lighten/darken or shrink/enlarge a second time and "
+        "do NOT revert to a darker or coarser weave."
+    )
 
 
 class AIPromptServiceV8(AIPromptServiceV7):
@@ -156,30 +383,81 @@ class AIPromptServiceV8(AIPromptServiceV7):
         return res
 
     # ------------------------------------------------------------------
-    # ANÁLISIS POLICROMÁTICO V8 PRE-CALIBRADO (+30% CIELAB, <= 243 RGB)
+    # ANÁLISIS POLICROMÁTICO V8 PRE-CALIBRADO (CIELAB DINÁMICO, <= 243 RGB)
     # ------------------------------------------------------------------
+    @classmethod
+    def build_calibrated_swatch_preview_bytes(
+        cls,
+        fabric_bytes: Optional[bytes],
+        boost: Optional[float] = None,
+        custom_notes: str = "",
+    ) -> bytes:
+        """Genera vista previa calibrada (max RGB <= 243) SOLO para la tira UI previa a elegir mueble/vistas."""
+        if not fabric_bytes or len(fabric_bytes) < 64:
+            return fabric_bytes or b""
+        _, eff_boost, _ = _resolve_v8_fabric_params(custom_notes=custom_notes, boost=boost)
+        try:
+            roi_only = extract_clean_swatch_roi_v8(fabric_bytes)
+            cal_only = calibrate_fabric_lightness_v8(roi_only.crop, boost=eff_boost, max_rgb=243)
+            sw_im = (
+                cal_only
+                if min(cal_only.size) >= 256
+                else _apply_ratio_preserving_rgb_ceiling(
+                    cal_only.resize((256, 256), Image.Resampling.LANCZOS),
+                    max_rgb=243,
+                )
+            )
+            bsw = io.BytesIO()
+            sw_im.save(bsw, format="PNG", compress_level=4)
+            return bsw.getvalue()
+        except Exception:
+            return fabric_bytes
+
     @classmethod
     def analyze_fabric_v8_local(
         cls,
         sample_bytes: Optional[bytes],
         sample_name: str = "",
-        boost: float = 0.30,
+        boost: Optional[float] = None,
+        custom_notes: str = "",
+        calibration_label: str = "",
     ) -> Dict[str, Any]:
         """
-        Ejecuta localmente (< 80 ms) la extracción limpia de ROI + calibración perceptual +30% +
+        Ejecuta localmente (< 80 ms) la extracción limpia de ROI + calibración perceptual CIELAB +
         espectro multitono de 7 bandas para poblar MaterialAnalysisV7 con los tonos calibrados reales.
         """
+        directives, eff_boost, _ = _resolve_v8_fabric_params(custom_notes=custom_notes, boost=boost)
+        cal_lbls = _describe_v8_calibration_labels(directives, eff_boost)
+        eff_cal_desc = str(calibration_label or "").strip() or cal_lbls["cal_es_desc"]
         clean_label = (sample_name or "").rsplit(".", 1)[0].replace("_", " ").strip()
         if not sample_bytes or not isinstance(sample_bytes, (bytes, bytearray)) or len(sample_bytes) < 64:
             base_v7 = cls._analyze_fabric_pixels_local(sample_bytes, sample_name=clean_label)
-            base_v7["v8_calibrated_boost"] = boost
+            base_v7["v8_calibrated_boost"] = eff_boost
             base_v7["v8_multitone_bands"] = []
             base_v7["v8_has_multitone_alternation"] = False
             return base_v7
 
-        roi = extract_clean_swatch_roi_v8(bytes(sample_bytes))
-        cal_roi = calibrate_fabric_lightness_v8(roi.crop, boost=boost, max_rgb=243)
-        mt = analyze_fabric_multitone_v8(cal_roi, raw_bytes=bytes(sample_bytes), sample_name=clean_label)
+        try:
+            roi = extract_clean_swatch_roi_v8(bytes(sample_bytes))
+            cal_roi = calibrate_fabric_lightness_v8(roi.crop, boost=eff_boost, max_rgb=243)
+            mt = analyze_fabric_multitone_v8(
+                cal_roi,
+                raw_bytes=bytes(sample_bytes),
+                sample_name=clean_label,
+                boost=eff_boost,
+                calibration_label=eff_cal_desc,
+            )
+        except Exception as exc:
+            print(f"[AIPromptServiceV8] Aviso decodificando muestra de tela local ({clean_label or 'sin nombre'}): {exc}")
+            base_v7 = cls._analyze_fabric_pixels_local(sample_bytes, sample_name=clean_label)
+            base_v7["v8_calibrated_boost"] = eff_boost
+            base_v7.setdefault("v8_mean_rgb", (180, 180, 180))
+            base_v7.setdefault("v8_mean_hex", "#B4B4B4")
+            base_v7["v8_multitone_bands"] = []
+            base_v7["v8_has_multitone_alternation"] = False
+            base_v7.setdefault("v8_motif_period_px", 14.0)
+            base_v7.setdefault("v8_roi_bbox", (0, 0, 0, 0))
+            return base_v7
 
         has_pat = bool(
             mt.has_multitone_alternation
@@ -187,14 +465,14 @@ class AIPromptServiceV8(AIPromptServiceV7):
             or any(k in clean_label.lower() for k in cls._PATTERN_KEYWORDS)
         )
         out = MaterialAnalysisV7(
-            name=clean_label or "Muestra de Tela Calibrada V8 (+30%)",
+            name=clean_label or f"Muestra de Tela Calibrada V8 ({cal_lbls['cal_tag_short']})",
             color_description=mt.color_description,
             texture_detail=mt.texture_detail,
             light_interaction=mt.light_interaction,
             pattern_and_figures=mt.pattern_and_figures,
             has_visible_pattern=has_pat,
         ).model_dump()
-        out["v8_calibrated_boost"] = boost
+        out["v8_calibrated_boost"] = eff_boost
         out["v8_mean_rgb"] = mt.mean_rgb
         out["v8_mean_hex"] = mt.mean_hex
         out["v8_multitone_bands"] = mt.bands
@@ -209,6 +487,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
         api_key: Optional[str] = None,
         material_type: str = "auto",
         sample_name: str = "",
+        boost: Optional[float] = None,
+        custom_notes: str = "",
     ) -> Dict[str, Any]:
         mtype = (material_type or "auto").strip().lower()
         is_fabric = any(k in mtype for k in ("fabric", "tela", "textil", "upholstery", "tapiz"))
@@ -220,8 +500,16 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 sample_name=sample_name,
             )
 
+        directives, eff_boost, _ = _resolve_v8_fabric_params(custom_notes=custom_notes, boost=boost)
+        cal_lbls = _describe_v8_calibration_labels(directives, eff_boost)
         clean_label = (sample_name or "").rsplit(".", 1)[0].replace("_", " ").strip()
-        det = self.analyze_fabric_v8_local(sample_bytes, sample_name=clean_label, boost=0.30)
+        det = self.analyze_fabric_v8_local(
+            sample_bytes,
+            sample_name=clean_label,
+            boost=eff_boost,
+            custom_notes=custom_notes,
+            calibration_label=cal_lbls["cal_es_desc"],
+        )
         key = self.get_api_key(api_key)
         if not key or not sample_bytes or len(sample_bytes) < 64:
             return det
@@ -234,9 +522,9 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 return det
 
             roi = extract_clean_swatch_roi_v8(sample_bytes)
-            cal_roi = calibrate_fabric_lightness_v8(roi.crop, boost=0.30, max_rgb=243)
+            cal_roi = calibrate_fabric_lightness_v8(roi.crop, boost=eff_boost, max_rgb=243)
             instructions = (
-                "Analyze this studio-calibrated (+30% perceptual CIELAB) upholstery fabric swatch crop:\n"
+                f"Analyze this V8-calibrated ({cal_lbls['cal_tag_en']}) upholstery fabric swatch crop:\n"
                 "1) name: Concise commercial fabric name.\n"
                 "2) color_description: Multi-tone chromatic description of the raised figures, crown highlights, warm/cool threads, and recessed valleys.\n"
                 "3) has_visible_pattern & pattern_and_figures: Describe the 3D woven figure geometry, motif rhythm, and multi-tone yarn alternation.\n"
@@ -261,7 +549,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 merged["texture_detail"] = str(vis_data["texture_detail"]).strip()
             if vis_data.get("light_interaction"):
                 merged["light_interaction"] = str(vis_data["light_interaction"]).strip()
-            # Siempre conservar el espectro determinista +30% calibrado para impedir regresiones a RGB 177,174,171
+            # Siempre conservar el espectro determinista calibrado V8 para impedir regresiones cromáticas
             if vis_data.get("pattern_and_figures") and "unpatterned" not in str(vis_data["pattern_and_figures"]).lower():
                 merged["pattern_and_figures"] = f"{det['pattern_and_figures']} | Vision: {vis_data['pattern_and_figures']}"
             merged["has_visible_pattern"] = bool(det.get("has_visible_pattern") or vis_data.get("has_visible_pattern"))
@@ -279,6 +567,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
         fabric_name: str = "",
         notas_ia: str = "",
         skip_furniture: bool = False,
+        custom_notes: str = "",
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """Ejecuta en paralelo con ThreadPoolExecutor el análisis de mueble, madera y tela calibrada V8."""
         f_ana: Dict[str, Any] = {}
@@ -304,22 +593,51 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 else None
             )
             fut_t = (
-                executor.submit(self.analyze_material, fabric_bytes, None, "fabric", fabric_name)
+                executor.submit(
+                    self.analyze_material,
+                    fabric_bytes,
+                    None,
+                    "fabric",
+                    fabric_name,
+                    None,
+                    custom_notes,
+                )
                 if fabric_bytes
                 else None
             )
 
             if fut_f is not None:
-                f_ana = fut_f.result()
+                try:
+                    f_ana = fut_f.result() or {}
+                except Exception as exc:
+                    print(f"[AIPromptServiceV8] Aviso en análisis paralelo de mueble: {exc}")
+                    f_ana = {}
             if fut_w is not None:
-                w_ana = fut_w.result()
+                try:
+                    w_ana = fut_w.result()
+                except Exception as exc:
+                    print(f"[AIPromptServiceV8] Aviso en análisis paralelo de madera: {exc}")
+                    w_ana = None
             if fut_t is not None:
-                t_ana = fut_t.result()
+                try:
+                    t_ana = fut_t.result()
+                except Exception as exc:
+                    print(f"[AIPromptServiceV8] Aviso en análisis paralelo de tela: {exc}")
+                    t_ana = self.analyze_fabric_v8_local(
+                        None,
+                        sample_name=fabric_name,
+                        custom_notes=custom_notes,
+                    )
+
+        if furniture_bytes and not skip_furniture and isinstance(f_ana, dict):
+            cutout_w = _infer_cutout_width_cm_from_bytes_v8(furniture_bytes[0])
+            if cutout_w is not None:
+                f_ana["v8_inferred_cutout_width_cm"] = cutout_w
 
         return f_ana, w_ana, t_ana
 
     # ------------------------------------------------------------------
-    # PAQUETE ÚNICO SINCRONIZADO DE REFERENCIAS V8 (Image 1..N)
+    # PAQUETE ÚNICO SINCRONIZADO DE REFERENCIAS V8 (2 FOTOS LIMPIAS EN TELA)
     # ------------------------------------------------------------------
     def build_v8_reference_pack(
         self,
@@ -344,17 +662,27 @@ class AIPromptServiceV8(AIPromptServiceV7):
         has_ref: bool = False,
         include_anchor: bool = False,
         is_hd_swatch: bool = False,
-        boost: float = 0.30,
+        boost: Optional[float] = None,
         vista_id: str = "",
+        custom_notes: str = "",
+        texture_scale_factor: Optional[float] = None,
+        total_tiles_override: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Fuente única de verdad que devuelve la lista ordenada exacta de adjuntos V8:
-          [{"slot_index": 1..N, "filename": ..., "label": ..., "bytes": ..., "role": ...,
-            "guide_line": ..., "ais_slot_line": ..., "dal_slot_part": ...}, ...]
-        Garantiza alineación 1-a-1 entre prompts, attachment_guide, tira 76x76 px y ZIP.
+          - En modo Tela (sin madera): estrictamente 2 fotos limpias (Image 1 Mueble HD +
+            Image 2 Lienzo Maestro de Escala y Calibración V8 — cero 3.ª foto macro competidora).
+          - Con Madera + Tela: estrictamente 3 fotos (Image 1 Mueble + Image 2 Lienzo + Image 3 Madera).
+          - Garantiza alineación 1-a-1 entre prompts, attachment_guide, tira 76x76 px y ZIP.
         """
         pack: List[Dict[str, Any]] = []
         furn_src_badge = f"Mueble · {furniture_source}" if furniture_source else "Mueble"
+        directives, eff_boost, eff_tsf = _resolve_v8_fabric_params(
+            custom_notes=custom_notes,
+            boost=boost,
+            texture_scale_factor=texture_scale_factor,
+        )
+        cal_lbls = _describe_v8_calibration_labels(directives, eff_boost)
 
         raw_fnames = [str(x).strip() for x in (furniture_filenames or []) if str(x or "").strip()]
         f_bytes_seq = list(furniture_bytes_list or [])
@@ -438,45 +766,105 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     })
             return pack
 
-        # 4. Caso Lote Vistas + Tela (vistas_tela)
+        # 4. Caso Lote Vistas + Tela (vistas_tela): 2 fotos limpias por vista (Vista + Lienzo V8)
         if mode == "vistas_tela":
             eff_fab_bytes = fabric_bytes or batch_ref_bytes
             eff_fab_name = fabric_filename or fabric_label or batch_ref_filename or "tela.png"
             has_fab_vt = bool(eff_fab_bytes or fabric_filename or fabric_label or batch_ref_filename)
-            swatch_v8_file = make_v8_swatch_filename(eff_fab_name)
+            fab_display_vt = _sanitize_stale_v8_color_desc(
+                os.path.splitext(os.path.basename(str(eff_fab_name)))[0].replace("_", " ").strip() or "Tela V8",
+                directives,
+                cal_lbls,
+            )
             vt_primary_fn = (
                 target_view[0]
                 if target_view is not None
                 else (batch_views[0][0] if batch_views else primary_furn_file)
+            )
+            vt_primary_bytes = (
+                target_view[1]
+                if target_view is not None
+                else (batch_views[0][1] if batch_views else primary_furn_bytes)
             )
             eff_tipo_vt = resolve_v8_furniture_type_hint(
                 tipo_mueble=tipo_mueble,
                 furniture_name=furniture_name,
                 primary_filename=vt_primary_fn,
             )
+            has_explicit_w_vt = _has_v8_specific_width_hint(f"{eff_tipo_vt} {medidas_texto}")
             w_cm_vt = infer_furniture_width_cm_v8(None, eff_tipo_vt, medidas_texto)
+            if (not has_explicit_w_vt) and total_tiles_override is None:
+                cand_vt_bytes: List[bytes] = []
+                if batch_views:
+                    cand_vt_bytes.extend(vb for _, vb in batch_views if vb)
+                if target_view is not None and target_view[1]:
+                    cand_vt_bytes.append(target_view[1])
+                elif not cand_vt_bytes and vt_primary_bytes:
+                    cand_vt_bytes.append(vt_primary_bytes)
+                for vb_cand in cand_vt_bytes:
+                    if vb_cand and len(vb_cand) >= 64:
+                        cutout_w_vt = _infer_cutout_width_cm_from_bytes_v8(vb_cand)
+                        if cutout_w_vt is not None:
+                            w_cm_vt = max(w_cm_vt, cutout_w_vt)
 
-            cal_sw_bytes = b""
             seamless_tile_vt: Optional[Image.Image] = None
-            tile_px_vt, grid_n_vt = compute_v8_tile_px(1280, furniture_width_cm=w_cm_vt, furniture_type=eff_tipo_vt)
-            if eff_fab_bytes and len(eff_fab_bytes) >= 64:
-                try:
-                    roi_vt = extract_clean_swatch_roi_v8(eff_fab_bytes)
-                    cal_vt = calibrate_fabric_lightness_v8(roi_vt.crop, boost=boost, max_rgb=243)
-                    seamless_tile_vt = make_toroidal_seamless_tile_v8(cal_vt, tile_px=tile_px_vt, max_rgb=243)
-                    sw_im = (
-                        cal_vt
-                        if min(cal_vt.size) >= 256
-                        else _apply_ratio_preserving_rgb_ceiling(
-                            cal_vt.resize((256, 256), Image.Resampling.LANCZOS),
-                            max_rgb=243,
-                        )
-                    )
-                    buf_sw = io.BytesIO()
-                    sw_im.save(buf_sw, format="PNG", compress_level=4)
-                    cal_sw_bytes = buf_sw.getvalue()
-                except Exception:
-                    cal_sw_bytes = eff_fab_bytes or b""
+            tile_px_vt, grid_n_vt = compute_v8_tile_px(
+                1280,
+                furniture_width_cm=w_cm_vt,
+                furniture_type=eff_tipo_vt,
+                texture_scale_factor=eff_tsf,
+            )
+            total_tiles_vt = grid_n_vt * grid_n_vt
+            if total_tiles_override is not None and int(total_tiles_override) > 0:
+                total_tiles_vt = int(total_tiles_override)
+                grid_ov = math.isqrt(total_tiles_vt)
+                if 9 <= grid_ov <= 34 and grid_ov * grid_ov == total_tiles_vt:
+                    grid_n_vt = grid_ov
+                    tile_px_vt = int(math.ceil(1280.0 / float(grid_n_vt)))
+            fab_sig_vt = _vt_bytes_sig(eff_fab_bytes) if (eff_fab_bytes and len(eff_fab_bytes) >= 64) else ""
+            if fab_sig_vt:
+                sw_cache_key = f"{fab_sig_vt}|{tile_px_vt}|{eff_boost:.3f}|{eff_tsf:.3f}"
+                with _VT_CACHE_LOCK:
+                    sw_hit = _VT_SWATCH_CACHE.get(sw_cache_key)
+                    if sw_hit is not None:
+                        _VT_SWATCH_CACHE.move_to_end(sw_cache_key)
+                        seamless_tile_vt = sw_hit
+                if seamless_tile_vt is None:
+                    try:
+                        roi_vt = extract_clean_swatch_roi_v8(eff_fab_bytes)
+                        cal_vt = calibrate_fabric_lightness_v8(roi_vt.crop, boost=eff_boost, max_rgb=243)
+                        seamless_tile_vt = make_toroidal_seamless_tile_v8(cal_vt, tile_px=tile_px_vt, max_rgb=243)
+                        with _VT_CACHE_LOCK:
+                            _VT_SWATCH_CACHE[sw_cache_key] = seamless_tile_vt
+                            _VT_SWATCH_CACHE.move_to_end(sw_cache_key)
+                            while len(_VT_SWATCH_CACHE) > _VT_SWATCH_CACHE_MAX:
+                                _VT_SWATCH_CACHE.popitem(last=False)
+                    except Exception:
+                        seamless_tile_vt = None
+
+            def _get_cached_vt_canvas(vb_in: bytes, vf_in: str) -> Tuple[str, bytes]:
+                if not vb_in or len(vb_in) < 64 or seamless_tile_vt is None:
+                    return make_v8_canvas_filename(vf_in), b""
+                v_sig = _vt_bytes_sig(vb_in)
+                v_key = f"{v_sig}|{fab_sig_vt}|{tile_px_vt}|{grid_n_vt}|{eff_boost:.3f}|{eff_tsf:.3f}|{make_v8_canvas_filename(vf_in)}"
+                with _VT_CACHE_LOCK:
+                    v_hit = _VT_VIEW_CACHE.get(v_key)
+                    if v_hit is not None:
+                        _VT_VIEW_CACHE.move_to_end(v_key)
+                        return v_hit
+                c_fn_out, c_b_out, _ = compose_view_with_precomputed_tile_v8(
+                    view_bytes=vb_in,
+                    seamless_tile=seamless_tile_vt,
+                    tile_px=tile_px_vt,
+                    grid_n=grid_n_vt,
+                    view_name=vf_in,
+                )
+                with _VT_CACHE_LOCK:
+                    _VT_VIEW_CACHE[v_key] = (c_fn_out, c_b_out)
+                    _VT_VIEW_CACHE.move_to_end(v_key)
+                    while len(_VT_VIEW_CACHE) > _VT_VIEW_CACHE_MAX:
+                        _VT_VIEW_CACHE.popitem(last=False)
+                return c_fn_out, c_b_out
 
             views_to_build = [target_view] if target_view is not None else list(batch_views or [])
             if target_view is not None or len(views_to_build) <= 1:
@@ -498,13 +886,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     canv_bytes = b""
                     if v_bytes and len(v_bytes) >= 64 and seamless_tile_vt is not None:
                         try:
-                            canv_file, canv_bytes, _ = compose_view_with_precomputed_tile_v8(
-                                view_bytes=v_bytes,
-                                seamless_tile=seamless_tile_vt,
-                                tile_px=tile_px_vt,
-                                grid_n=grid_n_vt,
-                                view_name=v_file,
-                            )
+                            canv_file, canv_bytes = _get_cached_vt_canvas(v_bytes, v_file)
                         except Exception:
                             canv_bytes = b""
                     pack.append({
@@ -513,23 +895,23 @@ class AIPromptServiceV8(AIPromptServiceV7):
                         "label": "Image 2 · Lienzo Escala V8",
                         "bytes": canv_bytes,
                         "role": "v8_scale_canvas",
+                        "total_tiles": total_tiles_vt,
                         "guide_line": f'Image 2: Lienzo Maestro de Escala V8 ("{canv_file}")',
-                        "ais_slot_line": f'- Image 2 (V8 MASTER SCALE CONDITIONING CANVAS · FILE: "{canv_file}"): Stepped-back view surrounded by {grid_n_vt * grid_n_vt} seamless reduced +30% fabric tiles — use for EXACT 1:1 physical motif scale (~97% macro reduction). NEVER copy the tiled background into output.',
-                        "dal_slot_part": f'Image 2 = "{canv_file}" (V8 1:1 scale conditioning canvas — do NOT render tiled background)',
-                    })
-                    pack.append({
-                        "slot_index": 3,
-                        "filename": swatch_v8_file,
-                        "label": "Image 3 · Tela +30% V8",
-                        "bytes": cal_sw_bytes,
-                        "role": "v8_calibrated_swatch",
-                        "guide_line": f'Image 3: Muestra limpia pre-calibrada +30% V8 ("{swatch_v8_file}")',
-                        "ais_slot_line": f'- Image 3 (V8 +30% PRE-CALIBRATED MULTI-TONE SWATCH · FILE: "{swatch_v8_file}"): Clean shadow-free +30% pre-calibrated swatch showing exact 7-band multi-tone figure alternation and 3D yarn relief (0% additional tone drift).',
-                        "dal_slot_part": f'Image 3 = "{swatch_v8_file}" (V8 +30% calibrated multi-tone swatch)',
+                        "ais_slot_line": (
+                            f'- Image 2 (V8 MASTER SCALE & CALIBRATED FABRIC CANVAS · FILE: "{canv_file}"): '
+                            f'Stepped-back view surrounded by {total_tiles_vt} seamless reduced tiles of "{fab_display_vt}" '
+                            f'({cal_lbls["cal_tag_en"]}, max RGB <= 243) — SOLE ground-truth reference for BOTH exact 1:1 '
+                            f"physical miniature motif scale (~97% macro reduction) AND calibrated multi-tone lightness/color. "
+                            "CRITICAL: NEVER copy the tiled fabric background into output!"
+                        ),
+                        "dal_slot_part": (
+                            f'Image 2 = "{canv_file}" (V8 1:1 miniature scale & calibrated "{fab_display_vt}" fabric canvas — '
+                            "SOLE fabric reference; do NOT render tiled background)"
+                        ),
                     })
                 return pack
 
-            # Tira previa multi-vista en UI antes de pulsar ir: muestra cada vista + su lienzo V8 + la tela +30%
+            # Tira previa multi-vista en UI: estrictamente 2 tarjetas por vista (Vista + Lienzo Escala V8)
             for idx_v, (vn, vb) in enumerate(views_to_build, start=1):
                 v_file = self._canonical_photo_filename(vn, f"vista_{idx_v}.png")
                 pack.append({
@@ -544,36 +926,20 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 })
                 if has_fab_vt and vb and len(vb) >= 64 and seamless_tile_vt is not None:
                     try:
-                        c_fn, c_b, _ = compose_view_with_precomputed_tile_v8(
-                            view_bytes=vb,
-                            seamless_tile=seamless_tile_vt,
-                            tile_px=tile_px_vt,
-                            grid_n=grid_n_vt,
-                            view_name=v_file,
-                        )
+                        c_fn, c_b = _get_cached_vt_canvas(vb, v_file)
                         pack.append({
                             "slot_index": 2,
                             "filename": c_fn,
                             "label": f"Image 2 · Lienzo V{idx_v}",
                             "bytes": c_b,
                             "role": "v8_scale_canvas",
+                            "total_tiles": total_tiles_vt,
                             "guide_line": f'Image 2: Lienzo Maestro V8 ("{c_fn}")',
                             "ais_slot_line": "",
                             "dal_slot_part": "",
                         })
                     except Exception:
                         pass
-            if has_fab_vt:
-                pack.append({
-                    "slot_index": 3,
-                    "filename": swatch_v8_file,
-                    "label": "Image 3 · Tela +30% V8",
-                    "bytes": cal_sw_bytes,
-                    "role": "v8_calibrated_swatch",
-                    "guide_line": f'Image 3: Muestra limpia +30% V8 ("{swatch_v8_file}")',
-                    "ais_slot_line": "",
-                    "dal_slot_part": "",
-                })
             return pack
 
         # 5. Modos estándar (catalogo, vista_suelta, material, entorno, extraer, hd, vista_34_der_2054)
@@ -617,19 +983,37 @@ class AIPromptServiceV8(AIPromptServiceV7):
 
         if use_fabric:
             raw_fab_ref = fabric_filename or fabric_label or "tela.png"
+            fab_display_std = _sanitize_stale_v8_color_desc(
+                os.path.splitext(os.path.basename(str(raw_fab_ref)))[0].replace("_", " ").strip() or "Tela V8",
+                directives,
+                cal_lbls,
+            )
             canvas_file = make_v8_canvas_filename(primary_furn_file)
-            swatch_file = make_v8_swatch_filename(raw_fab_ref)
             eff_tipo_std = resolve_v8_furniture_type_hint(
                 tipo_mueble=tipo_mueble,
                 furniture_name=furniture_name,
                 primary_filename=primary_furn_file,
             )
+            has_explicit_w = _has_v8_specific_width_hint(f"{eff_tipo_std} {medidas_texto}")
             w_cm = infer_furniture_width_cm_v8(None, eff_tipo_std, medidas_texto)
-            _, grid_est = compute_v8_tile_px(1280, furniture_width_cm=w_cm, furniture_type=eff_tipo_std)
+            if (
+                (not has_explicit_w)
+                and primary_furn_bytes
+                and len(primary_furn_bytes) >= 64
+                and not (fabric_bytes and len(fabric_bytes) >= 64)
+            ):
+                cutout_w_std = _infer_cutout_width_cm_from_bytes_v8(primary_furn_bytes)
+                if cutout_w_std is not None:
+                    w_cm = max(w_cm, cutout_w_std)
+            _, grid_est = compute_v8_tile_px(
+                1280,
+                furniture_width_cm=w_cm,
+                furniture_type=eff_tipo_std,
+                texture_scale_factor=eff_tsf,
+            )
             total_tiles_est = grid_est * grid_est
 
             canvas_bytes = b""
-            swatch_bytes = b""
             artifacts: Optional[V8ConditioningArtifacts] = None
             if primary_furn_bytes and len(primary_furn_bytes) >= 64 and fabric_bytes and len(fabric_bytes) >= 64:
                 try:
@@ -638,34 +1022,19 @@ class AIPromptServiceV8(AIPromptServiceV7):
                         fabric_bytes=fabric_bytes,
                         sample_name=raw_fab_ref,
                         furniture_name=primary_furn_file,
-                        furniture_width_cm=w_cm,
+                        furniture_width_cm=(w_cm if has_explicit_w else None),
                         furniture_type=eff_tipo_std,
-                        boost=boost,
+                        boost=eff_boost,
+                        texture_scale_factor=eff_tsf,
+                        calibration_label=cal_lbls["cal_es_desc"],
                     )
                     canvas_bytes = artifacts.canvas_png
-                    swatch_bytes = artifacts.calibrated_swatch_png
                     canvas_file = artifacts.canvas_filename
-                    swatch_file = artifacts.calibrated_swatch_filename
                     total_tiles_est = artifacts.total_tiles
                 except Exception:
                     artifacts = None
-            elif fabric_bytes and len(fabric_bytes) >= 64:
-                try:
-                    roi_only = extract_clean_swatch_roi_v8(fabric_bytes)
-                    cal_only = calibrate_fabric_lightness_v8(roi_only.crop, boost=boost, max_rgb=243)
-                    sw_im = (
-                        cal_only
-                        if min(cal_only.size) >= 256
-                        else _apply_ratio_preserving_rgb_ceiling(
-                            cal_only.resize((256, 256), Image.Resampling.LANCZOS),
-                            max_rgb=243,
-                        )
-                    )
-                    bsw = io.BytesIO()
-                    sw_im.save(bsw, format="PNG", compress_level=4)
-                    swatch_bytes = bsw.getvalue()
-                except Exception:
-                    swatch_bytes = fabric_bytes
+            elif total_tiles_override is not None and int(total_tiles_override) > 0:
+                total_tiles_est = int(total_tiles_override)
 
             pack.append({
                 "slot_index": slot,
@@ -677,28 +1046,17 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 "artifacts": artifacts,
                 "guide_line": f'Image {slot}: Lienzo Maestro de Escala V8 ("{canvas_file}")',
                 "ais_slot_line": (
-                    f'- Image {slot} (V8 MASTER SCALE CONDITIONING CANVAS · FILE: "{canvas_file}"): '
-                    f'Stepped-back furniture (~58%) with crisp #FFFFFF isolation halo/border surrounded by {total_tiles_est} seamless reduced +30% fabric tiles. '
-                    f'Use "{canvas_file}" as the EXACT 1:1 physical motif/figure scale reference (~97% macro-to-furniture area reduction). '
-                    f'CRITICAL: NEVER keep or render the tiled fabric background wall in the final output!'
+                    f'- Image {slot} (V8 MASTER SCALE & CALIBRATED FABRIC CANVAS · FILE: "{canvas_file}"): '
+                    f'Stepped-back furniture (~58%) with crisp #FFFFFF isolation halo/border surrounded by {total_tiles_est} seamless reduced tiles '
+                    f'of "{fab_display_std}" ({cal_lbls["cal_tag_en"]}, max RGB <= 243). '
+                    f'Use "{canvas_file}" as the SOLE ground-truth reference for BOTH exact 1:1 physical miniature weave scale '
+                    f"(~97% macro-to-furniture area reduction) AND calibrated multi-tone lightness/color. "
+                    "CRITICAL: NEVER keep or render the tiled fabric background wall in the final output!"
                 ),
-                "dal_slot_part": f'Image {slot} = "{canvas_file}" (V8 1:1 miniature scale conditioning canvas — NEVER copy tiled background into output)',
-            })
-            slot += 1
-
-            pack.append({
-                "slot_index": slot,
-                "filename": swatch_file,
-                "label": f"Image {slot} · Tela +30% V8",
-                "bytes": swatch_bytes,
-                "role": "v8_calibrated_swatch",
-                "guide_line": f'Image {slot}: Muestra limpia pre-calibrada +30% V8 ("{swatch_file}")',
-                "ais_slot_line": (
-                    f'- Image {slot} (V8 +30% PRE-CALIBRATED CLEAN SWATCH GROUND TRUTH · FILE: "{swatch_file}"): '
-                    f'Artifact-free clean swatch ALREADY pre-calibrated +30% lighter in CIELAB (max RGB <= 243). '
-                    f'Use "{swatch_file}" for crisp 7-band multi-tone figure alternation, yarn micro-relief, and 0% additional color/hue/brightness drift.'
+                "dal_slot_part": (
+                    f'Image {slot} = "{canvas_file}" (V8 1:1 miniature scale & calibrated "{fab_display_std}" fabric canvas — '
+                    "SOLE fabric reference; NEVER copy tiled background into output)"
                 ),
-                "dal_slot_part": f'Image {slot} = "{swatch_file}" (V8 +30% pre-calibrated multi-tone swatch — 0% additional tone shift)',
             })
             slot += 1
 
@@ -794,7 +1152,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
         }
 
     # ------------------------------------------------------------------
-    # BLOQUES DE REALISMO 3D, ESCALA 1:1 Y MULTITONO +30% V8
+    # BLOQUES DE REALISMO 3D, ESCALA 1:1 Y MULTITONO CALIBRADO V8 (2 FOTOS)
     # ------------------------------------------------------------------
     def _build_v8_fabric_mandate_blocks(
         self,
@@ -808,18 +1166,31 @@ class AIPromptServiceV8(AIPromptServiceV7):
         protect_non_upholstered_from: str = "",
         reframe_white_bg: bool = True,
         is_room_scene: bool = False,
+        directives: Optional[V8UserFabricDirectives] = None,
     ) -> Tuple[str, str]:
         fa = fa or {}
-        f_name = fa.get("name") or fabric_label or "Muestra de Tela Calibrada V8"
-        f_color = fa.get("color_description") or "paleta policromática pre-calibrada +30% en CIELAB (max RGB <= 243)"
+        d = directives or V8UserFabricDirectives()
+        cal_lbls = _describe_v8_calibration_labels(d)
+        raw_f_name = fa.get("name") or fabric_label or "Muestra de Tela Calibrada V8"
+        f_name = _sanitize_stale_v8_color_desc(raw_f_name, d, cal_lbls)
+        raw_f_color = fa.get("color_description") or (
+            f"paleta policromática pre-calibrada ({cal_lbls['cal_es_desc']}, max RGB <= 243)"
+        )
+        f_color = _sanitize_stale_v8_color_desc(raw_f_color, d, cal_lbls)
         f_tex = fa.get("texture_detail") or "raised 3D woven multi-yarn figures over tight recessed interstitial valleys"
         f_light = fa.get("light_interaction") or "Soft matte textile"
         f_pat = str(fa.get("pattern_and_figures") or "").strip()
         bands = fa.get("v8_multitone_bands") or []
 
         canvas_ref = f'Image {canvas_idx} ("{canvas_file}")' if canvas_idx else f'"{canvas_file}"'
-        swatch_ref = f'Image {swatch_idx} ("{swatch_file}")' if swatch_idx else f'"{swatch_file}"'
         n_tiles = total_tiles or 196
+        has_separate_swatch = bool(swatch_idx and swatch_file)
+        swatch_ref = f'Image {swatch_idx} ("{swatch_file}")' if has_separate_swatch else canvas_ref
+        tile_color_src = (
+            swatch_ref
+            if has_separate_swatch
+            else f"the {n_tiles} seamless pre-calibrated tiles in {canvas_ref}"
+        )
 
         if bands and len(bands) >= 2:
             band_lines = ", ".join(
@@ -827,28 +1198,119 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 for b in bands[:7]
             )
             multitone_ais = (
-                f"ANTI-MONOCHROME 7-BAND MULTI-TONE FIGURE MANDATE: Replicate the exact polychromatic yarn & figure alternation from {swatch_ref} "
+                f"ANTI-MONOCHROME 7-BAND MULTI-TONE FIGURE MANDATE: Replicate the exact polychromatic yarn & figure alternation from {tile_color_src} "
                 f"({band_lines}). STRICTLY FORBID flat single-HEX monochrome painting — adjacent miniature woven figures across every cushion and casco panel "
                 "must organically alternate bright ivory crowns, warm camel/oatmeal figure bodies, subtle rosy-taupe/stone threads, cool ash counter-threads, and recessed relief valleys. "
             )
             multitone_dal = f"polychromatic multi-tone figure alternation ({', '.join(b['hex'] for b in bands[:7])}; NEVER flat monochrome fill), "
         else:
             multitone_ais = (
-                f"1:1 FIGURES, MOTIFS & MULTI-YARN FIDELITY: Copy every figure, motif, and subtle multi-yarn tone variation from {swatch_ref} ({f_color}; {f_pat or f_tex}) "
+                f"1:1 FIGURES, MOTIFS & MULTI-YARN FIDELITY: Copy every figure, motif, and subtle multi-yarn tone variation from {tile_color_src} ({f_color}; {f_pat or f_tex}) "
                 "without collapsing the weave into flat plastic single-color paint. "
             )
             multitone_dal = f"exact 1:1 figures & weave ({f_color}), "
 
+        # Cláusula 1: Escala física 1:1 (dinámica según Notes sin contradicciones)
+        if d.scale_mode == "smaller":
+            pct_abs = cal_lbls["scale_pct_abs"]
+            scale_ais = (
+                f"1) USER-CUSTOMIZED FINER MINIATURE WEAVE SCALE (-{pct_abs}% ALREADY BAKED INTO {canvas_ref}): "
+                f"The {n_tiles} seamless ultra-fine tiles surrounding the furniture in {canvas_ref} ALREADY incorporate "
+                f"the user's requested -{pct_abs}% smaller/finer texture reduction on top of V8's real-world furniture scaling. "
+                f"Render the weave and figures on the furniture matching {canvas_ref}'s ultra-fine miniature density "
+                "(or slightly finer — NEVER coarser or larger!). "
+            )
+            scale_dal = (
+                f"matching the {n_tiles} ultra-fine seamless tiles in {canvas_ref} "
+                f"(user-requested -{pct_abs}% finer miniature weave scale ALREADY pixel-rendered in {canvas_ref})"
+            )
+        elif d.scale_mode == "larger":
+            pct_abs = cal_lbls["scale_pct_abs"]
+            scale_ais = (
+                f"1) USER-CUSTOMIZED WEAVE SCALE (+{pct_abs}% ALREADY BAKED INTO {canvas_ref}): "
+                f"The {n_tiles} seamless tiles in {canvas_ref} ALREADY incorporate the user's requested +{pct_abs}% larger texture scale. "
+                f"Match the exact tile-to-furniture weave scale shown in {canvas_ref} directly without overscaling into giant macro loops. "
+            )
+            scale_dal = (
+                f"matching the {n_tiles} seamless tiles in {canvas_ref} "
+                f"(user-requested +{pct_abs}% weave scale ALREADY pixel-rendered in {canvas_ref})"
+            )
+        else:
+            scale_ais = (
+                f"1) EXACT 1:1 MINIATURE SCALE FROM V8 CONDITIONING CANVAS: Use {canvas_ref} "
+                f"(where the stepped-back furniture sits directly beside {n_tiles} seamless reduced tiles) "
+                "to lock exact 1:1 physical miniature figure & weave scale (~97% macro-to-furniture area reduction) "
+                "so raised figures appear fine and authentic at real-world viewing distance (NEVER oversized macro loops). "
+            )
+            scale_dal = (
+                f"using the {n_tiles} seamless pre-calibrated tiles in {canvas_ref} as the SOLE ground-truth reference "
+                "for exact 1:1 miniature motif scale (~97% macro reduction)"
+            )
+
+        # Cláusula 2: Luminosidad / Tono calibrado (dinámica y cero contradicciones con Notas)
+        src_desc = f"Both {canvas_ref} and {swatch_ref}" if has_separate_swatch else f"The {n_tiles} seamless tiles in {canvas_ref}"
+        if d.lightness_mode == "lighter":
+            tone_ais = (
+                f"2) USER-CALIBRATED LIGHTER TONE LOCK ({cal_lbls['cal_tag_short']} ALREADY BAKED INTO {canvas_ref}): "
+                f"{src_desc} ('{f_name}') have ALREADY been pixel-calibrated in CIELAB (max RGB <= 243, 0° hue shift) "
+                f"to deliver the user's requested lighter fabric tone ({f_color}; Sheen: {f_light}). "
+                f"Faithfully match {tile_color_src} directly — DO NOT revert or darken it back toward uncalibrated dark grey/taupe, "
+                f"and DO NOT apply a second lightening pass on top of {canvas_ref} (preventing whitewash/clipping above RGB 243). "
+            )
+            tone_dal = (
+                f"AND calibrated lighter tone ({cal_lbls['cal_tag_en']}, max RGB <= 243 — ALREADY pixel-calibrated in {canvas_ref}; "
+                f"match {canvas_ref} directly without double-applying or darkening back)"
+            )
+        elif d.lightness_mode == "darker":
+            tone_ais = (
+                f"2) USER-CALIBRATED DARKER TONE LOCK ({cal_lbls['cal_tag_short']} ALREADY BAKED INTO {canvas_ref}): "
+                f"{src_desc} ('{f_name}') have ALREADY been pixel-calibrated in CIELAB to deliver the user's requested darker fabric tone "
+                f"({f_color}; Sheen: {f_light}). Faithfully match {tile_color_src} directly — DO NOT lighten it back up and DO NOT darken it a second time. "
+            )
+            tone_dal = (
+                f"AND calibrated deeper tone ({cal_lbls['cal_tag_en']} — ALREADY pixel-calibrated in {canvas_ref}; "
+                f"match {canvas_ref} directly without double-applying or lightening back)"
+            )
+        elif d.lightness_mode == "original":
+            tone_ais = (
+                f"2) EXACT ORIGINAL SWATCH TONE LOCK (0% ARTIFICIAL LIGHTENING IN {canvas_ref}): "
+                f"Per user directive, {src_desc} ('{f_name}') preserve the exact original un-lightened fabric luminance "
+                f"({f_color}; Sheen: {f_light}, max RGB <= 243). Match {tile_color_src} faithfully with zero brightening or darkening drift. "
+            )
+            tone_dal = (
+                f"AND exact original un-lightened fabric tone (0% artificial lightening, max RGB <= 243 — "
+                f"match {canvas_ref} directly)"
+            )
+        elif d.lightness_mode == "softer_light":
+            tone_ais = (
+                f"2) MODERATED STUDIO LIGHTNESS LOCK (+10% ALREADY BAKED INTO {canvas_ref}): "
+                f"Per user directive for a less bright tone, {src_desc} ('{f_name}') are gently calibrated "
+                f"(+10% CIELAB, max RGB <= 243; {f_color}; Sheen: {f_light}). Match {tile_color_src} directly. "
+            )
+            tone_dal = (
+                f"AND moderated +10% lightness ({cal_lbls['cal_tag_en']}, max RGB <= 243 — ALREADY pixel-calibrated in {canvas_ref}; "
+                f"match {canvas_ref} directly)"
+            )
+        else:
+            tone_ais = (
+                f"2) V8 PRE-CALIBRATED STUDIO LIGHTNESS LOCK (MATCH {canvas_ref} DIRECTLY): "
+                f"{src_desc} ('{f_name}') are ALREADY pre-calibrated +30% lighter in CIELAB (max RGB <= 243) to compensate macro camera underexposure. "
+                f"Match {tile_color_src} faithfully ({f_color}; Sheen: {f_light}) with 0% unwanted hue shift, darkening back to dark taupe/greige, or highlight clipping to #FFFFFF. "
+            )
+            tone_dal = (
+                f"AND pre-calibrated +30% studio lightness (max RGB <= 243) from {canvas_ref} with 0% unwanted hue shift or darkening"
+            )
+
         if is_room_scene:
             reframe_ais = (
                 f"CONDITIONING BACKGROUND REMOVAL (ROOM INTEGRATION): Treat the tiled fabric mosaic surrounding the stepped-back furniture in {canvas_ref} "
-                "STRICTLY as a spatial 1:1 scale guide — NEVER render tiled fabric wallpaper on room walls or floors! Integrate the finished reupholstered furniture naturally into the wide client interior scene."
+                "STRICTLY as a spatial 1:1 scale & calibrated-tone guide — NEVER render tiled fabric wallpaper on room walls or floors! Integrate the finished reupholstered furniture naturally into the wide client interior scene."
             )
             reframe_dal = f"NEVER render the tiled mosaic background from {canvas_ref}; place the finished piece naturally inside the client room interior"
         elif reframe_white_bg:
             reframe_ais = (
                 f"COMMERCIAL RE-FRAMING & PURE #FFFFFF ISOLATION (NEVER KEEP TILED BACKGROUND): Treat the surrounding {n_tiles} reduced fabric tiles in {canvas_ref} "
-                "STRICTLY as an input spatial scale reference — NEVER keep tiled fabric background in output and NEVER render mosaic wallpaper behind the furniture! "
+                "STRICTLY as an input spatial scale & calibrated-tone reference — NEVER keep tiled fabric background in output and NEVER render mosaic wallpaper behind the furniture! "
                 "Re-frame the finished reupholstered furniture to commercial catalog scale (~74% of frame, centered with clean balanced margins) isolated on 100% pure solid white #FFFFFF (RGB 255,255,255) with 0% ground shadow, 0% contact shadow, 0% drop shadow, and 0% reflection."
             )
             reframe_dal = (
@@ -856,7 +1318,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             )
         else:
             reframe_ais = (
-                f"CONDITIONING BACKGROUND REMOVAL: Treat {canvas_ref} strictly as an input 1:1 motif-scale guide — NEVER keep tiled fabric background in output; preserve the clean scene background of Image 1."
+                f"CONDITIONING BACKGROUND REMOVAL: Treat {canvas_ref} strictly as an input 1:1 motif-scale & calibrated-tone guide — NEVER keep tiled fabric background in output; preserve the clean scene background of Image 1."
             )
             reframe_dal = f"NEVER keep tiled fabric background from {canvas_ref} in output"
 
@@ -867,10 +1329,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
         )
 
         ais_txt = (
-            f"1) EXACT 1:1 MINIATURE SCALE FROM V8 CONDITIONING CANVAS: Use {canvas_ref} (where the stepped-back furniture sits directly beside {n_tiles} seamless reduced tiles) "
-            f"to lock exact 1:1 physical miniature figure & weave scale (~97% macro-to-furniture area reduction) so raised figures appear at authentic real-world viewing distance (never giant macro loops). "
-            f"2) +30% PRE-CALIBRATED BRIGHTNESS LOCK (0% CAMBIO DE TONO ADICIONAL): Both {canvas_ref} and {swatch_ref} ('{f_name}') are ALREADY pre-calibrated +30% lighter in CIELAB (max RGB <= 243) to compensate macro camera underexposure. "
-            f"Lock 0% additional color, hue, or brightness drift relative to {swatch_ref} ({f_color}; Sheen: {f_light}) — no darkening back to dark taupe/greige, no warming/cooling, and no highlight clipping to #FFFFFF. "
+            f"{scale_ais}"
+            f"{tone_ais}"
             f"3) {multitone_ais}"
             f"4) FULL CASCO & CUSHIONS 3D UPHOLSTERY REALISM (100% EL CASCO COMPLETO + COJINES): Completely discard 100% of the old upholstery color/fabric (100% OLD-FABRIC ERASURE) and wrap this exact V8 fabric uniformly across "
             f"100% of EL CASCO COMPLETO (respaldo exterior/interior, descansabrazos, faldón/base tapizada, laterales, cabecera/rieles si aplica) AND all seat/back cushions with photorealistic 3D upholstery physics "
@@ -880,19 +1340,32 @@ class AIPromptServiceV8(AIPromptServiceV7):
 
         dal_txt = (
             f"100% of EL CASCO COMPLETO (backrest, armrests, lower base rail/faldón, side panels) AND all cushions reupholstered uniformly in '{f_name}' "
-            f"({multitone_dal}3D weave: {f_tex}; sheen: {f_light}) using {canvas_ref} for exact 1:1 miniature motif scale (~97% macro reduction) and {swatch_ref} "
-            f"(already pre-calibrated +30% lighter, max RGB <= 243) with 0% additional color/hue/brightness drift, realistic 3D seam/piping/pleat draping, protected wood/metal legs, and {reframe_dal}"
+            f"({multitone_dal}3D weave: {f_tex}; sheen: {f_light}) {scale_dal} {tone_dal}, "
+            f"realistic 3D seam/piping/pleat draping, protected wood/metal legs, and {reframe_dal}"
         )
         return ais_txt, dal_txt
 
     @classmethod
-    def _fabric_negative_terms(cls, fa: Optional[Dict[str, Any]] = None, fabric_label: str = "") -> str:
+    def _fabric_negative_terms(
+        cls,
+        fa: Optional[Dict[str, Any]] = None,
+        fabric_label: str = "",
+        directives: Optional[V8UserFabricDirectives] = None,
+    ) -> str:
         base = super()._fabric_negative_terms(fa, fabric_label)
-        v8_extra = (
-            "tiled fabric background, mosaic wallpaper background, fabric grid in background, "
-            "monochrome flat paint, single-color flat fill, dark uncalibrated taupe shift, fabric bleed on wooden legs"
-        )
-        return f"{base}, {v8_extra}"
+        extras = [
+            "tiled fabric background",
+            "mosaic wallpaper background",
+            "fabric grid in background",
+            "monochrome flat paint",
+            "single-color flat fill",
+        ]
+        if directives is None or directives.lightness_mode not in ("darker", "original"):
+            extras.append("dark uncalibrated taupe shift")
+        if directives is not None and directives.scale_mode == "smaller":
+            extras.extend(["coarse oversized weave", "chunky speckled macro dots"])
+        extras.append("fabric bleed on wooden legs")
+        return f"{base}, {', '.join(extras)}"
 
     def _build_v8_material_lock_text(
         self,
@@ -907,11 +1380,13 @@ class AIPromptServiceV8(AIPromptServiceV7):
         fabric_label: str = "",
         reframe_white_bg: bool = True,
         is_room_scene: bool = False,
+        directives: Optional[V8UserFabricDirectives] = None,
     ) -> Tuple[str, str]:
         ais_parts: List[str] = []
         dal_parts: List[str] = []
         primary_furn_file = slots_meta["primary_furn_file"]
         furn_ref = f'Image {slots_meta["primary_furn_idx"]} ("{primary_furn_file}")'
+        cal_lbls = _describe_v8_calibration_labels(directives)
 
         if has_wood:
             w_name = wa.get("name") or "Selected Wood Sample"
@@ -959,8 +1434,11 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 protect_non_upholstered_from="" if has_wood else furn_ref,
                 reframe_white_bg=reframe_white_bg,
                 is_room_scene=is_room_scene,
+                directives=directives,
             )
-            ais_parts.append(f"- V8 SCALE-CALIBRATED (+30%) MULTI-TONE CASCO & CUSHIONS UPHOLSTERY LOCK: {fab_ais}")
+            ais_parts.append(
+                f"- V8 SCALE-CALIBRATED ({cal_lbls['header_tag']}) MULTI-TONE CASCO & CUSHIONS UPHOLSTERY LOCK: {fab_ais}"
+            )
             dal_parts.append(f"{fab_dal}.")
         elif has_wood:
             ais_parts.append(
@@ -995,9 +1473,12 @@ class AIPromptServiceV8(AIPromptServiceV7):
         furniture_filenames: Optional[List[str]] = None,
         wood_filename: str = "",
         fabric_filename: str = "",
+        total_tiles_override: Optional[int] = None,
     ) -> Dict[str, Any]:
         meta = ALL_SINGLE_VIEWS[view_id]
         angle_desc = profile["angles"][view_id]
+        directives = parse_v8_user_fabric_directives(user_notes_clean)
+        cal_lbls = _describe_v8_calibration_labels(directives)
         pack = self.build_v8_reference_pack(
             mode="vista_suelta",
             furniture_name=furniture_name,
@@ -1010,6 +1491,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
             medidas_texto=medidas_texto,
             has_ref=has_ref,
             include_anchor=use_anchor,
+            custom_notes=user_notes_clean,
+            total_tiles_override=total_tiles_override,
         )
         slots = self._slots_from_v8_pack(pack)
         primary_furn_file = slots["primary_furn_file"]
@@ -1026,15 +1509,17 @@ class AIPromptServiceV8(AIPromptServiceV7):
             fabric_label=fabric_label,
             reframe_white_bg=white_bg_enabled,
             is_room_scene=False,
+            directives=directives,
         )
 
         anchor_ais = ""
         anchor_dal = ""
         if use_anchor and slots["anchor_idx"]:
             a_idx = slots["anchor_idx"]
+            anchor_cal = f"{cal_lbls['cal_tag_short']} " if has_fabric else ""
             anchor_ais = (
                 f"\n- ANCHOR CONSISTENCY (Image {a_idx} when attached): Image {a_idx} is the approved Vista 1 render. "
-                f"Match its exact silhouette, proportions, +30% multi-tone upholstery, and wood finish 100%, rotating ONLY the camera to {meta['short']}."
+                f"Match its exact silhouette, proportions, {anchor_cal}multi-tone upholstery, and wood finish 100%, rotating ONLY the camera to {meta['short']}."
             )
             anchor_dal = f" Use Image {a_idx} (if attached) as exact identity lock, changing only camera perspective."
 
@@ -1050,11 +1535,24 @@ class AIPromptServiceV8(AIPromptServiceV7):
             else "clean soft neutral commercial studio backdrop"
         )
 
-        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
-        notes_dal = f" Mandatory user directives: {user_notes_clean}." if user_notes_clean else ""
+        notes_ais = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="ais",
+            mode_style="bullet",
+        )
+        notes_dal = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="dal",
+        )
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
-        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label)}" if has_fabric else ""
+        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label, directives=directives)}" if has_fabric else ""
 
         prompt_ais = (
             f"[V8 COMMERCIAL PRODUCT PHOTOGRAPHY · {meta['label'].upper()} · 2054x2054 PX]\n"
@@ -1125,7 +1623,10 @@ class AIPromptServiceV8(AIPromptServiceV7):
         furniture_filenames: Optional[List[str]] = None,
         wood_filename: str = "",
         fabric_filename: str = "",
+        total_tiles_override: Optional[int] = None,
     ) -> Dict[str, Any]:
+        directives = parse_v8_user_fabric_directives(user_notes_clean)
+        cal_lbls = _describe_v8_calibration_labels(directives)
         pack = self.build_v8_reference_pack(
             mode="entorno",
             furniture_name=furniture_name,
@@ -1138,6 +1639,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
             medidas_texto=medidas_texto,
             has_ref=has_ref,
             include_anchor=use_anchor,
+            custom_notes=user_notes_clean,
+            total_tiles_override=total_tiles_override,
         )
         slots = self._slots_from_v8_pack(pack)
         primary_furn_file = slots["primary_furn_file"]
@@ -1154,6 +1657,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             fabric_label=fabric_label,
             reframe_white_bg=False,
             is_room_scene=True,
+            directives=directives,
         )
         room_intro, companions = self._build_environment_room_context(profile, furn_item, lugar_casa)
         dim_summary = profile["dimensions_rule"] or "Preserve true-to-life furniture scale relative to surrounding architecture and rugs."
@@ -1161,11 +1665,29 @@ class AIPromptServiceV8(AIPromptServiceV7):
         anchor_ais = ""
         if use_anchor and slots["anchor_idx"]:
             a_idx = slots["anchor_idx"]
-            anchor_ais = f"\n- ANCHOR CONSISTENCY (Image {a_idx} when attached): Keep the furniture's exact silhouette, +30% multi-tone fabric, and wood finish locked to Image {a_idx}."
+            anchor_cal = f"{cal_lbls['cal_tag_short']} " if has_fabric else ""
+            anchor_ais = (
+                f"\n- ANCHOR CONSISTENCY (Image {a_idx} when attached): Keep the furniture's exact silhouette, "
+                f"{anchor_cal}multi-tone fabric, and wood finish locked to Image {a_idx}."
+            )
 
-        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
-        notes_dal = f" User directives: {user_notes_clean}." if user_notes_clean else ""
-        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label)}" if has_fabric else ""
+        notes_ais = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="ais",
+            mode_style="bullet",
+        )
+        notes_dal = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="dal",
+        )
+        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label, directives=directives)}" if has_fabric else ""
+        room_cal_label = f"{cal_lbls['cal_tag_short']} calibrated" if has_fabric else "V8-calibrated"
 
         prompt_ais = (
             "[V8 ARCHITECTURAL INTERIOR PHOTOGRAPHY · CLIENT HOME ENVIRONMENT (WIDE DISTANT SHOT)]\n"
@@ -1175,7 +1697,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             "ENVIRONMENT & COMPOSITION:\n"
             "- DISTANT WIDE SHOT (VISTA DE LEJOS): Shot with a 35mm wide architectural lens from across the room so the full surrounding interior space is visible.\n"
             f"- REAL-WORLD 1:1 SCALE: {dim_summary}\n"
-            "- DELIBERATE CONTRASTING ROOM PALETTE: Choose wall paint, flooring, and rug tones that clearly CONTRAST with the furniture's +30% calibrated upholstery/wood so the product stands out sharply without blending into walls or rugs.\n"
+            f"- DELIBERATE CONTRASTING ROOM PALETTE: Choose wall paint, flooring, and rug tones that clearly CONTRAST with the furniture's {room_cal_label} upholstery/wood so the product stands out sharply without blending into walls or rugs.\n"
             f"- AUTHENTIC CLIENT HOME STYLING: {companions}\n\n"
             "FURNITURE IDENTITY & V8 UPHOLSTERY LOCK:\n"
             f"{mat_ais}\n"
@@ -1238,9 +1760,11 @@ class AIPromptServiceV8(AIPromptServiceV7):
         has_wood: bool = True,
         has_fabric: bool = True,
         has_ref: bool = False,
+        total_tiles_override: Optional[int] = None,
     ) -> Dict[str, Any]:
         eff_has_wood = bool(has_wood and (wa or wood_label or wood_filename)) and material_mode in ("wood_only", "dual")
         eff_has_fabric = bool(has_fabric and (fa or fabric_label or fabric_filename)) and material_mode in ("fabric_only", "dual")
+        directives = parse_v8_user_fabric_directives(user_notes_clean)
 
         pack = self.build_v8_reference_pack(
             mode="material",
@@ -1254,6 +1778,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
             tipo_mueble=furn_item,
             medidas_texto=medidas_texto,
             has_ref=has_ref,
+            custom_notes=user_notes_clean,
+            total_tiles_override=total_tiles_override,
         )
         slots = self._slots_from_v8_pack(pack)
         primary_furn_file = slots["primary_furn_file"]
@@ -1271,6 +1797,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             fabric_label=fabric_label if eff_has_fabric else "",
             reframe_white_bg=white_bg_enabled,
             is_room_scene=False,
+            directives=directives,
         )
 
         cam_lock = (camera_angle or "").strip() or "the exact same camera angle as Image 1"
@@ -1282,8 +1809,21 @@ class AIPromptServiceV8(AIPromptServiceV7):
             else ""
         )
         ref_dal = f" Use Image {slots['ref_idx']} for supplementary structural angle details." if slots.get("ref_idx") else ""
-        notes_ais = f"\n\nUSER SPECIAL DIRECTIVES: {user_notes_clean}" if user_notes_clean else ""
-        notes_dal = f" Mandatory user directives: {user_notes_clean}." if user_notes_clean else ""
+        notes_ais = _format_v8_user_notes_block(
+            directives,
+            has_fabric=eff_has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="ais",
+            mode_style="block",
+        )
+        notes_dal = _format_v8_user_notes_block(
+            directives,
+            has_fabric=eff_has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="dal",
+        )
 
         if white_bg_enabled:
             no_tile_ais = " CRITICAL: NEVER keep tiled fabric background in output!" if eff_has_fabric else ""
@@ -1312,7 +1852,11 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 " (NEVER keep tiled fabric conditioning background)" if eff_has_fabric else ""
             )
 
-        fab_neg = self._fabric_negative_terms(fa, fabric_label) if eff_has_fabric else "altered upholstery, flat wood colors, two-tone mismatch"
+        fab_neg = (
+            self._fabric_negative_terms(fa, fabric_label, directives=directives)
+            if eff_has_fabric
+            else "altered upholstery, flat wood colors, two-tone mismatch"
+        )
 
         prompt_ais = (
             f"INSTRUCTION (V8 SCALE-CONDITIONED MATERIAL ENGINE): Meticulously analyze the attached reference pack for '{furn_item}' ('{furniture_name}').\n\n"
@@ -1371,7 +1915,9 @@ class AIPromptServiceV8(AIPromptServiceV7):
         wood_filename: str = "",
         fabric_filename: str = "",
         has_ref: bool = False,
+        total_tiles_override: Optional[int] = None,
     ) -> Dict[str, Any]:
+        directives = parse_v8_user_fabric_directives(user_notes_clean)
         pack = self.build_v8_reference_pack(
             mode="extraer",
             furniture_name=furniture_name,
@@ -1383,6 +1929,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
             tipo_mueble=furn_item,
             medidas_texto=medidas_texto,
             has_ref=has_ref,
+            custom_notes=user_notes_clean,
+            total_tiles_override=total_tiles_override,
         )
         slots = self._slots_from_v8_pack(pack)
         primary_furn_file = slots["primary_furn_file"]
@@ -1399,6 +1947,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             fabric_label=fabric_label,
             reframe_white_bg=True,
             is_room_scene=False,
+            directives=directives,
         )
         ref_ais = (
             f"\n- AUXILIARY ANGLE REFERENCE (Image {slots['ref_idx']}): Supplementary structural angle details from Image {slots['ref_idx']}."
@@ -1406,10 +1955,24 @@ class AIPromptServiceV8(AIPromptServiceV7):
             else ""
         )
         ref_dal = f" Use Image {slots['ref_idx']} for supplementary structural angle details." if slots.get("ref_idx") else ""
-        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
+        notes_ais = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="ais",
+            mode_style="bullet",
+        )
+        notes_dal = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="dal",
+        )
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
-        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label)}" if has_fabric else ""
+        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label, directives=directives)}" if has_fabric else ""
 
         prompt_ais = (
             "[V8 ISOLATED COMMERCIAL PRODUCT CUTOUT · PURE WHITE #FFFFFF · 0% SHADOWS · 2054x2054 PX]\n"
@@ -1432,8 +1995,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             "centered at ~74% commercial scale on pure solid white (#FFFFFF, RGB 255,255,255) with 0% ground/contact/drop shadows and 0% reflections.\n"
             f"{slots['dal_photo_map']}\n"
             f"Materials: {mat_dal}\n"
-            f"Geometry: {profile['geometry_rule']} {profile['dimensions_rule']}{ref_dal}\n"
-            f"{'User directives: ' + user_notes_clean if user_notes_clean else ''}\n"
+            f"Geometry: {profile['geometry_rule']} {profile['dimensions_rule']}{ref_dal}{notes_dal}\n"
             f"Avoid: shadows, grey backdrop, room, altered geometry, text, watermark{fab_neg}."
         )
 
@@ -1476,6 +2038,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
         fabric_filename: str = "",
         is_material_swatch: bool = False,
         has_ref: bool = False,
+        total_tiles_override: Optional[int] = None,
     ) -> Dict[str, Any]:
         if is_material_swatch:
             return super()._build_hd_item(
@@ -1499,6 +2062,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 is_material_swatch=True,
             )
 
+        directives = parse_v8_user_fabric_directives(user_notes_clean)
         pack = self.build_v8_reference_pack(
             mode="hd",
             furniture_name=furniture_name,
@@ -1510,6 +2074,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
             tipo_mueble=furn_item,
             medidas_texto=medidas_texto,
             has_ref=has_ref,
+            custom_notes=user_notes_clean,
+            total_tiles_override=total_tiles_override,
         )
         slots = self._slots_from_v8_pack(pack)
         primary_furn_file = slots["primary_furn_file"]
@@ -1527,6 +2093,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 fabric_label=fabric_label,
                 reframe_white_bg=white_bg_enabled,
                 is_room_scene=False,
+                directives=directives,
             )
         else:
             mat_ais = (
@@ -1554,10 +2121,24 @@ class AIPromptServiceV8(AIPromptServiceV7):
             else ""
         )
         ref_dal = f" Use Image {slots['ref_idx']} for supplementary structural angle details." if slots.get("ref_idx") else ""
-        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
+        notes_ais = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="ais",
+            mode_style="bullet",
+        )
+        notes_dal = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="dal",
+        )
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
-        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label)}" if has_fabric else ""
+        fab_neg = f", {self._fabric_negative_terms(fa, fabric_label, directives=directives)}" if has_fabric else ""
 
         prompt_ais = (
             "[V8 8K ULTRA-HD COMMERCIAL RESTORATION · ZERO GEOMETRY DRIFT]\n"
@@ -1579,7 +2160,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             f"{slots['dal_photo_map']}\n"
             "Enhance ONLY what exists inside Image 1 — remove blur and compression while preserving exact geometry.\n"
             f"Materials: {mat_dal}\n"
-            f"Geometry: {profile['geometry_rule']} {profile['dimensions_rule']}{ref_dal}\n"
+            f"Geometry: {profile['geometry_rule']} {profile['dimensions_rule']}{ref_dal}{notes_dal}\n"
             f"Background: {bg_line}\n"
             f"Avoid: blur, pixelation, plastic smoothing, text, watermark{fab_neg}."
         )
@@ -1617,6 +2198,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
         ref_filename: str = "",
         fabric_analysis: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
+        furniture_name: str = "",
+        total_tiles_override: Optional[int] = None,
     ) -> Tuple[Dict[str, str], List[str]]:
         dims_part = f"\n- REAL-WORLD SCALE: {medidas_texto}" if medidas_texto else ""
         notes_part = f"\n- MANDATORY NOTES: {user_notes_clean}" if user_notes_clean else ""
@@ -1624,6 +2207,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
         if batch_mode == "clonar_color":
             pack_cc = self.build_v8_reference_pack(
                 mode="clonar_color",
+                furniture_name=furniture_name or furn_item,
                 batch_ref_filename=ref_filename or ref_label,
                 batch_ref_bytes=ref_bytes,
                 target_view=(view_name, view_bytes),
@@ -1677,17 +2261,22 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 slots_cc["guide"],
             )
 
-        # Modo vistas_tela en V8 con paquete sincronizado (3 ranuras con tela; 1 ranura si no se adjuntó tela)
+        # Modo vistas_tela en V8 con paquete sincronizado limpio (2 fotos con tela; 1 foto si no se adjuntó tela)
         fa = fabric_analysis or {}
         has_fab_vt = bool(ref_bytes or ref_label or ref_filename or fa)
+        directives = parse_v8_user_fabric_directives(user_notes_clean)
+        cal_lbls = _describe_v8_calibration_labels(directives)
         pack = self.build_v8_reference_pack(
             mode="vistas_tela",
+            furniture_name=furniture_name or furn_item,
             fabric_label=ref_label if has_fab_vt else "",
             fabric_filename=(ref_filename or ref_label) if has_fab_vt else "",
             fabric_bytes=ref_bytes if (has_fab_vt and ref_bytes) else None,
             target_view=(view_name, view_bytes),
             tipo_mueble=furn_item,
             medidas_texto=medidas_texto,
+            custom_notes=user_notes_clean,
+            total_tiles_override=total_tiles_override,
         )
         slots = self._slots_from_v8_pack(pack)
         view_file = slots["primary_furn_file"]
@@ -1705,43 +2294,58 @@ class AIPromptServiceV8(AIPromptServiceV7):
             except Exception:
                 pass
 
-        if slots.get("canvas_idx") and slots.get("fabric_idx"):
+        if slots.get("canvas_idx"):
             c_idx = slots["canvas_idx"]
-            f_idx = slots["fabric_idx"]
             fab_ais, fab_dal = self._build_v8_fabric_mandate_blocks(
                 fa=fa,
                 fabric_label=ref_label,
                 canvas_idx=c_idx,
                 canvas_file=slots.get("canvas_file", ""),
-                swatch_idx=f_idx,
+                swatch_idx=slots.get("fabric_idx"),
                 swatch_file=slots.get("fabric_file", ""),
                 total_tiles=slots.get("total_tiles", 196),
                 protect_non_upholstered_from=f'Image 1 ("{view_file}")',
                 reframe_white_bg=white_bg_enabled,
                 is_room_scene=False,
+                directives=directives,
             )
-            fab_neg = self._fabric_negative_terms(fa, ref_label)
+            fab_neg = self._fabric_negative_terms(fa, ref_label, directives=directives)
+            notes_ais_vt = _format_v8_user_notes_block(
+                directives,
+                has_fabric=True,
+                canvas_idx=c_idx,
+                canvas_file=slots.get("canvas_file", ""),
+                style="ais",
+                mode_style="bullet",
+            )
+            notes_dal_vt = _format_v8_user_notes_block(
+                directives,
+                has_fabric=True,
+                canvas_idx=c_idx,
+                canvas_file=slots.get("canvas_file", ""),
+                style="dal",
+            )
             bg_clause = (
                 "pure seamless solid white background (#FFFFFF, RGB 255,255,255) at exact 2054 x 2054 px with 0% ground shadow, 0% contact shadow, 0% drop shadow, and 0% floor reflections (NEVER keep tiled fabric background in output)"
                 if white_bg_enabled
                 else f'preserve original scene background of Image 1 ("{view_file}") (NEVER keep tiled fabric conditioning background in output)'
             )
             local_ais = (
-                f"INSTRUCTION (V8 BATCH MULTI-VIEW UPHOLSTERY ENGINE): Analyze target furniture view Image 1 (\"{view_file}\" — '{furn_item}'), "
-                f'V8 scale conditioning canvas Image {c_idx} ("{slots["canvas_file"]}"), and V8 +30% calibrated swatch Image {f_idx} ("{slots["fabric_file"]}").\n\n'
+                f"INSTRUCTION (V8 BATCH MULTI-VIEW UPHOLSTERY ENGINE): Analyze target furniture view Image 1 (\"{view_file}\" — '{furn_item}') "
+                f'and V8 scale & calibrated-fabric conditioning canvas Image {c_idx} ("{slots["canvas_file"]}" — {cal_lbls["cal_tag_en"]}).\n\n'
                 f"{slots['header_block']}\n\n"
                 f'GENERATE: Completely erase 100% of the old upholstery color/fabric on Image 1 ("{view_file}") and wrap 100% of EL CASCO COMPLETO and all cushions '
-                "in the V8 +30% calibrated multi-tone fabric at exact 1:1 miniature scale.\n\n"
+                f"in the V8 calibrated ({cal_lbls['cal_tag_short']}) multi-tone fabric from Image {c_idx} at exact 1:1 miniature scale.\n\n"
                 f'GEOMETRY & SCENE CONSTRAINT: Lock exact camera angle ({view_cam}), 3D shape ({view_geom}), seams, piping, folds, and exposed wood/metal legs from Image 1 ("{view_file}"). '
-                f"ENVIRONMENT: {bg_clause}.{dims_part}{notes_part}\n\n"
-                f"V8 SCALE, +30% CALIBRATION & MULTI-TONE CASCO LOCK:\n{fab_ais}\n\n"
+                f"ENVIRONMENT: {bg_clause}.{dims_part}{notes_ais_vt}\n\n"
+                f"V8 SCALE, CALIBRATION ({cal_lbls['header_tag']}) & MULTI-TONE CASCO LOCK:\n{fab_ais}\n\n"
                 f"Negative Prompt:\n{fab_neg}, altered camera angle, altered wood legs, text, watermark, collage."
             )
             local_dal = (
                 f'Precision V8 upholstery replacement on target view Image 1 ("{view_file}" — {furn_item}, camera lock: {view_cam}).\n'
                 f"{slots['dal_photo_map']}\n"
                 f"Materials: {fab_dal}.\n"
-                f"Environment: {bg_clause}.{dims_part}{notes_part}\n"
+                f"Environment: {bg_clause}.{dims_part}{notes_dal_vt}\n"
                 f"Avoid: {fab_neg}, altered camera angle, altered wood legs, text, watermark, collage."
             )
             local_mj = (
@@ -1779,6 +2383,46 @@ class AIPromptServiceV8(AIPromptServiceV7):
             slots["guide"],
         )
 
+    def _resolve_prompt_total_tiles_override(
+        self,
+        has_fabric: bool,
+        precomputed_pack: Optional[List[Dict[str, Any]]],
+        furniture_bytes_list: Optional[List[bytes]],
+        furniture_analysis: Optional[Dict[str, Any]],
+        type_hint: str,
+        medidas_texto: str,
+        directives: V8UserFabricDirectives,
+    ) -> Optional[int]:
+        if not has_fabric:
+            return None
+        pack_tiles = _extract_v8_pack_total_tiles(precomputed_pack)
+        if pack_tiles is not None:
+            return pack_tiles
+        if _has_v8_specific_width_hint(f"{type_hint} {medidas_texto}"):
+            return None
+        cutout_w: Optional[float] = None
+        if furniture_bytes_list:
+            first_fb = furniture_bytes_list[0]
+            if first_fb and len(first_fb) >= 64:
+                cutout_w = _infer_cutout_width_cm_from_bytes_v8(first_fb)
+        if cutout_w is None and isinstance(furniture_analysis, dict):
+            raw_cw = furniture_analysis.get("v8_inferred_cutout_width_cm")
+            if raw_cw is not None:
+                try:
+                    cutout_w = float(raw_cw)
+                except Exception:
+                    cutout_w = None
+        if cutout_w is None:
+            return None
+        w_base = infer_furniture_width_cm_v8(None, type_hint, medidas_texto)
+        _, g_n = compute_v8_tile_px(
+            1280,
+            furniture_width_cm=max(w_base, cutout_w),
+            furniture_type=type_hint,
+            texture_scale_factor=directives.texture_scale_factor,
+        )
+        return g_n * g_n
+
     # ------------------------------------------------------------------
     # PUNTO DE ENTRADA ÚNICO V8 (9 MODOS + 3/4 DERECHA 2054x2054)
     # ------------------------------------------------------------------
@@ -1807,17 +2451,26 @@ class AIPromptServiceV8(AIPromptServiceV7):
         wood_filename: str = "",
         fabric_filename: str = "",
         batch_ref_filename: str = "",
+        furniture_bytes_list: Optional[List[bytes]] = None,
+        fabric_bytes: Optional[bytes] = None,
+        precomputed_pack: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        _ = classic_numbering
+        _ = classic_numbering, fabric_bytes
         if mode not in MODES:
             raise ValueError(f"Modo V8 desconocido: {mode}")
 
         ma = furniture_analysis or {}
         wa = wood_analysis or {}
         fa = dict(fabric_analysis or {})
+        user_notes_clean = (notas_usuario or "").strip()
+        directives = parse_v8_user_fabric_directives(user_notes_clean)
 
         if batch_ref_bytes and mode == "vistas_tela" and not fa:
-            fa = self.analyze_fabric_v8_local(batch_ref_bytes, sample_name=fabric_filename or fabric_label)
+            fa = self.analyze_fabric_v8_local(
+                batch_ref_bytes,
+                sample_name=fabric_filename or fabric_label or batch_ref_filename,
+                custom_notes=user_notes_clean,
+            )
 
         primary_fn_hint = (
             (furniture_filenames[0] if furniture_filenames else "")
@@ -1834,7 +2487,6 @@ class AIPromptServiceV8(AIPromptServiceV7):
         furn_item = (tipo_mueble or "").strip() or ai_item_eff or type_hint or furniture_name or "Furniture Piece"
         geom_struct = ma.get("geometric_structure") or "exact 3D silhouette, proportions, and joinery from the reference"
         existing_mats = ma.get("existing_materials") or "authentic materials, tones, and finishes from the reference"
-        user_notes_clean = (notas_usuario or "").strip()
 
         profile_search = f"{furn_item} {type_hint} {furniture_name} {primary_fn_hint} {medidas_texto} {user_notes_clean}"
         profile = self.detect_furniture_profile(type_hint or furn_item, profile_search, geom_struct)
@@ -1845,6 +2497,16 @@ class AIPromptServiceV8(AIPromptServiceV7):
         f_label = (fabric_label or fabric_filename or fa.get("name") or "Muestra de tela") if has_fabric else ""
         w_file_arg = (wood_filename or wood_label or w_label) if has_wood else ""
         f_file_arg = (fabric_filename or fabric_label or f_label) if has_fabric else ""
+
+        tiles_override = self._resolve_prompt_total_tiles_override(
+            has_fabric=has_fabric,
+            precomputed_pack=precomputed_pack,
+            furniture_bytes_list=furniture_bytes_list,
+            furniture_analysis=ma,
+            type_hint=type_hint,
+            medidas_texto=medidas_texto,
+            directives=directives,
+        )
 
         items: List[Dict[str, Any]] = []
         master_ais = ""
@@ -1886,6 +2548,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                             furniture_filenames=furniture_filenames,
                             wood_filename=w_file_arg,
                             fabric_filename=f_file_arg,
+                            total_tiles_override=tiles_override,
                         )
                     )
                 else:
@@ -1911,6 +2574,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                             furniture_filenames=furniture_filenames,
                             wood_filename=w_file_arg,
                             fabric_filename=f_file_arg,
+                            total_tiles_override=tiles_override,
                         )
                     )
 
@@ -1926,6 +2590,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 medidas_texto=medidas_texto,
                 has_ref=has_reference_imgs,
                 include_anchor=False,
+                custom_notes=user_notes_clean,
+                total_tiles_override=tiles_override,
             )
             slots_master = self._slots_from_v8_pack(pack_master)
             primary_furn_file = slots_master["primary_furn_file"]
@@ -1941,6 +2607,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 fabric_label=f_label,
                 reframe_white_bg=True,
                 is_room_scene=False,
+                directives=directives,
             )
             room_intro, companions = self._build_environment_room_context(profile, furn_item, lugar_casa)
             dims_bp = []
@@ -1956,10 +2623,24 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 )
             dims_summary = ", ".join(dims_bp) if dims_bp else (medidas_texto or "Exact proportions from Image 1")
             angles = profile["angles"]
-            notes_block = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
+            notes_block = _format_v8_user_notes_block(
+                directives,
+                has_fabric=has_fabric,
+                canvas_idx=slots_master.get("canvas_idx"),
+                canvas_file=slots_master.get("canvas_file", ""),
+                style="ais",
+                mode_style="bullet",
+            )
+            notes_dal_master = _format_v8_user_notes_block(
+                directives,
+                has_fabric=has_fabric,
+                canvas_idx=slots_master.get("canvas_idx"),
+                canvas_file=slots_master.get("canvas_file", ""),
+                style="dal",
+            )
             dim_line = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
             mirror_line = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
-            fab_neg_master = f", {self._fabric_negative_terms(fa, f_label)}" if has_fabric else ""
+            fab_neg_master = f", {self._fabric_negative_terms(fa, f_label, directives=directives)}" if has_fabric else ""
 
             master_ais = (
                 "[V8 COMMERCIAL 7-IMAGE CATALOG SERIES · TURN-BY-TURN SEQUENTIAL GENERATION]\n"
@@ -1997,8 +2678,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 f"5. Overhead Plan View (90°): {angles['vista_superior_cenital']}\n"
                 f"6. Technical Isometric CAD Blueprint: Pure black line art on #FFFFFF, zero shading/color, dimension arrows for: {dims_summary}.\n"
                 f"7. Client Home Interior (Distant Wide Shot): Placed {room_intro}; {companions} Contrasting neutral palette.\n\n"
-                f"Materials & Structure: {mat_dal} {profile['geometry_rule']} {profile['dimensions_rule']}"
-                f"{' User notes: ' + user_notes_clean if user_notes_clean else ''}\n"
+                f"Materials & Structure: {mat_dal} {profile['geometry_rule']} {profile['dimensions_rule']}{notes_dal_master}\n"
                 "Views 1–6 on pure solid white #FFFFFF (RGB 255,255,255) with 0% ground/contact/drop shadows (NEVER keep tiled fabric background in output)."
             )
             midjourney = items[0]["midjourney_v6"] if items else ""
@@ -2017,6 +2697,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     wa, fa, has_wood, has_fabric, has_reference_imgs, w_label, f_label,
                     lugar_casa, user_notes_clean, use_anchor=True, medidas_texto=medidas_texto,
                     furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
+                    total_tiles_override=tiles_override,
                 )
             else:
                 it = self._build_single_studio_view_prompt_v8(
@@ -2025,6 +2706,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     user_notes_clean, white_bg_enabled, use_anchor=(vista_id in ANCHOR_VIEWS),
                     medidas_texto=medidas_texto,
                     furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
+                    total_tiles_override=tiles_override,
                 )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2036,6 +2718,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 camera_angle=ma.get("camera_angle", ""), medidas_texto=medidas_texto,
                 furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
                 has_wood=has_wood, has_fabric=has_fabric, has_ref=has_reference_imgs,
+                total_tiles_override=tiles_override,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2046,6 +2729,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 wa, fa, has_wood, has_fabric, has_reference_imgs, w_label, f_label,
                 lugar_casa, user_notes_clean, use_anchor=False, medidas_texto=medidas_texto,
                 furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
+                total_tiles_override=tiles_override,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2065,19 +2749,37 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 medidas_texto=medidas_texto,
                 furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
                 has_ref=has_reference_imgs,
+                total_tiles_override=tiles_override,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
 
         elif mode == "hd":
-            explicit_furn_hd = any(
-                w in f"{tipo_mueble or ''} {user_notes_clean}".lower()
-                for w in self._FURNITURE_KEYWORDS
+            hd_furn_kw = tuple(self._FURNITURE_KEYWORDS) + (
+                "seccional",
+                "sectional",
+                "sala",
+                "chaise",
+                "esquinero",
+                "esquinera",
+                "modular",
+                "loveseat",
+                "rinconera",
             )
-            explicit_swatch_hd = any(
-                w in f"{tipo_mueble or ''} {furniture_name or ''} {user_notes_clean}".lower()
-                for w in self._SWATCH_KEYWORDS
+            hd_norm_txt = re.sub(
+                r"[_/\-]+",
+                " ",
+                f"{tipo_mueble or ''} {furniture_name or ''} {user_notes_clean}".lower(),
             )
+            tipo_norm_hd = re.sub(r"[_/\-]+", " ", (tipo_mueble or "").lower())
+            explicit_swatch_tipo = any(w in tipo_norm_hd for w in self._SWATCH_KEYWORDS)
+            explicit_furn_tipo = (not explicit_swatch_tipo) and any(
+                re.search(rf"\b{re.escape(w)}\b", tipo_norm_hd) for w in hd_furn_kw
+            )
+            explicit_furn_hd = bool(has_fabric or has_wood) or any(
+                re.search(rf"\b{re.escape(w)}\b", hd_norm_txt) for w in hd_furn_kw
+            )
+            explicit_swatch_hd = any(w in hd_norm_txt for w in self._SWATCH_KEYWORDS)
             ai_swatch_flag = bool(ma.get("is_material_swatch")) or any(
                 t in f"{ma.get('furniture_item', '')} {ma.get('geometric_structure', '')}".lower()
                 for t in (
@@ -2089,13 +2791,17 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     "zero 3d furniture",
                 )
             )
-            is_hd_swatch = (not explicit_furn_hd) and (explicit_swatch_hd or ai_swatch_flag)
+            if (not has_fabric) and (not has_wood) and bool(ma.get("is_material_swatch")) and not explicit_furn_tipo:
+                is_hd_swatch = True
+            else:
+                is_hd_swatch = (not explicit_furn_hd) and (explicit_swatch_hd or ai_swatch_flag)
             it = self._build_hd_item_v8(
                 furn_item, furniture_name, profile, geom_struct, existing_mats,
                 wa, fa, has_wood, has_fabric, w_label, f_label,
                 user_notes_clean, white_bg_enabled, medidas_texto=medidas_texto,
                 furniture_filenames=furniture_filenames, wood_filename=w_file_arg, fabric_filename=f_file_arg,
                 is_material_swatch=is_hd_swatch, has_ref=has_reference_imgs,
+                total_tiles_override=tiles_override,
             )
             items = [it]
             midjourney = it.get("midjourney_v6", "")
@@ -2105,15 +2811,36 @@ class AIPromptServiceV8(AIPromptServiceV7):
             if not views:
                 raise ValueError("Sube al menos una vista objetivo para procesar el lote.")
             ref_b = batch_ref_bytes or b""
+            vt_tiles_override: Optional[int] = None
             if mode == "vistas_tela":
                 has_fab_vt = bool(has_fabric or batch_ref_bytes or batch_ref_filename)
-                ref_lbl = f_label if has_fab_vt else ""
-                ref_fname = (f_file_arg or batch_ref_filename) if has_fab_vt else ""
+                ref_lbl = (fabric_label or fabric_filename or batch_ref_filename or f_label) if has_fab_vt else ""
+                ref_fname = (fabric_filename or batch_ref_filename or fabric_label or f_file_arg) if has_fab_vt else ""
                 ref_file_canon = (
                     self._canonical_photo_filename(ref_fname or ref_lbl, "tela.png")
                     if has_fab_vt
                     else ""
                 )
+                if has_fab_vt:
+                    vt_tiles_override = _extract_v8_pack_total_tiles(precomputed_pack)
+                    if vt_tiles_override is None and not _has_v8_specific_width_hint(f"{type_hint} {medidas_texto}"):
+                        max_cw_vt: Optional[float] = None
+                        for _, vb_cand in views:
+                            if vb_cand and len(vb_cand) >= 64:
+                                cw_cand = _infer_cutout_width_cm_from_bytes_v8(vb_cand)
+                                if cw_cand is not None:
+                                    max_cw_vt = cw_cand if max_cw_vt is None else max(max_cw_vt, cw_cand)
+                        if max_cw_vt is not None:
+                            w_base_vt = infer_furniture_width_cm_v8(None, type_hint, medidas_texto)
+                            _, g_vt = compute_v8_tile_px(
+                                1280,
+                                furniture_width_cm=max(w_base_vt, max_cw_vt),
+                                furniture_type=type_hint,
+                                texture_scale_factor=directives.texture_scale_factor,
+                            )
+                            vt_tiles_override = g_vt * g_vt
+                    if vt_tiles_override is None:
+                        vt_tiles_override = tiles_override
             else:
                 ref_lbl = (
                     batch_ref_filename
@@ -2145,6 +2872,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     ref_filename=ref_file_canon,
                     fabric_analysis=fa if mode == "vistas_tela" else None,
                     api_key=api_key,
+                    furniture_name=furniture_name,
+                    total_tiles_override=vt_tiles_override if mode == "vistas_tela" else None,
                 )
                 return vname, vbytes, pdict, guide_list
 
@@ -2231,8 +2960,11 @@ class AIPromptServiceV8(AIPromptServiceV7):
         furniture_filenames: Optional[List[str]] = None,
         wood_filename: str = "",
         fabric_filename: str = "",
+        furniture_bytes_list: Optional[List[bytes]] = None,
+        fabric_bytes: Optional[bytes] = None,
+        precomputed_pack: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        _ = classic_numbering
+        _ = classic_numbering, fabric_bytes
         ma = furniture_analysis or {}
         wa = wood_analysis or {}
         fa = fabric_analysis or {}
@@ -2251,6 +2983,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
         geom_struct = ma.get("geometric_structure") or "exact 3D silhouette, proportions, and joinery from the reference"
         existing_mats = ma.get("existing_materials") or "authentic materials, tones, and finishes from the reference"
         user_notes_clean = (notas_usuario or "").strip()
+        directives = parse_v8_user_fabric_directives(user_notes_clean)
+        cal_lbls = _describe_v8_calibration_labels(directives)
 
         profile_search = f"{furn_item} {type_hint_34} {clean_base_name} {primary_fn_34} {medidas_texto} {user_notes_clean}"
         profile = self.detect_furniture_profile(type_hint_34 or furn_item, profile_search, geom_struct)
@@ -2261,6 +2995,16 @@ class AIPromptServiceV8(AIPromptServiceV7):
         f_label = fabric_label or fabric_filename or fa.get("name") or "Muestra de tela"
         w_file_arg = wood_filename or wood_label
         f_file_arg = fabric_filename or fabric_label
+
+        tiles_override_34 = self._resolve_prompt_total_tiles_override(
+            has_fabric=has_fabric,
+            precomputed_pack=precomputed_pack,
+            furniture_bytes_list=furniture_bytes_list,
+            furniture_analysis=ma,
+            type_hint=type_hint_34,
+            medidas_texto=medidas_texto,
+            directives=directives,
+        )
 
         pack = self.build_v8_reference_pack(
             mode="vista_34_der_2054",
@@ -2274,6 +3018,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
             medidas_texto=medidas_texto,
             has_ref=has_reference_imgs,
             include_anchor=False,
+            custom_notes=user_notes_clean,
+            total_tiles_override=tiles_override_34,
         )
         slots = self._slots_from_v8_pack(pack)
         primary_furn_file = slots["primary_furn_file"]
@@ -2290,6 +3036,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             fabric_label=f_label,
             reframe_white_bg=True,
             is_room_scene=False,
+            directives=directives,
         )
 
         angle_right_ais = (
@@ -2297,15 +3044,29 @@ class AIPromptServiceV8(AIPromptServiceV7):
             "(front facade oriented toward the right side of the frame, left side panel/armrest receding cleanly in 3D depth), "
             "camera slightly elevated 12°–15° at studio eye-line."
         )
-        notes_ais = f"\n- MANDATORY USER NOTES: {user_notes_clean}" if user_notes_clean else ""
-        notes_dal = f" Mandatory user directives: {user_notes_clean}." if user_notes_clean else ""
+        notes_ais = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="ais",
+            mode_style="bullet",
+        )
+        notes_dal = _format_v8_user_notes_block(
+            directives,
+            has_fabric=has_fabric,
+            canvas_idx=slots.get("canvas_idx"),
+            canvas_file=slots.get("canvas_file", ""),
+            style="dal",
+        )
         mirror_ais = f"\n- {profile['mirror_optics']}" if profile["mirror_optics"] else ""
         dim_ais = f"\n- SCALE & PROPORTIONS: {profile['dimensions_rule']}" if profile["dimensions_rule"] else ""
-        fab_neg_34 = f", {self._fabric_negative_terms(fa, f_label)}" if has_fabric else ""
+        fab_neg_34 = f", {self._fabric_negative_terms(fa, f_label, directives=directives)}" if has_fabric else ""
         name_note = (
             f"\nOUTPUT FILE NAME: {out_fname} "
             "(keep this exact original photo filename for delivery/saving; do NOT render any filename text inside the image)."
         )
+        hdr_cal_34 = f"{cal_lbls['header_tag']} " if has_fabric else ""
 
         prompt_ais = (
             "[V8 COMMERCIAL MASTER CUTOUT · 3/4 FACING RIGHT · PURE WHITE #FFFFFF · ZERO SHADOWS · 2054x2054 PX]\n"
@@ -2319,7 +3080,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             "PURE WHITE BACKGROUND & STRICT ZERO-SHADOW MANDATE:\n"
             "- BACKGROUND: 100% pure seamless solid digital white (#FFFFFF, RGB 255,255,255) everywhere around and beneath the legs/base — NEVER render tiled fabric wallpaper from the conditioning canvas!\n"
             "- ABSOLUTELY NO SHADOWS (0% SOMBRAS): 0% ground shadow, 0% contact shadow under legs, 0% drop shadow, 0% ambient floor shadow, 0% floor reflection, 0% studio horizon line.\n\n"
-            "V8 MATERIAL, +30% MULTI-TONE CASCO TEXTURE & GEOMETRY LOCK:\n"
+            f"V8 MATERIAL, {hdr_cal_34}MULTI-TONE CASCO TEXTURE & GEOMETRY LOCK:\n"
             f"{mat_ais}\n"
             f"- GEOMETRY RULE: {profile['geometry_rule']}{dim_ais}{mirror_ais}{notes_ais}\n"
             "- OPTICS: 100MP medium-format camera, 80mm prime lens at f/11, even shadowless 5400K wrap-around softbox lighting, tack-sharp micro-texture edge-to-edge.\n\n"
@@ -2358,7 +3119,7 @@ class AIPromptServiceV8(AIPromptServiceV7):
             "checklist": [
                 "¿Está en posición 3/4 mirando hacia la derecha?",
                 "¿Fondo blanco puro (#FFFFFF, RGB 255,255,255) y 0% sombras (sin rastro del mosaico guía)?",
-                "¿La tela V8 (+30%, multitono a escala 1:1) cubrió el 100% del casco y cojines protegiendo patas?",
+                f"¿La tela V8 ({cal_lbls['cal_tag_short']}, multitono a {cal_lbls['scale_short']}) cubrió el 100% del casco y cojines protegiendo patas?",
                 "¿La imagen final mide exactamente 2054 × 2054 px?",
             ],
             "needs_anchor": False,
@@ -2395,6 +3156,31 @@ class AIPromptServiceV8(AIPromptServiceV7):
     # ------------------------------------------------------------------
     # GENERACIÓN DIRECTA NANO BANANA V8 + GUARDIA DE BORDE #FFFFFF >= 95%
     # ------------------------------------------------------------------
+    @staticmethod
+    def format_image_2054_white(
+        raw_bytes: bytes,
+        target_px: int = 2054,
+        pure_white_border: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Normaliza imágenes de alta profundidad (I;16/I;16B/I;16L/I;16N/I/F) a RGB 8-bit sin pérdida
+        antes de delegar a AIPromptServiceV7.format_image_2054_white (0 líneas tocadas en V7).
+        """
+        with Image.open(io.BytesIO(raw_bytes)) as src:
+            if src.mode.startswith("I;16") or src.mode in ("I", "F"):
+                img = ImageOps.exif_transpose(src)
+                rgb = _to_rgb_white_safe(img)
+                buf = io.BytesIO()
+                rgb.save(buf, format="PNG", compress_level=1)
+                norm_bytes = buf.getvalue()
+            else:
+                norm_bytes = raw_bytes
+        return AIPromptServiceV7.format_image_2054_white(
+            norm_bytes,
+            target_px=target_px,
+            pure_white_border=pure_white_border,
+        )
+
     @staticmethod
     def _compute_white_border_purity(png_bytes: bytes, border_frac: float = 0.05) -> float:
         """Mide el porcentaje de píxeles exactamente #FFFFFF (255,255,255) en la franja exterior del 5%."""
@@ -2441,11 +3227,16 @@ class AIPromptServiceV8(AIPromptServiceV7):
         allow_flux_fallback: bool = False,
         furniture_width_cm: Optional[float] = None,
         furniture_type: str = "",
+        custom_notes: str = "",
+        boost: Optional[float] = None,
+        texture_scale_factor: Optional[float] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
         Generación multimodal real V8 en 2054x2054 px:
           - allow_flux_fallback=False por defecto (solo modelos reales de imagen Gemini).
-          - Inyecta la tripleta V8 [Mueble HD, Lienzo Escala V8 1280px, Muestra +30% V8] cuando hay tela.
+          - Inyecta el par limpio de 2 fotos [Mueble HD, Lienzo Escala V8 1280px] cuando hay tela
+            (sin 3.ª foto macro competidora; 3 fotos únicamente si se adjunta madera).
+          - Respeta directivas dinámicas de claridad y escala de `custom_notes` en el Lienzo V8.
           - Verifica pureza >= 95% en el borde exterior 5% (#FFFFFF) y reintenta con hoja de mosaico
             puro si algún modelo filtrara baldosas al fondo.
         """
@@ -2461,6 +3252,12 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 from google.genai import types
 
                 orig_furn_pil = self._prepare_image(primary_bytes, max_dim=1024)
+                directives, eff_boost, eff_tsf = _resolve_v8_fabric_params(
+                    custom_notes=custom_notes,
+                    boost=boost,
+                    texture_scale_factor=texture_scale_factor,
+                )
+                cal_lbls = _describe_v8_calibration_labels(directives, eff_boost)
                 v8_art: Optional[V8ConditioningArtifacts] = None
                 if fabric_bytes and len(fabric_bytes) >= 64:
                     try:
@@ -2469,7 +3266,9 @@ class AIPromptServiceV8(AIPromptServiceV7):
                             fabric_bytes=fabric_bytes,
                             furniture_width_cm=furniture_width_cm,
                             furniture_type=furniture_type,
-                            boost=0.30,
+                            boost=eff_boost,
+                            texture_scale_factor=eff_tsf,
+                            calibration_label=cal_lbls["cal_es_desc"],
                         )
                     except Exception:
                         v8_art = None
@@ -2485,7 +3284,6 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     if v8_art is not None:
                         slot2_bytes = v8_art.mosaic_only_png if use_mosaic_only_slot else v8_art.canvas_png
                         seq.append(self._prepare_image(slot2_bytes, max_dim=1280, lossless=True))
-                        seq.append(self._prepare_image(v8_art.calibrated_swatch_png, max_dim=1024, lossless=True))
                     elif fabric_bytes:
                         seq.append(self._prepare_image(fabric_bytes, max_dim=1024, lossless=True))
                     if wood_bytes:
@@ -2501,7 +3299,13 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     m for m in DEFAULT_V8_IMAGE_MODELS if m != preferred_image_model
                 ]
 
+                best_formatted: Optional[Dict[str, Any]] = None
+                best_purity: float = -1.0
+                attempted_models = 0
+                quota_errors = 0
+
                 for m in img_models:
+                    attempted_models += 1
                     try:
                         for retry_idx in (0, 1):
                             contents_img = _assemble_contents(use_mosaic_only_slot=(retry_idx == 1))
@@ -2538,18 +3342,37 @@ class AIPromptServiceV8(AIPromptServiceV7):
                             formatted["model"] = m
                             formatted["is_fallback"] = False
                             formatted["border_white_purity"] = round(purity, 4)
-                            if (not pure_white_border) or purity >= 0.95 or v8_art is None or retry_idx == 1:
+                            if purity > best_purity:
+                                best_formatted = formatted
+                                best_purity = purity
+                            if (not pure_white_border) or purity >= 0.95 or v8_art is None:
                                 return formatted, None
+                            if retry_idx == 1 and best_formatted is not None:
+                                return best_formatted, None
+                        if best_formatted is not None:
+                            return best_formatted, None
                     except Exception as e:
                         err_up = str(e).upper()
                         last_err_msg = self.format_gemini_error(e)
                         print(f"[AIPromptServiceV8] Aviso generación de imagen ({m}): {e}")
-                        if any(tok in err_up for tok in ("429", "RESOURCE_EXHAUSTED", "QUOTA")):
-                            self._img_quota_exhausted_until = time.time() + 300.0
-                            break
                         if any(tok in err_up for tok in ("LEAKED", "API_KEY_INVALID", "API KEY NOT VALID", "401", "403")):
+                            try:
+                                from services.gemini_runtime import mark_key_rejected
+                                mark_key_rejected(key)
+                            except Exception:
+                                pass
                             break
+                        if best_formatted is not None:
+                            return best_formatted, None
+                        if any(tok in err_up for tok in ("429", "RESOURCE_EXHAUSTED", "QUOTA")):
+                            quota_errors += 1
+                            continue
                         continue
+
+                if best_formatted is not None:
+                    return best_formatted, None
+                if attempted_models > 0 and quota_errors == attempted_models:
+                    self._img_quota_exhausted_until = time.time() + 300.0
             except Exception as e_outer:
                 last_err_msg = self.format_gemini_error(e_outer)
 
@@ -2580,6 +3403,11 @@ class AIPromptServiceV8(AIPromptServiceV7):
         preferred_image_model: str = "gemini-2.5-flash-image",
         api_key: Optional[str] = None,
         allow_flux_fallback: bool = False,
+        furniture_width_cm: Optional[float] = None,
+        furniture_type: str = "",
+        custom_notes: str = "",
+        boost: Optional[float] = None,
+        texture_scale_factor: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         img_dict, err_msg = self.generate_catalog_photo(
             prompt_text=prompt_text,
@@ -2591,6 +3419,11 @@ class AIPromptServiceV8(AIPromptServiceV7):
             preferred_image_model=preferred_image_model,
             api_key=api_key,
             allow_flux_fallback=allow_flux_fallback,
+            furniture_width_cm=furniture_width_cm,
+            furniture_type=furniture_type,
+            custom_notes=custom_notes,
+            boost=boost,
+            texture_scale_factor=texture_scale_factor,
         )
         self.last_image_error = err_msg
         return img_dict

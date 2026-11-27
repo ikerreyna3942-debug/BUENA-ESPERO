@@ -1,19 +1,21 @@
 """
-Motor V8 de Física Textil, Calibración CIELAB +30% y Lienzo Maestro de Escala (100% Pillow puro).
+Motor V8 de Física Textil, Calibración CIELAB y Lienzo Maestro de Escala (100% Pillow puro).
 
-Implementa los 4 pilares técnicos de Estudio IA V8 sin dependencias externas (sin numpy/scipy/cv2)
-y con huella de memoria acotada (< 10 MB RAM, compatible con Render 512 MB):
+Implementa los pilares técnicos de Estudio IA V8 sin dependencias externas (sin numpy/scipy/cv2)
+y con huella de memoria acotada (< 12 MB RAM, compatible con Render 512 MB):
   1. extract_clean_swatch_roi_v8: extracción genérica y determinista de regiones limpias con
-     relieve real de figuras (descartando sombras diagonales de doblez y esquinas con etiquetas/parches).
+     relieve real de figuras (descartando sombras diagonales de doblez y esquinas con etiquetas/parches)
+     con expansión uniforme de muestras compactas sin pliegues (7 compuertas estrictas).
   2. calibrate_fabric_lightness_v8: aplanado homomórfico de viñeteo macro + curva perceptual C¹
-     Soft-Knee +30% en CIELAB + preservación de micro-relieve entre figuras + tope sRGB <= 243
-     (protegiendo el recorte #FFFFFF >= 245 de format_image_2054_white).
+     Soft-Knee en CIELAB + compresión suave de altas luces pre-lab2rgb (L* 95.0->98.4) +
+     modulación de valles de alto contraste + tope sRGB <= 243 (protegiendo #FFFFFF >= 245).
   3. analyze_fabric_multitone_v8: análisis policromático a escala motivo (~6x6 px) en CIELAB
      extrayendo hasta 7 familias cromáticas de figuras/hebras, periodo espacial por autocorrelación
      y alternancia multitono entre sub-regiones.
   4. compute_v8_tile_px, make_toroidal_seamless_tile_v8 y build_v8_conditioning_canvas: síntesis de
-     mosaico continuo sin costuras (81 a 289 baldosas reducidas en lienzo 1280x1280) adaptado al
-     ancho físico del mueble, con el mueble alejado (~58%) al centro y halo/marco aislador #FFFFFF.
+     mosaico continuo sin costuras en O(log N) (grid_n en [9, 34], 81 a 1156 baldosas en 1280x1280)
+     adaptado al ancho físico del mueble y directivas dinámicas de Notas (parse_v8_user_fabric_directives),
+     con el mueble alejado (~58%) al centro y halo/marco aislador #FFFFFF.
 """
 
 from __future__ import annotations
@@ -27,8 +29,9 @@ import os
 import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple
+import unicodedata
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageStat
 
 try:
     import pillow_heif
@@ -79,6 +82,518 @@ def _get_cms_transforms() -> Tuple[Any, Any]:
 
 # Pre-inicializa los perfiles ICC en C una sola vez al importar el módulo
 _get_cms_transforms()
+
+
+# ----------------------------------------------------------------------
+# PARSER DETERMINISTA DE DIRECTIVAS DE TELA EN NOTAS (5 CAPAS ANTI-FP)
+# ----------------------------------------------------------------------
+@dataclass(frozen=True)
+class V8UserFabricDirectives:
+    raw_notes: str = ""
+    lightness_overridden: bool = False
+    lightness_mode: str = "default"           # "default"|"original"|"lighter"|"darker"|"softer_light"
+    lightness_user_pct: Optional[int] = None  # +40, -20, 0, or None
+    effective_boost: float = 0.30             # [-0.45, +0.80]
+    scale_overridden: bool = False
+    scale_mode: str = "default"               # "default"|"smaller"|"larger"
+    scale_user_pct: Optional[int] = None      # -20, +20, or None
+    texture_scale_factor: float = 1.0         # [0.50, 1.50]
+    matched_lightness_phrase: str = ""
+    matched_scale_phrase: str = ""
+    residual_non_fabric_notes: str = ""
+
+    @property
+    def has_any_override(self) -> bool:
+        return bool(self.lightness_overridden or self.scale_overridden)
+
+
+_FABRIC_EXPLICIT_WORDS = (
+    "tela|telas|tapiz|tapizado|tapiceria|textil|textiles|tejido|trama|textura|microtextura|"
+    "patron|patrones|motivo|motivos|grano|hilo|hilos|hebra|hebras|bucle|bucles|boucle|"
+    "estampado|relieve|muestra|fabric|upholstery|textile|swatch|weave|texture|pattern|"
+    "motif|motifs|grain|yarn|thread|threads"
+)
+_NON_FABRIC_HARD_WORDS = (
+    "madera|maderas|nogal|encino|roble|parota|cedro|tzalam|pino|fresno|pata|patas|zoclo|"
+    "herraje|herrajes|metal|acero|laton|aluminio|oro|cromo|fondo|pared|paredes|muro|muros|"
+    "piso|suelo|alfombra|tapete|cuarto|habitacion|estancia|ambiente|escena|entorno|luz|"
+    "iluminacion|estudio|sombra|sombras|reflejo|reflejos|cristal|vidrio|espejo|marmol|"
+    "piedra|granito|ceramica|melamina|marco|cubierta|tapa|puerta|puertas|cajon|cajones|"
+    "repisa|leg|legs|wood|wooden|timber|walnut|oak|hardware|background|backdrop|wall|walls|"
+    "floor|rug|carpet|room|light|lighting|studio|shadow|shadows|glass|mirror|marble|stone|frame"
+)
+_FURNITURE_PART_WORDS = (
+    "mesa|silla|sofa|sillon|butaca|poltrona|seccional|sala|mueble|pieza|cama|cabecera|buro|"
+    "credenza|aparador|comedor|banca|banco|taburete|otomana|puff|cojin|cojines|almohadon|"
+    "almohadones|almohada|respaldo|brazo|brazos|descansabrazos|asiento|asientos|base|casco|"
+    "estructura|chaise|table|chair|couch|sectional|armchair|furniture|bed|headboard|bench|"
+    "ottoman|cushion|cushions|pillow|pillows|backrest|armrest|seat"
+)
+
+_FABRIC_EXPLICIT_RE = re.compile(rf"\b(?:{_FABRIC_EXPLICIT_WORDS})\b")
+_TEXTURE_CUE_RE = re.compile(
+    r"\b(?:textura|microtextura|tejido|trama|patron|patrones|motivo|motivos|grano|hilo|hilos|"
+    r"hebra|hebras|bucle|bucles|boucle|estampado|relieve|escala|weave|texture|pattern|motif|"
+    r"motifs|grain|yarn|thread|threads|scale)\b"
+)
+_TEXTILE_FINENESS_RE = re.compile(
+    r"\b(?:fin[oa]s?|cerrad[oa]s?|tupid[oa]s?|menud[oa]s?|apretad[oa]s?|microtextura|"
+    r"grues[oa]s?|abiert[oa]s?|tosc[oa]s?|finer|tighter|denser|coarser|chunkier)\b"
+)
+_NON_FABRIC_HARD_RE = re.compile(rf"\b(?:{_NON_FABRIC_HARD_WORDS})\b")
+_FURNITURE_PART_RE = re.compile(rf"\b(?:{_FURNITURE_PART_WORDS})\b")
+
+_CONJ_SPLIT_RE = re.compile(
+    r"\s+(?:y|e|pero|adem[aá]s|tambi[eé]n|and|but|also)\s+",
+    re.IGNORECASE,
+)
+_PREP_SHIFT_ORIG_RE = re.compile(
+    r"\s+(?=(?:(?:con|with)\s+(?:las?|los?|el|the\s+)?"
+    r"(?:maderas?|nogal|encino|roble|parota|cedro|tzalam|pino|fresno|patas?|zoclo|herrajes?|"
+    r"metal|acero|lat[oó]n|aluminio|fondo|pared(?:es)?|muros?|piso|suelo|alfombra|tapete|"
+    r"luz|iluminaci[oó]n|estudio|sombras?|legs?|wood(?:en)?|walnut|oak|background|walls?|"
+    r"telas?|tapiz(?:ado)?|tapicer[ií]a|textil(?:es)?|tejido|trama|textura|microtextura|"
+    r"patr[oó]n|motivos?|fabric|upholstery|textile|weave|texture)"
+    r"|(?:sin\s+(?:las?\s+|los?\s+|el\s+)?(?:sombras?|reflejos?|piso|suelo|fondo|pared(?:es)?|muros?))"
+    r"|(?:without\s+(?:any\s+)?(?:shadows?|reflections?|floor|background)))\b)",
+    re.IGNORECASE,
+)
+
+_FABRIC_LUZ_ADJUST_RE = re.compile(r"\b(?:subir|bajar)\s+(?:la\s+)?luz\b")
+
+_NEG_PREFIX_RE = re.compile(
+    r"(?:^|\b)(?:que\s+no|do\s+not|don'?t|no|sin|nunca|jamas|never|not|evitar|evita|avoid)"
+    r"(?:\s+(?:la|lo|el|los|las|un|una|se|me|te|que|a|de|del|en|al|to|into|any|"
+    r"hagas?|haga|sea|quede|quedes|vea|hacer|poner|pongas|ponga|dejar|dejes|hacerla|hacerlo|"
+    r"quiero|queremos|deseo|cambies|cambiar|volver|vuelva|resulte|salga|want|change|keep|leave|"
+    r"tan|muy|demasiado|too|so|be|make|making|get|the|it|"
+    r"tela|telas|tapiz|tapizado|textil|textura|microtextura|tejido|trama|patron|motivo|grano|"
+    r"tono|color|escala|tamano|fabric|texture|weave|pattern|tone|color|upholstery)){0,10}\s*$"
+)
+
+_PCT_NUM = r"(?<![\d.])([+-]?\d+(?:\.\d+)?)%"
+
+_ORIGINAL_TONE_RE = re.compile(
+    r"(?:\b(?:sin\s+aclarar|no\s+(?:la\s+|lo\s+|el\s+)?aclar(?:ar|es|e)|sin\s+brillo\s+extra|"
+    r"sin\s+cambiar\s+(?:el\s+)?(?:tono|color)|tono\s+original|color\s+original|"
+    r"do\s+not\s+lighten|don'?t\s+lighten|no\s+lightening|"
+    r"keep\s+original\s+(?:color|tone|shade)|original\s+(?:color|tone|shade))\b"
+    r"|(?<![\d.+-])0(?:\.0+)?%\s*(?:mas\s+)?(?:clar[oa]s?|clarit[oa]s?|lighter|brighter)\b)"
+)
+_SOFTER_LIGHT_RE = re.compile(
+    r"\b(?:menos\s+(?:clar[oa]s?|clarit[oa]s?)|no\s+(?:tan|muy)\s+(?:clar[oa]s?|clarit[oa]s?)|"
+    r"less\s+(?:bright|light)|not\s+(?:too|so)\s+(?:bright|light))\b"
+)
+
+_LIGHTER_PCT_RES = (
+    re.compile(rf"{_PCT_NUM}\s*(?:mas\s+)?(?:clar[oa]s?|clarit[oa]s?|luminos[oa]s?|palid[oa]s?|lighter|brighter)\b"),
+    re.compile(
+        r"\b(?:aclar(?:ar|a|ala|alo|es|e|ando)?|subir\s+(?:la\s+)?(?:claridad|luminosidad|luz)|lighten|brighten)"
+        rf"(?:\s+(?:el|la|los|las|the|un|una|en|por|by|a|de|del|tono|color|tela|tapiz|fabric|tone|shade|upholstery))*\s+{_PCT_NUM}"
+    ),
+    re.compile(
+        r"\b(?:mas\s+(?:clar[oa]s?|clarit[oa]s?|luminos[oa]s?)|lighter|brighter)"
+        rf"(?:\s+(?:el|la|the|un|una|en|por|by|de|del|tono|color|tela|tapiz|fabric))*\s+{_PCT_NUM}"
+    ),
+)
+_DARKER_PCT_RES = (
+    re.compile(rf"{_PCT_NUM}\s*(?:mas\s+)?(?:oscur[oa]s?|oscurit[oa]s?|profund[oa]s?|darker|deeper)\b"),
+    re.compile(
+        r"\b(?:oscurec(?:er|e|ela|elo|erla|erlo)?|bajar\s+(?:la\s+)?(?:claridad|luminosidad|luz)|darken)"
+        rf"(?:\s+(?:el|la|los|las|the|un|una|en|por|by|a|de|del|tono|color|tela|tapiz|fabric|tone|shade|upholstery))*\s+{_PCT_NUM}"
+    ),
+    re.compile(
+        r"\b(?:mas\s+(?:oscur[oa]s?|oscurit[oa]s?|profund[oa]s?)|darker|deeper)"
+        rf"(?:\s+(?:el|la|the|un|una|en|por|by|de|del|tono|color|tela|tapiz|fabric))*\s+{_PCT_NUM}"
+    ),
+)
+_LIGHTER_QUAL_RE = re.compile(
+    r"\b(?:(?:un\s+poco|ligeramente|algo|sutilmente|mucho|bastante|muy|slightly|a\s+bit|much|very)\s+)?"
+    r"(?:mas\s+(?:clar[oa]s?|clarit[oa]s?|luminos[oa]s?)|aclar(?:ar|a|ala|alo)|lighter|brighter|lighten|brighten)\b"
+)
+_DARKER_QUAL_RE = re.compile(
+    r"\b(?:(?:un\s+poco|ligeramente|algo|sutilmente|mucho|bastante|muy|slightly|a\s+bit|much|very)\s+)?"
+    r"(?:mas\s+(?:oscur[oa]s?|oscurit[oa]s?|profund[oa]s?)|oscurec(?:er|e|ela|elo|erla|erlo)|darker|darken)\b"
+)
+_DARKER_BARE_ADJ_RE = re.compile(r"\boscur(?:[oa]|it[oa])s?\b(?=\s+(?:la\s+tela|el\s+tono|el\s+tapiz|el\s+color))")
+
+_SMALLER_PCT_RES = (
+    re.compile(
+        rf"{_PCT_NUM}\s*(?:mas\s+)?(?:pequen[oa]s?|pequenit[oa]s?|chic[oa]s?|chiquit[oa]s?|fin[oa]s?|finit[oa]s?|menor(?:es)?|"
+        r"cerrad[oa]s?|tupid[oa]s?|reducid[oa]s?|menud[oa]s?|smaller|finer|tighter|reduced)\b"
+    ),
+    re.compile(
+        r"\b(?:reducir|achicar|disminuir|bajar|encoger|shrink|reduce|decrease|tighten)"
+        r"(?:\s+(?:el|la|los|las|de|del|the|un|una|en|por|by|a|tamano|escala|textura|microtextura|"
+        rf"tejido|trama|patron|motivo|motivos|grano|fabric|texture|weave|pattern|scale|size))*\s+{_PCT_NUM}"
+    ),
+    re.compile(
+        r"\b(?:mas\s+(?:pequen[oa]s?|pequenit[oa]s?|chic[oa]s?|chiquit[oa]s?|fin[oa]s?|finit[oa]s?|cerrad[oa]s?|tupid[oa]s?|menud[oa]s?)|smaller|finer|tighter)"
+        rf"(?:\s+(?:la|el|the|de|del|textura|trama|tejido|patron|grano|escala|texture|weave|pattern|scale|en|por|un|una|by))*\s+{_PCT_NUM}"
+    ),
+)
+_LARGER_PCT_RES = (
+    re.compile(
+        rf"{_PCT_NUM}\s*(?:mas\s+)?(?:grandes?|grues[oa]s?|anch[oa]s?|abiert[oa]s?|"
+        r"mayor(?:es)?|ampliad[oa]s?|larger|bigger|coarser|chunkier)\b"
+    ),
+    re.compile(
+        r"\b(?:agrandar|ampliar|aumentar|subir|enlarge|increase)"
+        r"(?:\s+(?:el|la|los|las|de|del|the|un|una|en|por|by|a|tamano|escala|textura|tejido|"
+        rf"trama|patron|motivo|motivos|grano|fabric|texture|weave|pattern|scale|size))*\s+{_PCT_NUM}"
+    ),
+    re.compile(
+        r"\b(?:mas\s+(?:grandes?|grues[oa]s?|abiert[oa]s?|tosc[oa]s?)|larger|bigger|coarser|chunkier)"
+        rf"(?:\s+(?:la|el|the|de|del|textura|trama|tejido|patron|grano|escala|texture|weave|pattern|scale|en|por|un|una|by))*\s+{_PCT_NUM}"
+    ),
+)
+_SMALLER_QUAL_RE = re.compile(
+    r"\b(?:(?:(?:un\s+poco|ligeramente|algo|mucho|bastante|muy|slightly|a\s+bit|much|very)\s+)?"
+    r"(?:microtextura|micro\s+textura|micro\s+weave|"
+    r"mas\s+(?:pequen[oa]s?|pequenit[oa]s?|chic[oa]s?|chiquit[oa]s?|fin[oa]s?|finit[oa]s?|cerrad[oa]s?|tupid[oa]s?|menud[oa]s?)|"
+    r"achicar|reducir\s+(?:la\s+|el\s+)?(?:textura|escala|trama|tejido|tamano)|smaller|finer|tighter)"
+    r"|(?:muy|mucho|bastante|very|super)\s+(?:pequen[oa]s?|pequenit[oa]s?|chic[oa]s?|chiquit[oa]s?|fin[oa]s?|finit[oa]s?|cerrad[oa]s?|tupid[oa]s?|menud[oa]s?))\b"
+)
+_LARGER_QUAL_RE = re.compile(
+    r"\b(?:(?:un\s+poco|ligeramente|algo|mucho|bastante|muy|slightly|a\s+bit|much|very)\s+)?"
+    r"(?:mas\s+(?:grandes?|grues[oa]s?|abiert[oa]s?|tosc[oa]s?)|"
+    r"agrandar|ampliar\s+(?:la\s+|el\s+)?(?:textura|escala|trama|tejido)|larger|bigger|coarser|chunkier)\b"
+)
+
+
+def _normalize_v8_clause(text: str) -> str:
+    nfd = unicodedata.normalize("NFD", str(text or ""))
+    ascii_low = "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn").lower()
+    ascii_low = re.sub(r"\bpor\s*ciento\b", "%", ascii_low)
+    ascii_low = re.sub(r"(\d)\s*%", r"\1%", ascii_low)
+    ascii_low = re.sub(r"([a-z])([+-]?\d+(?:\.\d+)?%)", r"\1 \2", ascii_low)
+    ascii_low = re.sub(r"%([a-z])", r"% \1", ascii_low)
+    ascii_low = re.sub(r"\s+", " ", ascii_low).strip()
+    return ascii_low
+
+
+def _split_clauses_preserve_orig(raw_notes: str) -> List[Tuple[str, str]]:
+    placeholder = "__V8_THREE_FOURTHS__"
+    protected = re.sub(r"3\s*/\s*4", placeholder, raw_notes)
+    punct_parts = re.split(r"(?:[,;\n\r|]|\s+/\s+|\.(?!\d))+", protected)
+    out: List[Tuple[str, str]] = []
+    for p_seg in punct_parts:
+        seg = p_seg.strip()
+        if not seg:
+            continue
+        for c_seg in _CONJ_SPLIT_RE.split(seg):
+            c_clean = c_seg.strip()
+            if not c_clean:
+                continue
+            for sub in _PREP_SHIFT_ORIG_RE.split(c_clean):
+                sub_restored = sub.replace(placeholder, "3/4").strip()
+                if not sub_restored:
+                    continue
+                out.append((sub_restored, _normalize_v8_clause(sub_restored)))
+    return out
+
+
+def _is_negated_before(norm_clause: str, match_start: int) -> bool:
+    prefix = norm_clause[max(0, match_start - 72) : match_start].rstrip()
+    if not prefix:
+        return False
+    return bool(_NEG_PREFIX_RE.search(prefix))
+
+
+def parse_v8_user_fabric_directives(notes: str) -> V8UserFabricDirectives:
+    """
+    Parser determinista 100% Python puro de directivas de luminosidad y escala textil en Notas V8.
+    Incluye 5 capas de protección contra falsos positivos (madera/patas, geometría de mueble,
+    iluminación/fondo de estudio, negaciones previas y cláusulas numéricas sin relación textil).
+    """
+    raw = str(notes or "").strip()
+    if not raw:
+        return V8UserFabricDirectives()
+
+    clauses = _split_clauses_preserve_orig(raw)
+    light_overridden = False
+    light_mode = "default"
+    light_pct: Optional[int] = None
+    eff_boost = 0.30
+    matched_light = ""
+
+    scale_overridden = False
+    scale_mode = "default"
+    scale_pct: Optional[int] = None
+    tex_scale = 1.0
+    matched_scale = ""
+
+    residual_parts: List[str] = []
+    prev_subject = "bare"
+
+    for orig_cl, norm_cl in clauses:
+        has_fab_explicit = bool(_FABRIC_EXPLICIT_RE.search(norm_cl))
+        has_hard_non_fab = bool(_NON_FABRIC_HARD_RE.search(norm_cl))
+        if has_fab_explicit and has_hard_non_fab:
+            if _FABRIC_LUZ_ADJUST_RE.search(norm_cl) and not _NON_FABRIC_HARD_RE.search(
+                _FABRIC_LUZ_ADJUST_RE.sub(" ", norm_cl)
+            ):
+                has_hard_non_fab = False
+        has_furn_part = bool(_FURNITURE_PART_RE.search(norm_cl))
+
+        if has_fab_explicit and not has_hard_non_fab:
+            cl_subject = "fabric"
+        elif has_hard_non_fab and not has_fab_explicit:
+            cl_subject = "non_fabric"
+        elif has_furn_part and not has_fab_explicit:
+            cl_subject = "non_fabric"
+        elif has_fab_explicit and has_hard_non_fab:
+            # Cláusula mixta sin separador claro: bloquear falsos positivos no textiles
+            cl_subject = "non_fabric"
+        else:
+            cl_subject = prev_subject if prev_subject in ("fabric", "non_fabric") else "bare"
+
+        prev_subject = cl_subject if cl_subject in ("fabric", "non_fabric") else prev_subject
+
+        cl_matched_light = False
+        cl_matched_scale = False
+        light_blocked_qual = False
+        scale_blocked_qual = False
+
+        # --- A. Directivas de luminosidad ---
+        if cl_subject in ("fabric", "bare"):
+            m_orig = _ORIGINAL_TONE_RE.search(norm_cl)
+            if m_orig:
+                light_overridden = True
+                light_mode = "original"
+                light_pct = 0
+                eff_boost = 0.0
+                matched_light = orig_cl
+                cl_matched_light = True
+            else:
+                m_soft = _SOFTER_LIGHT_RE.search(norm_cl)
+                if m_soft:
+                    soft_txt = m_soft.group(0)
+                    is_less_form = soft_txt.startswith("menos ") or soft_txt.startswith("less ")
+                    if is_less_form and _is_negated_before(norm_cl, m_soft.start()):
+                        light_blocked_qual = True
+                    else:
+                        light_overridden = True
+                        light_mode = "softer_light"
+                        light_pct = None
+                        eff_boost = 0.10
+                        matched_light = orig_cl
+                        cl_matched_light = True
+
+            if not cl_matched_light and not light_blocked_qual:
+                for rx in _LIGHTER_PCT_RES:
+                    m = rx.search(norm_cl)
+                    if m:
+                        if _is_negated_before(norm_cl, m.start()):
+                            light_blocked_qual = True
+                            break
+                        raw_val = float(m.group(1))
+                        if raw_val < 0.0:
+                            light_blocked_qual = True
+                            cl_matched_light = True
+                        elif raw_val == 0.0:
+                            light_overridden = True
+                            light_mode = "original"
+                            light_pct = 0
+                            eff_boost = 0.0
+                            matched_light = orig_cl
+                            cl_matched_light = True
+                        elif raw_val < 0.5:
+                            light_blocked_qual = True
+                            cl_matched_light = True
+                        else:
+                            raw_val = 100.0 if (not math.isfinite(raw_val) or raw_val > 100.0) else raw_val
+                            p_val = min(100, int(math.floor(raw_val + 0.5)))
+                            p_c = max(5, min(100, p_val))
+                            light_overridden = True
+                            light_mode = "lighter"
+                            light_pct = p_val
+                            eff_boost = round(min(0.80, 0.30 + 0.50 * (p_c / 100.0)), 4)
+                            matched_light = orig_cl
+                            cl_matched_light = True
+                        break
+
+            if not cl_matched_light and not light_blocked_qual:
+                for rx in _DARKER_PCT_RES:
+                    m = rx.search(norm_cl)
+                    if m:
+                        if _is_negated_before(norm_cl, m.start()):
+                            light_blocked_qual = True
+                            break
+                        raw_val = float(m.group(1))
+                        if raw_val < 0.5:
+                            light_blocked_qual = True
+                            cl_matched_light = True
+                        else:
+                            raw_val = 100.0 if (not math.isfinite(raw_val) or raw_val > 100.0) else raw_val
+                            p_val = min(100, int(math.floor(raw_val + 0.5)))
+                            p_c = max(5, min(45, p_val))
+                            light_overridden = True
+                            light_mode = "darker"
+                            light_pct = -p_val
+                            eff_boost = round(max(-0.45, -(p_c / 100.0)), 4)
+                            matched_light = orig_cl
+                            cl_matched_light = True
+                        break
+
+            if not cl_matched_light and not light_blocked_qual:
+                m_lq = _LIGHTER_QUAL_RE.search(norm_cl)
+                if m_lq and not _is_negated_before(norm_cl, m_lq.start()):
+                    txt_m = m_lq.group(0)
+                    light_overridden = True
+                    light_mode = "lighter"
+                    light_pct = None
+                    if re.search(r"\b(?:un\s+poco|ligeramente|algo|sutilmente|slightly|a\s+bit)\b", txt_m):
+                        eff_boost = 0.40
+                    elif re.search(r"\b(?:mucho|bastante|muy|much|very)\b", txt_m):
+                        eff_boost = 0.55
+                    else:
+                        eff_boost = 0.45
+                    matched_light = orig_cl
+                    cl_matched_light = True
+
+            if not cl_matched_light and not light_blocked_qual:
+                m_dq = _DARKER_QUAL_RE.search(norm_cl) or _DARKER_BARE_ADJ_RE.search(norm_cl)
+                if m_dq and not _is_negated_before(norm_cl, m_dq.start()):
+                    txt_m = m_dq.group(0)
+                    light_overridden = True
+                    light_mode = "darker"
+                    light_pct = None
+                    if re.search(r"\b(?:un\s+poco|ligeramente|algo|sutilmente|slightly|a\s+bit)\b", txt_m):
+                        eff_boost = -0.10
+                    elif re.search(r"\b(?:mucho|bastante|muy|much|very)\b", txt_m):
+                        eff_boost = -0.25
+                    else:
+                        eff_boost = -0.15
+                    matched_light = orig_cl
+                    cl_matched_light = True
+
+        # --- B. Directivas de escala textil (requiere pista textil estricta) ---
+        has_tex_cue = bool(_TEXTURE_CUE_RE.search(norm_cl))
+        has_fineness = bool(_TEXTILE_FINENESS_RE.search(norm_cl))
+        allow_scale = (
+            (has_tex_cue and not has_hard_non_fab and cl_subject != "non_fabric")
+            or (cl_subject == "fabric" and has_fineness and not has_hard_non_fab)
+        )
+        if allow_scale:
+            for rx in _SMALLER_PCT_RES:
+                m = rx.search(norm_cl)
+                if m:
+                    if _is_negated_before(norm_cl, m.start()):
+                        scale_blocked_qual = True
+                        break
+                    raw_val = float(m.group(1))
+                    if raw_val < 0.5:
+                        scale_blocked_qual = True
+                        cl_matched_scale = True
+                    else:
+                        raw_val = 100.0 if (not math.isfinite(raw_val) or raw_val > 100.0) else raw_val
+                        p_val = min(100, int(math.floor(raw_val + 0.5)))
+                        scale_overridden = True
+                        scale_mode = "smaller"
+                        scale_pct = -p_val
+                        tex_scale = round(max(0.50, 1.0 - (p_val / 100.0)), 4)
+                        matched_scale = orig_cl
+                        cl_matched_scale = True
+                    break
+
+            if not cl_matched_scale and not scale_blocked_qual:
+                for rx in _LARGER_PCT_RES:
+                    m = rx.search(norm_cl)
+                    if m:
+                        if _is_negated_before(norm_cl, m.start()):
+                            scale_blocked_qual = True
+                            break
+                        raw_val = float(m.group(1))
+                        if raw_val < 0.5:
+                            scale_blocked_qual = True
+                            cl_matched_scale = True
+                        else:
+                            raw_val = 100.0 if (not math.isfinite(raw_val) or raw_val > 100.0) else raw_val
+                            p_val = min(100, int(math.floor(raw_val + 0.5)))
+                            scale_overridden = True
+                            scale_mode = "larger"
+                            scale_pct = p_val
+                            tex_scale = round(min(1.50, 1.0 + (p_val / 100.0)), 4)
+                            matched_scale = orig_cl
+                            cl_matched_scale = True
+                        break
+
+            if not cl_matched_scale and not scale_blocked_qual:
+                m_sq = _SMALLER_QUAL_RE.search(norm_cl)
+                if m_sq and not _is_negated_before(norm_cl, m_sq.start()):
+                    txt_m = m_sq.group(0)
+                    scale_overridden = True
+                    scale_mode = "smaller"
+                    scale_pct = None
+                    if re.search(r"\b(?:microtextura|micro\s+textura|micro\s+weave|mucho|bastante|muy|much|very|super)\b", txt_m):
+                        tex_scale = 0.70
+                    elif re.search(r"\b(?:un\s+poco|ligeramente|algo|slightly|a\s+bit)\b", txt_m):
+                        tex_scale = 0.85
+                    else:
+                        tex_scale = 0.80
+                    matched_scale = orig_cl
+                    cl_matched_scale = True
+
+            if not cl_matched_scale and not scale_blocked_qual:
+                m_lq_s = _LARGER_QUAL_RE.search(norm_cl)
+                if m_lq_s and not _is_negated_before(norm_cl, m_lq_s.start()):
+                    txt_m = m_lq_s.group(0)
+                    scale_overridden = True
+                    scale_mode = "larger"
+                    scale_pct = None
+                    if re.search(r"\b(?:un\s+poco|ligeramente|algo|slightly|a\s+bit)\b", txt_m):
+                        tex_scale = 1.15
+                    elif re.search(r"\b(?:mucho|bastante|muy|much|very)\b", txt_m):
+                        tex_scale = 1.30
+                    else:
+                        tex_scale = 1.20
+                    matched_scale = orig_cl
+                    cl_matched_scale = True
+
+        if not cl_matched_light and not cl_matched_scale:
+            residual_parts.append(orig_cl)
+
+    has_override = bool(light_overridden or scale_overridden)
+    residual_str = "; ".join(residual_parts) if has_override else raw
+
+    return V8UserFabricDirectives(
+        raw_notes=raw,
+        lightness_overridden=light_overridden,
+        lightness_mode=light_mode,
+        lightness_user_pct=light_pct,
+        effective_boost=eff_boost,
+        scale_overridden=scale_overridden,
+        scale_mode=scale_mode,
+        scale_user_pct=scale_pct,
+        texture_scale_factor=tex_scale,
+        matched_lightness_phrase=matched_light,
+        matched_scale_phrase=matched_scale,
+        residual_non_fabric_notes=residual_str,
+    )
+
+
+def _tile_canvas_fast(tile_img: Image.Image, c_px: int) -> Image.Image:
+    """Tapiza un lienzo c_px x c_px en O(log N) mediante duplicación por potencias de 2 en C."""
+    tw, th = tile_img.size
+    if tw <= 0 or th <= 0:
+        return Image.new("RGB", (c_px, c_px), (220, 220, 220))
+    row = Image.new("RGB", (c_px, th))
+    row.paste(tile_img, (0, 0))
+    filled_x = tw
+    while filled_x < c_px:
+        chunk_w = min(filled_x, c_px - filled_x)
+        row.paste(row.crop((0, 0, chunk_w, th)), (filled_x, 0))
+        filled_x += chunk_w
+
+    canvas = Image.new("RGB", (c_px, c_px))
+    canvas.paste(row, (0, 0))
+    filled_y = th
+    while filled_y < c_px:
+        chunk_h = min(filled_y, c_px - filled_y)
+        canvas.paste(canvas.crop((0, 0, c_px, chunk_h)), (0, filled_y))
+        filled_y += chunk_h
+    return canvas
 
 
 class _DictAccessMixin:
@@ -133,6 +648,17 @@ class FabricMultitoneReportV8(_DictAccessMixin):
     light_interaction: str = "Soft matte textile"
 
 
+def _pil_approx_bytes(im: Optional[Image.Image]) -> int:
+    if im is None:
+        return 0
+    try:
+        w, h = im.size
+        bands = max(1, len(im.getbands()))
+        return int(w) * int(h) * bands
+    except Exception:
+        return 0
+
+
 @dataclass(init=False)
 class V8ConditioningArtifacts(_DictAccessMixin):
     canvas_png: bytes
@@ -149,9 +675,9 @@ class V8ConditioningArtifacts(_DictAccessMixin):
     calibrated_swatch_filename: str
     mosaic_filename: str
     multitone_report: FabricMultitoneReportV8
-    canvas_image: Optional[Image.Image] = None
     calibrated_swatch_image: Optional[Image.Image] = None
     seamless_tile_image: Optional[Image.Image] = None
+    texture_scale_factor: float = 1.0
 
     def __init__(
         self,
@@ -174,11 +700,13 @@ class V8ConditioningArtifacts(_DictAccessMixin):
         calibrated_swatch_image: Optional[Image.Image] = None,
         seamless_tile_image: Optional[Image.Image] = None,
         _mosaic_source_image: Optional[Image.Image] = None,
+        texture_scale_factor: float = 1.0,
     ) -> None:
         self.canvas_png = canvas_png
         self.calibrated_swatch_png = calibrated_swatch_png
         self._mosaic_only_png_cache: Optional[bytes] = mosaic_only_png
         self._mosaic_source_image: Optional[Image.Image] = _mosaic_source_image
+        self._canvas_image_ref: Optional[Image.Image] = canvas_image
         self.canvas_size = canvas_size
         self.tile_px = tile_px
         self.grid_count = grid_count
@@ -191,15 +719,40 @@ class V8ConditioningArtifacts(_DictAccessMixin):
         self.calibrated_swatch_filename = calibrated_swatch_filename
         self.mosaic_filename = mosaic_filename
         self.multitone_report = multitone_report  # type: ignore[assignment]
-        self.canvas_image = canvas_image
         self.calibrated_swatch_image = calibrated_swatch_image
         self.seamless_tile_image = seamless_tile_image
+        self.texture_scale_factor = float(texture_scale_factor)
+
+    @property
+    def canvas_image(self) -> Optional[Image.Image]:
+        if self._canvas_image_ref is not None:
+            return self._canvas_image_ref
+        if not self.canvas_png:
+            return None
+        try:
+            with Image.open(io.BytesIO(self.canvas_png)) as im:
+                return im.convert("RGB")
+        except Exception:
+            return None
+
+    @canvas_image.setter
+    def canvas_image(self, value: Optional[Image.Image]) -> None:
+        self._canvas_image_ref = value
 
     @property
     def mosaic_only_png(self) -> bytes:
         global _CANVAS_CACHE_BYTES
-        if self._mosaic_only_png_cache is None:
+        cached = self._mosaic_only_png_cache
+        if cached is not None:
+            return cached
+        with _CANVAS_CACHE_LOCK:
+            cached = self._mosaic_only_png_cache
+            if cached is not None:
+                return cached
             src = self._mosaic_source_image
+            if src is None and self.seamless_tile_image is not None:
+                c_px = max(512, min(1600, int(self.canvas_size[0])))
+                src = _tile_canvas_fast(self.seamless_tile_image, c_px)
             if src is not None:
                 mw, mh = src.size
                 mos_small = (
@@ -209,26 +762,33 @@ class V8ConditioningArtifacts(_DictAccessMixin):
                 )
                 buf = io.BytesIO()
                 mos_small.save(buf, format="PNG", compress_level=1)
-                self._mosaic_only_png_cache = buf.getvalue()
+                cached = buf.getvalue()
+                self._mosaic_only_png_cache = cached
                 self._mosaic_source_image = None
             else:
-                self._mosaic_only_png_cache = b""
-            with _CANVAS_CACHE_LOCK:
-                if _CANVAS_CACHE:
-                    _CANVAS_CACHE_BYTES = sum(v.approx_bytes() for v in _CANVAS_CACHE.values())
-        return self._mosaic_only_png_cache
+                cached = b""
+                self._mosaic_only_png_cache = cached
+            if _CANVAS_CACHE:
+                _CANVAS_CACHE_BYTES = sum(v.approx_bytes() for v in _CANVAS_CACHE.values())
+            return cached
 
     @mosaic_only_png.setter
     def mosaic_only_png(self, value: Optional[bytes]) -> None:
-        self._mosaic_only_png_cache = value
+        with _CANVAS_CACHE_LOCK:
+            self._mosaic_only_png_cache = value
 
     def approx_bytes(self) -> int:
         mos_sz = (
             len(self._mosaic_only_png_cache)
             if self._mosaic_only_png_cache is not None
-            else (262_144 if self._mosaic_source_image is not None else 0)
+            else _pil_approx_bytes(self._mosaic_source_image)
         )
-        return len(self.canvas_png) + len(self.calibrated_swatch_png) + mos_sz
+        pil_sz = (
+            _pil_approx_bytes(self._canvas_image_ref)
+            + _pil_approx_bytes(self.calibrated_swatch_image)
+            + _pil_approx_bytes(self.seamless_tile_image)
+        )
+        return len(self.canvas_png) + len(self.calibrated_swatch_png) + mos_sz + pil_sz
 
 
 def _rgb_to_hex(r: float, g: float, b: float) -> str:
@@ -301,23 +861,50 @@ def make_v8_mosaic_filename(fabric_name: str = "") -> str:
     return f"{_clean_stem(fabric_name, 'tela')}_V8_MOSAICO.png"
 
 
+def _to_rgb_white_safe(img: Image.Image) -> Image.Image:
+    """Convierte cualquier modo Pillow a RGB componiendo transparencias sobre blanco #FFFFFF y escalando I;16/I/F."""
+    mode = img.mode
+    if mode == "RGB":
+        return img
+    if mode in ("RGBA", "LA") or (mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGB", rgba.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.getchannel("A"))
+        return bg
+    if mode.startswith("I;16") or mode == "I":
+        im_i = img.convert("I") if mode != "I" else img
+        ext = im_i.getextrema()
+        hi = ext[1] if isinstance(ext, tuple) and len(ext) == 2 else 65535
+        if mode.startswith("I;16") or hi > 255:
+            scale = (1.0 / 256.0) if hi <= 65535 else (255.0 / float(max(1, hi)))
+            return im_i.point(lambda v, s=scale: v * s, "L").convert("RGB")
+        return im_i.convert("L").convert("RGB")
+    if mode == "F":
+        ext = img.getextrema()
+        hi = ext[1] if isinstance(ext, tuple) and len(ext) == 2 else 1.0
+        scale = 255.0 if hi <= 1.05 else (255.0 / float(max(1e-6, hi)))
+        return img.point(lambda v, s=scale: v * s, "L").convert("RGB")
+    return img.convert("RGB")
+
+
 def _open_rgb_safe(raw_bytes: bytes, max_decode_side: int = 2048) -> Image.Image:
     with Image.open(io.BytesIO(raw_bytes)) as src:
         img = ImageOps.exif_transpose(src)
+        if img.mode.startswith("I;16") or img.mode in ("I", "F"):
+            img = _to_rgb_white_safe(img)
         if max(img.size) > max_decode_side * 2:
             factor = max(2, max(img.size) // (max_decode_side * 2))
-            img = img.reduce(factor)
+            if img.mode == "P":
+                img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+            try:
+                img = img.reduce(factor)
+            except Exception:
+                pass
         if max(img.size) > max_decode_side:
             img = img.copy()
             img.thumbnail((max_decode_side, max_decode_side), Image.Resampling.LANCZOS)
-        if img.mode in ("RGBA", "LA", "P"):
-            rgba = img.convert("RGBA")
-            bg = Image.new("RGB", rgba.size, (255, 255, 255))
-            bg.paste(rgba, mask=rgba.split()[-1])
-            return bg
-        if img.mode != "RGB":
-            return img.convert("RGB")
-        return img.copy()
+        rgb = _to_rgb_white_safe(img)
+        return rgb.copy() if rgb is img else rgb
 
 
 def _boxes_overlap_ratio(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
@@ -402,6 +989,11 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
     r_grid = relief_map.resize((G, G), Image.Resampling.BOX).tobytes()
     c_grid = crease_trough.resize((G, G), Image.Resampling.BOX).tobytes()
     cr_grid = crease_ridge.resize((G, G), Image.Resampling.BOX).tobytes()
+    r_wk, g_wk, b_wk = work.split()
+    min_wk = ImageChops.darker(ImageChops.darker(r_wk, g_wk), b_wk)
+    white_bin = min_wk.point([255 if i >= 248 else 0 for i in range(256)])
+    img_white_frac = float(white_bin.histogram()[255]) / float(max(1, w * h))
+    w_grid = white_bin.resize((G, G), Image.Resampling.BOX).tobytes() if img_white_frac < 0.50 else bytes(G * G)
 
     if G == 20:
         win_cells = (4, 5)  # 4/20 = 0.20, 5/20 = 0.25
@@ -457,6 +1049,7 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
 
         c_rmax = [0] * (G * nx_span)
         cr_rmax = [0] * (G * nx_span)
+        w_rmax = [0] * (G * nx_span)
         dx_rmin = [0.0] * (G * nx_span)
         dx_rmax = [0.0] * (G * nx_span)
         dy_rmin = [0.0] * (G * nx_span)
@@ -469,6 +1062,7 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
                 sl_cr = cr_grid[ro + gx : ro + gx + gw]
                 c_rmax[bo + gx] = max(sl_c)
                 cr_rmax[bo + gx] = max(sl_cr)
+                w_rmax[bo + gx] = max(w_grid[ro + gx : ro + gx + gw])
                 sl_dx = dx_cell[ro + gx : ro + gx + gw - 1]
                 dx_rmin[bo + gx] = min(sl_dx)
                 dx_rmax[bo + gx] = max(sl_dx)
@@ -494,6 +1088,7 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
 
                 c_max = 0
                 cr_max = 0
+                w_max = 0
                 mn_dx = 1e9
                 mx_dx = -1e9
                 mn_dy = 1e9
@@ -504,6 +1099,8 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
                         c_max = c_rmax[idx_r]
                     if cr_rmax[idx_r] > cr_max:
                         cr_max = cr_rmax[idx_r]
+                    if w_rmax[idx_r] > w_max:
+                        w_max = w_rmax[idx_r]
                     if dx_rmin[idx_r] < mn_dx:
                         mn_dx = dx_rmin[idx_r]
                     if dx_rmax[idx_r] > mx_dx:
@@ -564,6 +1161,7 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
                     + (max(0.0, float(c_max) - 3.5) / 1.6) ** 2
                     + (max(0.0, float(cr_max) - 10.0) / 3.0) ** 2
                     + (max(0.0, max_step_det - 12.5) / 3.0) ** 2
+                    + (max(0.0, float(w_max) - 8.0) / 4.0) ** 2
                 )
                 p_score = ((r_mean + 0.5) ** 2.2) / penalty
 
@@ -597,11 +1195,18 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
 
     prelim.sort(key=lambda r: r[0], reverse=True)
 
-    # Refinamiento exacto en píxeles sobre los 5 mejores candidatos (< 5 ms total)
+    def _near_white_ratio_rgb(rgb_im: Image.Image, thresh: int = 246) -> float:
+        r_c, g_c, b_c = rgb_im.split()
+        mn_c = ImageChops.darker(ImageChops.darker(r_c, g_c), b_c)
+        hist_m = mn_c.histogram()
+        tot_m = max(1, rgb_im.size[0] * rgb_im.size[1])
+        return float(sum(hist_m[thresh:])) / float(tot_m)
+
+    # Refinamiento exacto en píxeles sobre los 8 mejores candidatos (< 6 ms total)
     finalists: List[Tuple[float, Tuple[int, int, int, int], float, float, float, float, int, int]] = []
     seen_boxes = set()
 
-    for p_score, bx, r_mean, qm_det, qm_raw, _qr_sp, _c_max in prelim[:5]:
+    for p_score, bx, r_mean, qm_det, qm_raw, _qr_sp, _c_max in prelim[:8]:
         if bx in seen_boxes:
             continue
         seen_boxes.add(bx)
@@ -632,15 +1237,18 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
         p99_l = _hist_percentile(hist_sm, tot_px, 0.99)
         sm_min_l = next((i for i, c in enumerate(hist_sm) if c > 0), p01_l)
 
-        # Penaliza únicamente colas oscuras ASIMÉTRICAS (sombras de doblez), nunca el relieve 3D simétrico de figuras
+        # Penaliza colas oscuras ASIMÉTRICAS (sombras de doblez) y parches con sticker blanco localizado
         upper_reach = max(8.0, float(p99_l - p50_l))
         lower_reach = float(p50_l - p01_l)
         dark_asym = max(0.0, lower_reach - 1.40 * upper_reach - 8.0) + max(0.0, float(p05_l - sm_min_l) - 20.0)
+        cand_w248 = _near_white_ratio_rgb(sub_rgb, 248)
+        bright_tag_pen = ((max(0.0, cand_w248 - 0.004) / 0.004) ** 2) if cand_w248 < 0.50 else 0.0
         exact_pen = (
             1.0
             + (max(0.0, qm_exact - 3.5) / 2.6) ** 2
             + (max(0.0, qstd_exact - 1.8) / 1.3) ** 2
             + (dark_asym / 5.0) ** 2
+            + bright_tag_pen
         )
         final_score = p_score / exact_pen
         min_sm_rgb = int(min(e[0] for e in sub_sm.getextrema()))
@@ -659,26 +1267,140 @@ def extract_clean_swatch_roi_v8(sample_bytes: bytes) -> SwatchROIV8:
     finalists.sort(key=lambda r: r[0], reverse=True)
     win = finalists[0]
     win_crop = src.crop(win[1])
+    win_box = win[1]
+    win_qm_exact = win[3]
+    win_qstd_exact = win[4]
+    win_qm_raw = win[5]
+    win_min_sm_rgb = win[6]
+    win_min_raw_rgb = win[7]
+
+    # Expansión uniforme para muestras compactas sin pliegues (p. ej. 200..550 px de catálogo)
+    # donde el recorte 20% baja de 140 px y habría que reescalarlo hacia arriba en las baldosas.
+    if min(win_crop.size) < 140 and min_side >= 96:
+        base_l = win_crop.convert("L")
+        base_stat = ImageStat.Stat(base_l)
+        base_mean = float(base_stat.mean[0])
+        base_std = float(base_stat.stddev[0])
+        base_white_ratio = _near_white_ratio_rgb(win_crop, 246)
+        min_floor = 12 if win_min_sm_rgb < 55 else 45
+
+        cand_boxes: List[Tuple[int, int, int, int]] = []
+        side_80 = int(round(0.80 * min_side))
+        if side_80 > min(win_crop.size):
+            cx0 = (W - side_80) // 2
+            cy0 = (H - side_80) // 2
+            cand_boxes.append((cx0, cy0, cx0 + side_80, cy0 + side_80))
+
+        m5 = max(4, int(round(0.05 * min_side)))
+        side_70 = min(int(0.75 * W) - m5, int(0.80 * H) - m5, int(round(0.70 * min_side)))
+        if side_70 > min(win_crop.size):
+            cand_boxes.append((m5, m5, m5 + side_70, m5 + side_70))
+
+        for cbx in cand_boxes:
+            sub_rgb_c = src.crop(cbx)
+            sub_l_c = sub_rgb_c.convert("L")
+            sw_c, sh_c = sub_l_c.size
+            if sw_c < 32 or sh_c < 32:
+                continue
+            cand_white_ratio = _near_white_ratio_rgb(sub_rgb_c, 246)
+            if (cand_white_ratio - base_white_ratio) > 0.0025:
+                continue
+
+            cw_k = max(8, int(round(sw_c * 0.22)))
+            ch_k = max(8, int(round(sh_c * 0.22)))
+            corner_boxes = (
+                (0, 0, cw_k, ch_k),
+                (sw_c - cw_k, 0, sw_c, ch_k),
+                (0, sh_c - ch_k, cw_k, sh_c),
+                (sw_c - cw_k, sh_c - ch_k, sw_c, sh_c),
+            )
+            corner_tag_detected = False
+            for kbox in corner_boxes:
+                c_stat = ImageStat.Stat(sub_l_c.crop(kbox))
+                c_mean = float(c_stat.mean[0])
+                c_std = float(c_stat.stddev[0])
+                c_white = _near_white_ratio_rgb(sub_rgb_c.crop(kbox), 246)
+                if (c_white - base_white_ratio) >= 0.03 or (
+                    (c_mean - base_mean) > 14.0 and c_std < 0.50 * max(1.0, base_std)
+                ):
+                    corner_tag_detected = True
+                    break
+            if corner_tag_detected:
+                continue
+
+            sub_stat_c = ImageStat.Stat(sub_l_c)
+            sub_mean_c = float(sub_stat_c.mean[0])
+            sub_std_c = float(sub_stat_c.stddev[0])
+
+            hw_c, hh_c = max(1, sw_c // 2), max(1, sh_c // 2)
+            q_stats_c = [
+                ImageStat.Stat(sub_l_c.crop((qx, qy, qx + hw_c, qy + hh_c)))
+                for qy in (0, sh_c - hh_c)
+                for qx in (0, sw_c - hw_c)
+            ]
+            qm_raw_c = max(s.mean[0] for s in q_stats_c) - min(s.mean[0] for s in q_stats_c)
+            qstd_raw_c = max(s.stddev[0] for s in q_stats_c) - min(s.stddev[0] for s in q_stats_c)
+
+            bw3, bh3 = max(1, sw_c // 3), max(1, sh_c // 3)
+            b_stats_c = [
+                ImageStat.Stat(
+                    sub_l_c.crop(
+                        (
+                            bx_i * bw3,
+                            by_i * bh3,
+                            sw_c if bx_i == 2 else (bx_i + 1) * bw3,
+                            sh_c if by_i == 2 else (by_i + 1) * bh3,
+                        )
+                    )
+                )
+                for by_i in range(3)
+                for bx_i in range(3)
+            ]
+            bm_spread = max(s.mean[0] for s in b_stats_c) - min(s.mean[0] for s in b_stats_c)
+            bstd_spread = max(s.stddev[0] for s in b_stats_c) - min(s.stddev[0] for s in b_stats_c)
+
+            sub_sm_c = sub_rgb_c.filter(ImageFilter.GaussianBlur(radius=1.5))
+            min_sm_c = int(min(e[0] for e in sub_sm_c.getextrema()))
+            min_raw_c = int(min(e[0] for e in sub_rgb_c.getextrema()))
+
+            std_ratio_c = sub_std_c / max(1.0, base_std)
+            if (
+                qm_raw_c <= 8.0
+                and qstd_raw_c <= 4.0
+                and bm_spread <= 16.0
+                and bstd_spread <= 8.5
+                and abs(sub_mean_c - base_mean) <= 10.0
+                and 0.80 <= std_ratio_c <= 1.25
+                and min_sm_c >= max(min_floor, win_min_sm_rgb - 35)
+            ):
+                win_crop = sub_rgb_c
+                win_box = cbx
+                win_qm_exact = float(qm_raw_c)
+                win_qstd_exact = float(qstd_raw_c)
+                win_qm_raw = float(qm_raw_c)
+                win_min_sm_rgb = min_sm_c
+                win_min_raw_rgb = min_raw_c
+                break
 
     sec_crop: Optional[Image.Image] = None
     sec_box: Optional[Tuple[int, int, int, int]] = None
     for cand in finalists[1:]:
-        if _boxes_overlap_ratio(win[1], cand[1]) < 0.25 and cand[0] >= 0.35 * win[0]:
+        if _boxes_overlap_ratio(win_box, cand[1]) < 0.25 and cand[0] >= 0.35 * win[0]:
             sec_box = cand[1]
             sec_crop = src.crop(sec_box)
             break
 
     return SwatchROIV8(
         crop=win_crop,
-        bbox=win[1],
+        bbox=win_box,
         source_size=(W, H),
         score=round(win[0], 4),
         relief_energy=round(win[2], 4),
-        quad_mean_spread=round(win[3], 4),
-        quad_std_spread=round(win[4], 4),
-        min_rgb=win[6],
-        raw_min_rgb=win[7],
-        raw_quad_mean_spread=round(win[5], 4),
+        quad_mean_spread=round(win_qm_exact, 4),
+        quad_std_spread=round(win_qstd_exact, 4),
+        min_rgb=win_min_sm_rgb,
+        raw_min_rgb=win_min_raw_rgb,
+        raw_quad_mean_spread=round(win_qm_raw, 4),
         secondary_crop=sec_crop,
         secondary_bbox=sec_box,
     )
@@ -745,14 +1467,15 @@ def calibrate_fabric_lightness_v8(
     max_rgb: int = 243,
 ) -> Image.Image:
     """
-    Calibra la luminosidad perceptual de la tela un +30% por defecto en CIELAB:
+    Calibra la luminosidad perceptual de la tela en CIELAB (+30% por defecto o ajuste dinámico):
       - Aplana viñeteo macro de cámara en L* alrededor de la media global.
       - Descompone L_flat en base local suave (r=10) y micro-relieve 3D de figuras (R_128).
-      - Aplica curva multiplicativa C¹-continua con hombro racional (L*_knee=82.5, L*_ceil=94.8).
-      - Re-inyecta el micro-relieve local preservando >= 85% del contraste entre figuras incluso en
-        telas claras marfil y manteniendo oscuras las telas azul marino / carbón.
-      - Aplica compensación isotrópica sutil de croma en a*, b* (0.0° de giro de tono).
-      - Cierra con tope suave sRGB preservador de matiz max(R, G, B) <= max_rgb (243).
+      - Aplica curva multiplicativa C¹-continua con hombro racional en L*.
+      - Modula valles oscuros en tejidos de alto contraste (std_L* > 11.0) y en aclarados extra
+        (eff_boost > 0.30) para evitar estancamiento o punteado áspero, manteniendo >= 85% de
+        relieve en telas estándar.
+      - Aplica compresión suave pre-lab2rgb en L* (95.0 -> 98.4) para evitar recorte de canal R
+        antes del tope sRGB preservador de matiz max(R, G, B) <= max_rgb (243).
     """
     if img is None:
         raise ValueError("Se requiere una imagen PIL válida en calibrate_fabric_lightness_v8.")
@@ -771,8 +1494,10 @@ def calibrate_fabric_lightness_v8(
         lab = ImageCms.applyTransform(rgb_in, rgb2lab)
         l_ch, a_ch, b_ch = lab.split()
 
-        mean_l_byte = ImageStat.Stat(l_ch).mean[0]
+        l_stat = ImageStat.Stat(l_ch)
+        mean_l_byte = l_stat.mean[0]
         mean_l_star = (mean_l_byte / 255.0) * 100.0
+        std_l_star = (l_stat.stddev[0] / 255.0) * 100.0
 
         # 1. Aplanado homomórfico de caída lenta de iluminación macro (offset = media global)
         if min(w, h) >= 32:
@@ -787,10 +1512,11 @@ def calibrate_fabric_lightness_v8(
         l_base = l_flat.filter(ImageFilter.GaussianBlur(radius=rad_base))
         r_128 = ImageChops.subtract(l_flat, l_base, scale=1.0, offset=128)
 
-        # 3. Curva C¹ Soft-Knee en L* (0..100)
-        # Si la tela ya es muy clara (mean L* > 86), centramos el techo para dejar margen de relieve bajo RGB 243
+        # 3. Curva C¹ Soft-Knee en L* (0..100) con elevación controlada para aclarados > +30%
+        extra = max(0.0, eff_boost - 0.30)
         l_knee = 84.0
-        l_ceil = 96.5 if mean_l_star <= 86.0 else 92.8
+        l_ceil_base = 96.5 if mean_l_star <= 86.0 else 92.8
+        l_ceil = min(97.8, l_ceil_base + 2.5 * extra)
         span = max(2.0, l_ceil - l_knee)
         lut_l: List[int] = []
         for bv in range(256):
@@ -805,15 +1531,53 @@ def calibrate_fabric_lightness_v8(
 
         l_lifted = l_base.point(lut_l)
 
-        # 4. Re-inyección del relieve local entre figuras (~94% perceptual, compensando hombro sRGB en tonos claros)
+        # 4. Re-inyección asimétrica del relieve local:
+        #    - Tejidos estándar (std_L* <= 11.0 a boost=0.30): intactos.
+        #    - Tejidos gruesos de alto contraste (std_L* > 11.0): suaviza valles profundos para
+        #      evitar punteado áspero y permitir aclarado real en +30% / +40% / +50%.
+        #    - Aclarados solicitados por usuario (eff_boost > 0.30): levanta suavemente valles (i < 128).
+        #    - Oscurecimientos (eff_boost < 0): protege valles contra aplastamiento a negro RGB 0.
         if mean_l_star >= 85.0:
             rel_gain = 1.18
         elif mean_l_star >= 62.0:
             rel_gain = 1.10
         else:
             rel_gain = 0.96
-        lut_r = [max(0, min(255, int(round(128.0 + rel_gain * (i - 128.0))))) for i in range(256)]
+
+        rel_gain_pos = rel_gain
+        rel_gain_neg = rel_gain
+        if std_l_star > 11.0 and eff_boost > 0.0:
+            excess = min(1.0, (std_l_star - 11.0) / 6.0)
+            boost_lift = max(0.0, eff_boost - 0.25) * 0.55
+            rel_gain_neg = max(0.62, rel_gain_neg * (1.0 - 0.22 * excess - boost_lift))
+            rel_gain_pos = max(0.84, rel_gain_pos * (1.0 - 0.10 * excess))
+
+        if extra > 0.0:
+            rel_gain_neg = min(rel_gain_neg, rel_gain * max(0.55, 1.0 - 0.90 * extra))
+        elif eff_boost < 0.0:
+            dark_guard = max(0.75, 1.0 + 0.50 * eff_boost)
+            rel_gain_neg = rel_gain_neg * dark_guard
+
+        lut_r = [
+            max(0, min(255, int(round(128.0 + (rel_gain_neg if i < 128 else rel_gain_pos) * (i - 128.0)))))
+            for i in range(256)
+        ]
         l_out = ImageChops.add(l_lifted, r_128.point(lut_r), scale=1.0, offset=-128)
+
+        # 4b. Compresión suave pre-lab2rgb en L* (95.0 -> 98.4, byte 242 -> 251) para impedir
+        #     recorte duro de canal R en ImageCms antes del tope proporcional sRGB <= max_rgb.
+        knee_l_byte = 242
+        max_l_byte = 251
+        span_l = float(max_l_byte - knee_l_byte)
+        lut_l_roll: List[int] = []
+        for bv in range(256):
+            if bv <= knee_l_byte:
+                lut_l_roll.append(bv)
+            else:
+                dl = float(bv - knee_l_byte)
+                val_l = float(knee_l_byte) + (span_l * dl) / (span_l + dl)
+                lut_l_roll.append(max(0, min(max_l_byte, int(round(val_l)))))
+        l_out = l_out.point(lut_l_roll)
 
         # 5. Compensación isotrópica sutil de croma alrededor de 128 (exactamente 0.0° de giro de matiz)
         chroma_gain = 1.0 + 0.24 * max(0.0, eff_boost)
@@ -880,7 +1644,7 @@ def _estimate_motif_period_px(gray_img: Image.Image) -> float:
             for xx in range(0, side, 4):
                 sy += centered[ro + xx] * centered[ro2 + xx]
                 ny += 1
-        ac_y[lag] = (sy / ny) / var_pix if nx else 0.0
+        ac_y[lag] = (sy / ny) / var_pix if ny else 0.0
 
     def _first_repeat_lag(ac: List[float]) -> Optional[float]:
         dipped = False
@@ -947,15 +1711,29 @@ def analyze_fabric_multitone_v8(
     calibrated_roi: Image.Image,
     raw_bytes: Optional[bytes] = None,
     sample_name: str = "",
+    boost: float = 0.30,
+    calibration_label: str = "",
 ) -> FabricMultitoneReportV8:
     """
-    Muestrea parches a escala motivo (~6x6 px) sobre el ROI calibrado (+30%), convierte a CIELAB
+    Muestrea parches a escala motivo (~6x6 px) sobre el ROI calibrado en CIELAB
     y extrae el espectro policromático de hasta 7 familias de figuras/hebras, el periodo espacial
     de motivo y la alternancia espacial multitono.
     """
     _ = raw_bytes
     if calibrated_roi is None:
         raise ValueError("calibrated_roi requerido en analyze_fabric_multitone_v8.")
+
+    cal_label_clean = str(calibration_label or "").strip()
+    if cal_label_clean:
+        cal_phrase = cal_label_clean
+    elif abs(float(boost)) < 1e-6:
+        cal_phrase = "tono original exacto sin aclarado (0%)"
+    elif float(boost) < 0.0:
+        cal_phrase = f"{int(round(float(boost) * 100))}% más oscuro en CIELAB"
+    elif abs(float(boost) - 0.30) < 1e-4:
+        cal_phrase = "+30% claridad de estudio"
+    else:
+        cal_phrase = f"+{int(round(float(boost) * 100))}% claridad calibrada en CIELAB"
 
     rgb = calibrated_roi.convert("RGB") if calibrated_roi.mode != "RGB" else calibrated_roi
     w, h = rgb.size
@@ -1023,7 +1801,7 @@ def analyze_fabric_multitone_v8(
             has_multitone_alternation=False,
             motif_period_px=motif_period,
             color_description=(
-                f"{es_base} ({en_base}) pre-calibrado V8 +30% en tono sólido uniforme {mean_hex} "
+                f"{es_base} ({en_base}) pre-calibrado V8 ({cal_phrase}) en tono sólido uniforme {mean_hex} "
                 f"(RGB {mean_rgb_t[0]},{mean_rgb_t[1]},{mean_rgb_t[2]})"
             ),
             pattern_and_figures="Unpatterned uniform monochrome textile surface",
@@ -1180,7 +1958,7 @@ def analyze_fabric_multitone_v8(
         light_desc = "Soft matte textile"
 
     color_desc = (
-        f"tejido policromático pre-calibrado V8 (+30% claridad de estudio, media {mean_hex} / "
+        f"tejido policromático pre-calibrado V8 ({cal_phrase}, media {mean_hex} / "
         f"RGB {mean_rgb_t[0]},{mean_rgb_t[1]},{mean_rgb_t[2]} — {es_base} / {en_base}) con {len(bands)} bandas de tonos "
         f"alternados entre figuras: " + "; ".join(band_snippets_es)
     )
@@ -1207,9 +1985,24 @@ def analyze_fabric_multitone_v8(
 
 _V8_WIDTH_CATEGORY_KEYWORDS: Tuple[str, ...] = (
     "seccional",
+    "sectional",
     "modular",
+    "esquinero",
     "esquinera",
-    "sala en l",
+    "chaise",
+    "chaiselongue",
+    "rinconera",
+    "rinconero",
+    "peninsula",
+    "península",
+    "l shaped",
+    "u shaped",
+    "4 plazas",
+    "cuatro plazas",
+    "3 plazas",
+    "tres plazas",
+    "2 plazas",
+    "dos plazas",
     "loveseat",
     "love seat",
     "sofa cama",
@@ -1278,6 +2071,36 @@ _V8_GENERIC_NAME_STEMS = frozenset(
 )
 
 
+_TRIP_DIM_RE = re.compile(
+    r"(?<![a-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*(cm|m)?\s*[xX*]\s*([0-9]+(?:\.[0-9]+)?)(?:\s*(cm|m)\b)?"
+)
+
+_V8_WIDTH_CATEGORY_RE = re.compile(
+    r"\b(?:"
+    r"seccional(?:es)?|sectionals?|modular(?:es)?|esquiner[oa]s?|chaise(?:longue)?s?|"
+    r"rinconer[oa]s?|pen[ií]nsulas?|l\s+shaped|u\s+shaped|"
+    r"4\s+plazas|cuatro\s+plazas|3\s+plazas|tres\s+plazas|2\s+plazas|dos\s+plazas|"
+    r"loveseats?|love\s+seats?|sof[aá]\s+cama|sof[aá]s?|salas?|"
+    r"camas?|beds?|cabeceras?|headboards?|comedores?|comedor|dining|mesas?|"
+    r"credenzas?|aparador(?:es)?|buffets?|bancas?|bench(?:es)?|pie\s+de\s+cama|"
+    r"sill[oó]n(?:es)?|butacas?|poltronas?|individual(?:es)?|armchairs?|puffs?|otomanas?|"
+    r"sillas?|chairs?|bancos?|taburetes?|stools?|bur[oó]s?"
+    r")\b"
+)
+
+
+def _extract_trip_width_cm(txt: str) -> Optional[float]:
+    for m in _TRIP_DIM_RE.finditer(txt):
+        val = float(m.group(1))
+        has_unit = bool(m.group(2) or m.group(4))
+        if has_unit:
+            if val > 5.0:
+                return val
+        elif 15.0 <= val <= 550.0:
+            return val
+    return None
+
+
 def _has_v8_specific_width_hint(text: str) -> bool:
     raw = (text or "").strip().lower()
     if not raw:
@@ -1289,10 +2112,12 @@ def _has_v8_specific_width_hint(text: str) -> bool:
         return True
     if re.search(r"(?:frente|ancho|largo|width|d\.|diam\.?)\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", raw):
         return True
-    if re.search(r"([0-9]+(?:\.[0-9]+)?)\s*[xX*]\s*([0-9]+(?:\.[0-9]+)?)", raw):
+    if _extract_trip_width_cm(raw) is not None:
         return True
-    norm = raw.replace("_", " ").replace("-", " ")
-    return any(k in norm for k in _V8_WIDTH_CATEGORY_KEYWORDS)
+    norm = re.sub(r"[_/\-]+", " ", raw)
+    if re.search(r"\ben\s+[lu]\b", norm):
+        return True
+    return bool(_V8_WIDTH_CATEGORY_RE.search(norm))
 
 
 def clean_v8_ai_furniture_item(ai_furniture_item: str = "") -> str:
@@ -1380,31 +2205,45 @@ def infer_furniture_width_cm_v8(
         val = float(m_after.group(1))
         if val > 5.0:
             return val
-    m_trip = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*[xX*]\s*([0-9]+(?:\.[0-9]+)?)", txt)
-    if m_trip:
-        val = float(m_trip.group(1))
-        if val > 5.0:
-            return val
+    trip_val = _extract_trip_width_cm(txt)
+    if trip_val is not None:
+        return trip_val
 
-    norm_txt = txt.replace("_", " ").replace("-", " ")
-    if any(k in norm_txt for k in ("seccional", "modular", "esquinera", "sala en l")):
-        return 250.0
-    if any(k in norm_txt for k in ("loveseat", "love seat", "sofa cama", "sofá cama")):
+    norm_txt = re.sub(r"[_/\-]+", " ", txt)
+    if re.search(r"\b(?:seccional\s+grande|modular\s+grande|sala\s+grande|sala\s+en\s+u|u\s+shaped|en\s+u)\b", norm_txt):
+        return 300.0
+    if re.search(
+        r"\b(?:seccional(?:es)?|sectionals?|esquiner[oa]s?|chaise(?:longue)?s?|l\s+shaped|"
+        r"modular(?:es)?|rinconer[oa]s?|pen[ií]nsulas?|sala\s+en\s+l|en\s+l)\b",
+        norm_txt,
+    ):
+        return 285.0
+    if re.search(r"\b(?:4\s+plazas|cuatro\s+plazas)\b", norm_txt):
+        return 265.0
+    if re.search(r"\b(?:loveseats?|love\s+seats?|2\s+plazas|dos\s+plazas|sof[aá]\s+cama)\b", norm_txt):
         return 165.0
-    if any(k in norm_txt for k in ("sofa", "sofá", "sala")):
-        return 220.0
-    if any(k in norm_txt for k in ("cama", "bed", "cabecera", "headboard")):
-        return 190.0
-    if any(k in norm_txt for k in ("comedor", "dining")):
-        return 200.0
-    if any(k in norm_txt for k in ("credenza", "aparador", "buffet")):
-        return 180.0
-    if any(k in norm_txt for k in ("banca", "bench", "pie de cama")):
-        return 130.0
-    if any(k in norm_txt for k in ("sillon", "sillón", "butaca", "poltrona", "individual", "armchair")):
-        return 85.0
-    if any(k in norm_txt for k in ("silla", "chair", "banco", "taburete", "stool", "buro", "buró")):
+    if re.search(r"\b(?:3\s+plazas|tres\s+plazas)\b", norm_txt):
+        return 230.0
+    if re.search(r"\b(?:sillas?|chairs?|bancos?|taburetes?|stools?|bur[oó]s?)\b", norm_txt):
         return 55.0
+    if re.search(r"\b(?:sill[oó]n(?:es)?|butacas?|poltronas?|armchairs?|puffs?|otomanas?)\b", norm_txt):
+        return 85.0
+    if re.search(r"\b(?:pie\s+de\s+cama|bancas?|bench(?:es)?)\b", norm_txt):
+        return 130.0
+    if re.search(r"\b(?:credenzas?|aparador(?:es)?|buffets?)\b", norm_txt):
+        return 180.0
+    if re.search(r"\b(?:comedores?|comedor|dining)\b", norm_txt):
+        return 200.0
+    if re.search(r"\bmesas?\b", norm_txt):
+        return 160.0
+    if re.search(r"\bsof[aá]s?\b", norm_txt):
+        return 220.0
+    if re.search(r"\bsalas?\b", norm_txt):
+        return 260.0
+    if re.search(r"\b(?:camas?|beds?|cabeceras?|headboards?)\b", norm_txt):
+        return 190.0
+    if re.search(r"\bindividual(?:es)?\b", norm_txt):
+        return 85.0
     return 160.0
 
 
@@ -1415,24 +2254,29 @@ def compute_v8_tile_px(
     motif_period_px: float = 14.0,
     roi_px: int = 240,
     furn_scale: float = 0.58,
+    texture_scale_factor: float = 1.0,
 ) -> Tuple[int, int]:
     """
     Calcula (tile_px, grid_n) en un lienzo canvas_px (1280) con el mueble alejado a furn_scale (~0.58):
-      - grid_n está estrictamente acotado en [9, 17] -> total_tiles = grid_n^2 en [81, 289].
-      - Estrictamente monótono respecto al ancho del mueble: muebles más anchos reciben más baldosas
-        y tile_px menor (tile_px(220cm) < tile_px(165cm) < tile_px(85cm) < tile_px(55cm)).
+      - grid_n está estrictamente acotado en [9, 34] -> total_tiles = grid_n^2 en [81, 1156].
+      - Curva monótona realista hasta seccionales/salas 300+ cm (sin saturación prematura a 225 cm):
+        55cm -> 12x12 (107px), 85cm -> 14x14 (92px), 165cm -> 19x19 (68px),
+        220cm -> 22x22 (59px), 285cm -> 25x25 (52px), 300cm -> 26x26 (50px).
+      - texture_scale_factor en [0.50, 1.50] reduce (<1.0) o amplía (>1.0) tile_px directamente
+        manteniendo tile_px >= 38 px en 1280 px para conservar relieve nítido.
     """
     _ = motif_period_px, roi_px
     c_px = max(512, int(canvas_px))
     f_sc = max(0.35, min(0.85, float(furn_scale)))
+    t_sf = max(0.50, min(1.50, float(texture_scale_factor)))
     w_cm = infer_furniture_width_cm_v8(furniture_width_cm=furniture_width_cm, furniture_type=furniture_type)
 
-    # Mapeo físico monótono: 50 cm -> grid 9 (81 tiles), 85 cm -> grid 11 (121), 165 cm -> grid 14 (196), 220 cm -> grid 17 (289)
-    w_clamped = max(45.0, min(260.0, w_cm))
+    w_clamped = max(45.0, min(320.0, w_cm))
     scale_adj = 0.58 / f_sc
-    norm_w = max(0.0, (w_clamped * scale_adj - 50.0) / (225.0 - 50.0))
-    grid_f = 9.0 + 8.0 * (norm_w ** 0.85)
-    grid_n = max(9, min(17, int(round(grid_f))))
+    norm_w = max(0.0, (w_clamped * scale_adj - 45.0) / (300.0 - 45.0))
+    grid_base = 11.0 + 15.0 * (norm_w ** 0.85)
+    grid_f = grid_base / t_sf
+    grid_n = max(9, min(34, int(round(grid_f))))
     tile_px = int(math.ceil(float(c_px) / float(grid_n)))
     return tile_px, grid_n
 
@@ -1446,7 +2290,8 @@ def make_toroidal_seamless_tile_v8(
     Sintetiza una baldosa tile_px x tile_px sin costuras visibles:
       1) Aplana cualquier gradiente residual de borde a borde sobre el ROI calibrado.
       2) Redimensiona con LANCZOS a (tile_px + ov, tile_px + ov) con ov = max(10, tile_px // 4).
-      3) Aplica UnsharpMask suave para preservar nitidez de micro-figuras (~2-3 px).
+      3) Aplica UnsharpMask adaptativo al contraste para preservar micro-figuras sin sobreenfocar
+         valles oscuros de bouclé grueso.
       4) Mezcla toroidalmente las franjas de traslape en X y Y con rampa alfa coseno alzado
          0.5 * (1 - cos(pi * (t + 0.5) / ov)), de modo que el borde derecho empata al pixel
          con el borde izquierdo y el inferior con el superior (0% líneas de cuadrícula).
@@ -1472,8 +2317,12 @@ def make_toroidal_seamless_tile_v8(
             flat_chs.append(ImageChops.subtract(ch, low, scale=1.0, offset=m_ch))
         base = Image.merge("RGB", tuple(flat_chs))
 
+    mean_std = sum(ImageStat.Stat(base).stddev) / 3.0
     work = base.resize((ext_px, ext_px), Image.Resampling.LANCZOS)
-    work = work.filter(ImageFilter.UnsharpMask(radius=0.75, percent=42, threshold=2))
+    if mean_std > 24.0:
+        work = work.filter(ImageFilter.UnsharpMask(radius=0.75, percent=24, threshold=3))
+    else:
+        work = work.filter(ImageFilter.UnsharpMask(radius=0.75, percent=42, threshold=2))
 
     ramp_vals = [
         max(0, min(255, int(round(255.0 * 0.5 * (1.0 - math.cos(math.pi * (t + 0.5) / float(ov)))))))
@@ -1535,7 +2384,7 @@ def _extract_studio_cutout_mask(furn_src: Image.Image) -> Optional[Tuple[Image.I
                 fg_mask = alpha.point([255 if i >= 24 else 0 for i in range(256)])
                 return bg_white, fg_mask
 
-    rgb = furn_src.convert("RGB") if furn_src.mode != "RGB" else furn_src
+    rgb = _to_rgb_white_safe(furn_src)
 
     # 2. Construir mapa binario de blanco de estudio en C (< 0.5 ms) y validar esquinas + perímetro
     det_scale = min(1.0, 320.0 / float(max(w, h)))
@@ -1649,6 +2498,28 @@ def _dilate_mask_fast(mask_l: Image.Image, radius_px: int) -> Image.Image:
     return blurred.point(lut)
 
 
+def _load_scaled_furniture_for_canvas(raw_bytes: bytes, max_furn_px: int) -> Image.Image:
+    """Abre y escala la foto del mueble aplicando .reduce() en fotos >2560px y escalado seguro de I;16/I/F."""
+    with Image.open(io.BytesIO(raw_bytes)) as f_raw:
+        furn_oriented = ImageOps.exif_transpose(f_raw)
+        if furn_oriented.mode.startswith("I;16") or furn_oriented.mode in ("I", "F"):
+            furn_oriented = _to_rgb_white_safe(furn_oriented)
+        fw0, fh0 = furn_oriented.size
+        if max(fw0, fh0) > 2560 and max(fw0, fh0) > max_furn_px * 2:
+            factor = max(2, max(fw0, fh0) // (max_furn_px * 2))
+            if furn_oriented.mode == "P":
+                furn_oriented = furn_oriented.convert("RGBA" if "transparency" in furn_oriented.info else "RGB")
+            try:
+                furn_oriented = furn_oriented.reduce(factor)
+            except Exception:
+                pass
+        fw1, fh1 = furn_oriented.size
+        scale_f = min(max_furn_px / float(max(1, fw1)), max_furn_px / float(max(1, fh1)))
+        fw = max(32, int(round(fw1 * scale_f)))
+        fh = max(32, int(round(fh1 * scale_f)))
+        return furn_oriented.resize((fw, fh), Image.Resampling.LANCZOS)
+
+
 def build_v8_conditioning_canvas(
     furniture_bytes: bytes,
     fabric_bytes: bytes,
@@ -1659,12 +2530,14 @@ def build_v8_conditioning_canvas(
     boost: float = 0.30,
     canvas_px: int = 1280,
     furn_scale: float = 0.58,
+    texture_scale_factor: float = 1.0,
+    calibration_label: str = "",
 ) -> V8ConditioningArtifacts:
     """
     Construye el Lienzo Maestro de Escala V8 (<mueble>_V8_LIENZO_ESCALA.png, 1280x1280 px):
-      1) Extrae parche limpio con figuras (extract_clean_swatch_roi_v8) y calibra +30% (<=243).
+      1) Extrae parche limpio con figuras (extract_clean_swatch_roi_v8) y calibra en CIELAB (<=243).
       2) Sintetiza baldosa sin costuras (make_toroidal_seamless_tile_v8) escalada físicamente al
-         ancho del mueble y tapiza el 100% del fondo con 81 a 289 repeticiones reducidas.
+         ancho del mueble y `texture_scale_factor` y tapiza el 100% del fondo en O(log N).
       3) Aleja el mueble al ~58% en el centro con halo blanco puro #FFFFFF (12-18 px si es corte
          blanco/RGBA) o marco separador #FFFFFF (10-14 px si tiene fondo de cuarto/taller).
       4) Cachea en LRU acotada por SHA-1 (< 12 MB RAM) para respuesta instantánea en UI.
@@ -1677,16 +2550,20 @@ def build_v8_conditioning_canvas(
 
     c_px = max(512, min(1600, int(canvas_px)))
     f_sc = max(0.40, min(0.75, float(furn_scale)))
+    t_sf = max(0.50, min(1.50, float(texture_scale_factor)))
+    allow_aspect_fallback = (furniture_width_cm is None) and (not _has_v8_specific_width_hint(furniture_type))
     eff_w_cm = infer_furniture_width_cm_v8(furniture_width_cm=furniture_width_cm, furniture_type=furniture_type)
 
     canvas_fname = make_v8_canvas_filename(furniture_name)
     swatch_fname = make_v8_swatch_filename(sample_name)
     mosaic_fname = make_v8_mosaic_filename(sample_name)
 
+    auto_tag = "auto" if allow_aspect_fallback else "fixed"
+    cal_lbl_key = str(calibration_label or "").strip()
     cache_key = _bytes_digest(
         furniture_bytes,
         fabric_bytes,
-        f"{c_px}|{f_sc:.3f}|{eff_w_cm:.1f}|{boost:.3f}|{canvas_fname}|{swatch_fname}".encode("utf-8"),
+        f"{c_px}|{f_sc:.3f}|{eff_w_cm:.1f}|{auto_tag}|{boost:.3f}|{t_sf:.3f}|{cal_lbl_key}|{canvas_fname}|{swatch_fname}".encode("utf-8"),
     )
     with _CANVAS_CACHE_LOCK:
         hit = _CANVAS_CACHE.get(cache_key)
@@ -1694,12 +2571,38 @@ def build_v8_conditioning_canvas(
             _CANVAS_CACHE.move_to_end(cache_key)
             return hit
 
-    # 1. Extraer ROI limpio + calibrar +30% + analizar espectro multitono
+    # 1. Extraer ROI limpio + calibrar luminosidad + analizar espectro multitono
     roi = extract_clean_swatch_roi_v8(fabric_bytes)
     cal_roi = calibrate_fabric_lightness_v8(roi.crop, boost=boost, max_rgb=243)
-    mt_report = analyze_fabric_multitone_v8(cal_roi, raw_bytes=fabric_bytes, sample_name=sample_name)
+    mt_report = analyze_fabric_multitone_v8(
+        cal_roi,
+        raw_bytes=fabric_bytes,
+        sample_name=sample_name,
+        boost=boost,
+        calibration_label=cal_lbl_key,
+    )
 
-    # 2. Calcular tamaño físico de baldosa y construir mosaico 1280x1280 (81..289 baldosas)
+    # 2. Cargar mueble y extraer máscara de corte antes del tapizado para permitir inferencia de
+    #    aspecto en fotos UUID anónimas sin tipo_mueble ni medidas explícitas.
+    max_furn_px = max(128, int(round(c_px * f_sc)))
+    furn_scaled = _load_scaled_furniture_for_canvas(furniture_bytes, max_furn_px)
+    fw, fh = furn_scaled.size
+    ox = (c_px - fw) // 2
+    oy = (c_px - fh) // 2
+    cutout = _extract_studio_cutout_mask(furn_scaled)
+
+    if allow_aspect_fallback and cutout is not None:
+        fg_bbox = cutout[1].getbbox()
+        if fg_bbox is not None:
+            fg_w = max(1, fg_bbox[2] - fg_bbox[0])
+            fg_h = max(1, fg_bbox[3] - fg_bbox[1])
+            fg_aspect = float(fg_w) / float(fg_h)
+            if fg_aspect >= 2.25:
+                eff_w_cm = max(eff_w_cm, 285.0)
+            elif fg_aspect >= 1.90:
+                eff_w_cm = max(eff_w_cm, 220.0)
+
+    # 3. Calcular tamaño físico de baldosa y construir mosaico 1280x1280 en O(log N)
     tile_px, grid_n = compute_v8_tile_px(
         canvas_px=c_px,
         furniture_width_cm=eff_w_cm,
@@ -1707,36 +2610,13 @@ def build_v8_conditioning_canvas(
         motif_period_px=mt_report.motif_period_px,
         roi_px=min(cal_roi.size),
         furn_scale=f_sc,
+        texture_scale_factor=t_sf,
     )
     total_tiles = grid_n * grid_n
     seamless_tile = make_toroidal_seamless_tile_v8(cal_roi, tile_px=tile_px, max_rgb=243)
+    canvas_img = _tile_canvas_fast(seamless_tile, c_px)
 
-    mosaic_img = Image.new("RGB", (c_px, c_px))
-    for gy in range(grid_n):
-        py = gy * tile_px
-        if py >= c_px:
-            break
-        for gx in range(grid_n):
-            px = gx * tile_px
-            if px >= c_px:
-                break
-            mosaic_img.paste(seamless_tile, (px, py))
-
-    # 3. Alejar mueble (~58% de canvas_px) y aislar con halo/marco blanco #FFFFFF
-    with Image.open(io.BytesIO(furniture_bytes)) as f_raw:
-        furn_oriented = ImageOps.exif_transpose(f_raw)
-        max_furn_px = max(128, int(round(c_px * f_sc)))
-        fw0, fh0 = furn_oriented.size
-        scale_f = min(max_furn_px / float(max(1, fw0)), max_furn_px / float(max(1, fh0)))
-        fw = max(32, int(round(fw0 * scale_f)))
-        fh = max(32, int(round(fh0 * scale_f)))
-        furn_scaled = furn_oriented.resize((fw, fh), Image.Resampling.LANCZOS)
-
-    canvas_img = mosaic_img.copy()
-    ox = (c_px - fw) // 2
-    oy = (c_px - fh) // 2
-
-    cutout = _extract_studio_cutout_mask(furn_scaled)
+    # 4. Aislar mueble alejado (~58% de canvas_px) con halo/marco blanco #FFFFFF
     if cutout is not None:
         furn_rgb, fg_mask = cutout
         halo_px = max(12, min(18, int(round(c_px * 0.012))))
@@ -1761,7 +2641,7 @@ def build_v8_conditioning_canvas(
         iso_mode = "alpha_halo"
         iso_px = halo_px
     else:
-        furn_rgb = furn_scaled.convert("RGB") if furn_scaled.mode != "RGB" else furn_scaled
+        furn_rgb = _to_rgb_white_safe(furn_scaled)
         frame_px = max(10, min(14, int(round(c_px * 0.0095))))
         fx0 = max(0, ox - frame_px)
         fy0 = max(0, oy - frame_px)
@@ -1773,7 +2653,7 @@ def build_v8_conditioning_canvas(
         iso_mode = "white_frame"
         iso_px = frame_px
 
-    # 4. Codificar artefactos PNG sin pérdida con compress_level=1 (< 35 ms y < 1.2 MB);
+    # 5. Codificar artefactos PNG sin pérdida con compress_level=1 (< 35 ms y < 1.2 MB);
     #    mosaic_only_png se codifica perezosamente (@property) solo en reintentos de borde.
     buf_canvas = io.BytesIO()
     canvas_img.save(buf_canvas, format="PNG", compress_level=1)
@@ -1782,6 +2662,10 @@ def build_v8_conditioning_canvas(
         buf_canvas = io.BytesIO()
         canvas_img.save(buf_canvas, format="PNG", compress_level=4)
         canvas_png = buf_canvas.getvalue()
+        if len(canvas_png) > 1_450_000:
+            buf_canvas = io.BytesIO()
+            canvas_img.save(buf_canvas, format="PNG", compress_level=9)
+            canvas_png = buf_canvas.getvalue()
 
     swatch_out = cal_roi
     if min(swatch_out.size) < 256:
@@ -1807,10 +2691,11 @@ def build_v8_conditioning_canvas(
         calibrated_swatch_filename=swatch_fname,
         mosaic_filename=mosaic_fname,
         multitone_report=mt_report,
-        canvas_image=canvas_img,
+        canvas_image=None,
         calibrated_swatch_image=swatch_out,
         seamless_tile_image=seamless_tile,
-        _mosaic_source_image=mosaic_img,
+        _mosaic_source_image=None,
+        texture_scale_factor=t_sf,
     )
 
     entry_sz = artifacts.approx_bytes()
@@ -1841,29 +2726,16 @@ def compose_view_with_precomputed_tile_v8(
 ) -> Tuple[str, bytes, Image.Image]:
     """
     Construye rápidamente (< 35 ms) un lienzo V8 por vista para lotes (vistas_tela),
-    reutilizando la baldosa continua ya pre-calibrada +30%.
+    reutilizando la baldosa continua ya pre-calibrada mediante tapizado O(log N).
     """
+    _ = tile_px, grid_n
     c_px = max(512, min(1600, int(canvas_px)))
     f_sc = max(0.40, min(0.75, float(furn_scale)))
-    mosaic_img = Image.new("RGB", (c_px, c_px))
-    for gy in range(grid_n):
-        py = gy * tile_px
-        if py >= c_px:
-            break
-        for gx in range(grid_n):
-            px = gx * tile_px
-            if px >= c_px:
-                break
-            mosaic_img.paste(seamless_tile, (px, py))
+    mosaic_img = _tile_canvas_fast(seamless_tile, c_px)
 
-    with Image.open(io.BytesIO(view_bytes)) as v_raw:
-        v_oriented = ImageOps.exif_transpose(v_raw)
-        max_furn_px = max(128, int(round(c_px * f_sc)))
-        fw0, fh0 = v_oriented.size
-        scale_f = min(max_furn_px / float(max(1, fw0)), max_furn_px / float(max(1, fh0)))
-        fw = max(32, int(round(fw0 * scale_f)))
-        fh = max(32, int(round(fh0 * scale_f)))
-        furn_scaled = v_oriented.resize((fw, fh), Image.Resampling.LANCZOS)
+    max_furn_px = max(128, int(round(c_px * f_sc)))
+    furn_scaled = _load_scaled_furniture_for_canvas(view_bytes, max_furn_px)
+    fw, fh = furn_scaled.size
 
     ox = (c_px - fw) // 2
     oy = (c_px - fh) // 2
@@ -1885,7 +2757,7 @@ def compose_view_with_precomputed_tile_v8(
             mosaic_img.paste(sub_white, (cx0, cy0), mask=sub_halo)
         mosaic_img.paste(furn_rgb, (ox, oy), mask=fg_mask)
     else:
-        furn_rgb = furn_scaled.convert("RGB") if furn_scaled.mode != "RGB" else furn_scaled
+        furn_rgb = _to_rgb_white_safe(furn_scaled)
         frame_px = max(10, min(14, int(round(c_px * 0.0095))))
         fx0, fy0 = max(0, ox - frame_px), max(0, oy - frame_px)
         fx1, fy1 = min(c_px, ox + fw + frame_px), min(c_px, oy + fh + frame_px)
@@ -1899,7 +2771,60 @@ def compose_view_with_precomputed_tile_v8(
         out_buf = io.BytesIO()
         mosaic_img.save(out_buf, format="PNG", compress_level=4)
         canvas_png = out_buf.getvalue()
+        if len(canvas_png) > 1_450_000:
+            out_buf = io.BytesIO()
+            mosaic_img.save(out_buf, format="PNG", compress_level=9)
+            canvas_png = out_buf.getvalue()
     return make_v8_canvas_filename(view_name), canvas_png, mosaic_img
+
+
+_CUTOUT_WIDTH_CACHE: "OrderedDict[str, Optional[float]]" = OrderedDict()
+_CUTOUT_WIDTH_CACHE_MAX = 32
+
+
+def _infer_cutout_width_cm_from_bytes_v8(
+    image_bytes: Optional[bytes],
+    canvas_px: int = 1280,
+    furn_scale: float = 0.58,
+) -> Optional[float]:
+    """
+    Infiere el ancho estimado (285 cm si aspecto >= 2.25; 220 cm si >= 1.90) a partir del
+    recorte blanco/alfa para fotos UUID sin pista textual ni medidas explícitas.
+    """
+    if not image_bytes or len(image_bytes) < 64:
+        return None
+    c_px = max(512, min(1600, int(canvas_px)))
+    f_sc = max(0.40, min(0.75, float(furn_scale)))
+    ck = _bytes_digest(image_bytes, f"cutw|{c_px}|{f_sc:.3f}".encode("utf-8"))
+    with _CANVAS_CACHE_LOCK:
+        if ck in _CUTOUT_WIDTH_CACHE:
+            _CUTOUT_WIDTH_CACHE.move_to_end(ck)
+            return _CUTOUT_WIDTH_CACHE[ck]
+
+    inferred: Optional[float] = None
+    try:
+        max_furn_px = max(128, int(round(c_px * f_sc)))
+        furn_scaled = _load_scaled_furniture_for_canvas(image_bytes, max_furn_px)
+        cutout = _extract_studio_cutout_mask(furn_scaled)
+        if cutout is not None:
+            fg_bbox = cutout[1].getbbox()
+            if fg_bbox is not None:
+                fg_w = max(1, fg_bbox[2] - fg_bbox[0])
+                fg_h = max(1, fg_bbox[3] - fg_bbox[1])
+                fg_aspect = float(fg_w) / float(fg_h)
+                if fg_aspect >= 2.25:
+                    inferred = 285.0
+                elif fg_aspect >= 1.90:
+                    inferred = 220.0
+    except Exception:
+        inferred = None
+
+    with _CANVAS_CACHE_LOCK:
+        _CUTOUT_WIDTH_CACHE[ck] = inferred
+        _CUTOUT_WIDTH_CACHE.move_to_end(ck)
+        while len(_CUTOUT_WIDTH_CACHE) > _CUTOUT_WIDTH_CACHE_MAX:
+            _CUTOUT_WIDTH_CACHE.popitem(last=False)
+    return inferred
 
 
 def clear_v8_composer_cache() -> None:
@@ -1907,4 +2832,5 @@ def clear_v8_composer_cache() -> None:
     global _CANVAS_CACHE_BYTES
     with _CANVAS_CACHE_LOCK:
         _CANVAS_CACHE.clear()
+        _CUTOUT_WIDTH_CACHE.clear()
         _CANVAS_CACHE_BYTES = 0

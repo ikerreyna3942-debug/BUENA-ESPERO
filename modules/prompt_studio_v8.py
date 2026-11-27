@@ -3,14 +3,15 @@ Interfaz de Estudio IA V8 (`render_prompt_studio_v8`).
 
 Cumple estrictamente las 4 reglas de GEMINI.md sin modificar ningún archivo de V1–V7:
   1. Encabezado ultra limpio en 1 sola línea horizontal (modo + sub-opción + barra SKU/Mueble/Medidas),
-     vistas previas propias de 76x76 px con zoom al pasar el cursor + botón 🖼️ Copiar foto (incluyendo
-     automáticamente <mueble>_V8_LIENZO_ESCALA.png y <tela>_V8_LUZ30.png), cero credenciales en UI,
+     vistas previas propias de 76x76 px con zoom al pasar el cursor + botón 🖼️ Copiar foto
+     (arquitectura limpia de 2 fotos en modo Tela: Mueble HD + <mueble>_V8_LIENZO_ESCALA.png,
+     sin 3.ª foto macro competidora; 3 fotos únicamente con Madera + Tela), cero credenciales en UI,
      y únicamente los 3 botones de acción (🚀 <Modo elegido>, ↘️ 3/4 Derecha, 🗑️ Borrar).
   2. Botón 🗑️ Borrar que limpia fotos, SKU, medidas, notas y resultados SIN reiniciar jamás
      v8_keep_mode ni las sub-opciones activas (v8_keep_vista, v8_keep_matmode, v8_keep_room, v8_keep_folder).
   3. Cobertura 100% en EL CASCO COMPLETO + cojines, escala física 1:1 (~97% reducción macro),
-     calibración automática +30% CIELAB (0% deriva adicional), y toma 3/4 Derecha en #FFFFFF,
-     0% sombras y 2054 x 2054 px exactos.
+     calibración CIELAB dinámica (+30% por defecto o ajuste pedido en Notas), y toma 3/4 Derecha
+     en #FFFFFF, 0% sombras y 2054 x 2054 px exactos.
   4. Carga paralela (ThreadPoolExecutor + BFS multi-raíz en Drive) desde RENDER, SUBIR,
      Cotización y SM S Mueblería, más Telas y Maderas, responsiva <= 640px y puente directo a Alta de Fotos.
 """
@@ -22,6 +23,7 @@ import concurrent.futures
 import hashlib
 import io
 import os
+import re
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,7 +44,9 @@ from services.ai_prompt_service_v8 import (
     MATERIAL_SUBMODES,
     MODES,
     ROOM_PRESETS,
+    _describe_v8_calibration_labels,
     ai_prompt_service_v8,
+    parse_v8_user_fabric_directives,
     resolve_v8_furniture_type_hint,
 )
 from services.sheets_service import SUBIR_DRIVE_ID, sheets_service
@@ -209,6 +213,8 @@ def _merge_telas_lists(*lists: List[Dict[str, str]]) -> List[Dict[str, str]]:
     seen_names = set()
     for lst in lists:
         for item in lst or []:
+            if not isinstance(item, dict):
+                continue
             fid = str(item.get("id") or "").strip()
             nm_key = str(item.get("name") or "").strip().upper()
             if fid and fid in seen_ids:
@@ -266,22 +272,30 @@ def cargar_todo_catalogo_v8(
     for k in f_keys:
         source_label = _FURNITURE_FOLDER_SPECS[k]["source"]
         loc_items = local_by_key.get(k, [])
-        seen_local = {it["name"].strip().upper() for it in loc_items}
+        seen_local = {str(it.get("name") or "").strip().upper() for it in loc_items}
         all_muebles.extend(loc_items)
         for d in drive_batches.get(k, []):
-            if d["name"].strip().upper() not in seen_local:
-                item_copy = dict(d)
-                item_copy["source"] = source_label
-                all_muebles.append(item_copy)
+            d_name = str(d.get("name") or "").strip() if isinstance(d, dict) else ""
+            if not d_name or d_name.upper() in seen_local:
+                continue
+            item_copy = dict(d)
+            item_copy["name"] = d_name
+            item_copy["source"] = source_label
+            all_muebles.append(item_copy)
 
     all_telas = _merge_telas_lists(
         drive_batches.get("TELAS", []),
         drive_batches.get("TELAS_ODOO", []),
     )
-    seen_wood = {m["name"].upper() for m in local_maderas}
-    all_maderas = local_maderas + [
-        m for m in drive_batches.get("MADERAS", []) if m["name"].strip().upper() not in seen_wood
-    ]
+    seen_wood = {str(m.get("name") or "").strip().upper() for m in local_maderas}
+    all_maderas = list(local_maderas)
+    for m in drive_batches.get("MADERAS", []):
+        m_name = str(m.get("name") or "").strip() if isinstance(m, dict) else ""
+        if not m_name or m_name.upper() in seen_wood:
+            continue
+        m_copy = dict(m)
+        m_copy["name"] = m_name
+        all_maderas.append(m_copy)
     return all_muebles, all_telas, all_maderas
 
 
@@ -331,17 +345,17 @@ def filter_catalog_photos_by_name_v8(
         return sorted(
             items,
             key=lambda x: (
-                0 if x.get("name", "").strip().upper() in active_set else 1,
-                x.get("name", "").upper(),
+                0 if str(x.get("name") or "").strip().upper() in active_set else 1,
+                str(x.get("name") or "").upper(),
             ),
         )
 
     scored: List[Tuple[int, str, Dict[str, str]]] = []
     for it in items:
-        name_raw = it.get("name", "")
-        fname_raw = it.get("filename", "")
-        src_raw = it.get("source", "")
-        sub_raw = it.get("subcarpeta", "")
+        name_raw = str(it.get("name") or "")
+        fname_raw = str(it.get("filename") or "")
+        src_raw = str(it.get("source") or "")
+        sub_raw = str(it.get("subcarpeta") or "")
         name_norm = sheets_service._norm_drive_name(name_raw.replace("_", " ").replace("-", " "))
         haystack = sheets_service._norm_drive_name(
             f"{name_raw} {fname_raw} {src_raw} {sub_raw}".replace("_", " ").replace("-", " ")
@@ -388,10 +402,12 @@ def build_ordered_photo_thumbs_v8(
     tipo_mueble: str = "",
     medidas_texto: str = "",
     vista_id: str = "",
+    custom_notes: str = "",
 ) -> List[Tuple[str, bytes, str]]:
     """
     Construye las tarjetas copiables 76x76 px en el MISMO orden exacto Image 1..N que
-    build_v8_reference_pack (incluyendo <mueble>_V8_LIENZO_ESCALA.png y <tela>_V8_LUZ30.png).
+    build_v8_reference_pack (arquitectura limpia de 2 fotos en modo Tela: Mueble HD +
+    <mueble>_V8_LIENZO_ESCALA.png; 3 fotos solo cuando se selecciona Madera + Tela).
     """
     has_any_furn = bool(m_bytes)
     has_any_batch = bool(batch_views_files)
@@ -423,6 +439,14 @@ def build_ordered_photo_thumbs_v8(
     if mode in ("vistas_tela", "clonar_color"):
         if not has_any_batch and not fabric_bytes and not has_any_furn:
             return []
+        if mode == "vistas_tela" and not has_any_batch and fabric_bytes:
+            prev_vt = ai_prompt_service_v8.build_calibrated_swatch_preview_bytes(
+                fabric_bytes,
+                custom_notes=custom_notes,
+            )
+            if prev_vt:
+                return [(resolve_copied_photo_filename(fabric_name, "tela.png"), prev_vt, "Tela · Sube vistas")]
+            return []
         pack = ai_prompt_service_v8.build_v8_reference_pack(
             mode=mode,
             furniture_name=m_names[0] if m_names else "mueble.png",
@@ -436,29 +460,26 @@ def build_ordered_photo_thumbs_v8(
             batch_ref_bytes=(fabric_bytes if mode == "vistas_tela" else (m_bytes[0] if m_bytes else None)),
             tipo_mueble=eff_tipo,
             medidas_texto=medidas_texto,
+            custom_notes=custom_notes,
         )
         return [(p["filename"], p["bytes"], p["label"]) for p in pack if p.get("bytes")]
 
     if not has_any_furn and not fabric_bytes and not wood_bytes:
         return []
 
-    # Si el usuario aún no elige mueble pero ya seleccionó tela/madera, mostrar vista previa calibrada +30%
+    # Si el usuario aún no elige mueble pero ya seleccionó tela/madera, mostrar vista previa UI (nunca entra al pack)
     if not has_any_furn:
         preview_only: List[Tuple[str, bytes, str]] = []
         slot = 1
         if fabric_bytes and (mode != "material" or material_mode in ("fabric_only", "dual")) and not is_blueprint:
-            pack_sw = ai_prompt_service_v8.build_v8_reference_pack(
-                mode="catalogo",
-                furniture_name="mueble",
-                fabric_label=fabric_name,
-                fabric_filename=fabric_name,
-                fabric_bytes=fabric_bytes,
-                tipo_mueble=eff_tipo,
-                medidas_texto=medidas_texto,
+            prev_sw = ai_prompt_service_v8.build_calibrated_swatch_preview_bytes(
+                fabric_bytes,
+                custom_notes=custom_notes,
             )
-            sw_entry = next((p for p in pack_sw if p["role"] == "v8_calibrated_swatch"), None)
-            if sw_entry and sw_entry.get("bytes"):
-                preview_only.append((sw_entry["filename"], sw_entry["bytes"], f"Image {slot} · Tela +30% V8"))
+            if prev_sw:
+                preview_only.append(
+                    (resolve_copied_photo_filename(fabric_name, "tela.png"), prev_sw, "Tela · Elige mueble")
+                )
                 slot += 1
         if wood_bytes and (mode != "material" or material_mode in ("wood_only", "dual")) and not is_blueprint:
             preview_only.append((resolve_copied_photo_filename(wood_name, "madera.png"), wood_bytes, f"Image {slot} · Madera"))
@@ -480,6 +501,7 @@ def build_ordered_photo_thumbs_v8(
         wood_bytes=wood_bytes,
         tipo_mueble=eff_tipo,
         medidas_texto=medidas_texto,
+        custom_notes=custom_notes,
     )
     return [(p["filename"], p["bytes"], p["label"]) for p in pack_std if p.get("bytes")]
 
@@ -511,7 +533,8 @@ def render_v8_photos_strip_76(
             continue
         b64_thumb = base64.b64encode(t_bytes).decode("ascii")
         b64_exact = base64.b64encode(exact_bytes).decode("ascii")
-        uid = hashlib.md5(f"{key_prefix}_{idx}_{lbl}_{len(raw_b)}".encode("utf-8")).hexdigest()[:8]
+        b_hash = hashlib.sha1(raw_b[:4096] + raw_b[-4096:]).hexdigest()[:8]
+        uid = hashlib.md5(f"{key_prefix}_{idx}_{lbl}_{len(raw_b)}_{b_hash}".encode("utf-8")).hexdigest()[:8]
         btn_id = f"v8cpimg_{uid}"
         msg_id = f"v8cpmsg_{uid}"
 
@@ -867,24 +890,30 @@ def _search_drive_live_cached_v8(query_str: str) -> List[Dict[str, str]]:
     hits: List[Dict[str, str]] = []
     seen = set()
     try:
-        if sheets_service.ensure_connected():
-            for fk in ("RENDER", "SUBIR", "SM_MUEBLERIA", "COTIZACION"):
-                fid = _resolve_furniture_drive_id(fk)
-                if not fid:
-                    continue
-                src_lbl = _FURNITURE_FOLDER_SPECS[fk]["source"]
-                for lh in sheets_service.search_drive_images_live(
-                    query_text=query_str,
-                    limit=8,
-                    folder_id=fid,
-                ):
-                    if lh.get("id") and lh["id"] not in seen:
-                        seen.add(lh["id"])
-                        row = dict(lh)
-                        row["source"] = src_lbl
-                        hits.append(row)
+        connected = sheets_service.ensure_connected()
     except Exception:
-        pass
+        connected = False
+    if not connected:
+        return hits
+
+    for fk in ("RENDER", "SUBIR", "SM_MUEBLERIA", "COTIZACION"):
+        try:
+            fid = _resolve_furniture_drive_id(fk)
+            if not fid:
+                continue
+            src_lbl = _FURNITURE_FOLDER_SPECS[fk]["source"]
+            for lh in sheets_service.search_drive_images_live(
+                query_text=query_str,
+                limit=8,
+                folder_id=fid,
+            ):
+                if lh.get("id") and lh["id"] not in seen:
+                    seen.add(lh["id"])
+                    row = dict(lh)
+                    row["source"] = src_lbl
+                    hits.append(row)
+        except Exception:
+            continue
     return hits
 
 
@@ -915,11 +944,12 @@ def _resolve_mueble_selector_v8(
             catalog_items = [x for x in catalog_items if x.get("source") == target_src]
 
     picked_item = st.session_state.get(f"v8_picked_mueble_{ck}")
-    if isinstance(picked_item, dict) and picked_item.get("name"):
-        p_name_up = picked_item["name"].strip().upper()
-        p_src = picked_item.get("source", "")
+    picked_name_str = str(picked_item.get("name") or "").strip() if isinstance(picked_item, dict) else ""
+    if picked_name_str:
+        p_name_up = picked_name_str.upper()
+        p_src = str(picked_item.get("source") or "")
         exists = any(
-            x.get("name", "").strip().upper() == p_name_up and x.get("source", "") == p_src
+            str(x.get("name") or "").strip().upper() == p_name_up and str(x.get("source") or "") == p_src
             for x in catalog_items
         )
         if not exists:
@@ -933,8 +963,9 @@ def _resolve_mueble_selector_v8(
     options: List[str] = [first_opt]
     picked_target_lbl: Optional[str] = None
     for item in catalog_items:
-        src = item.get("source", "")
-        base_lbl = f"{item['name']} · [{src}]" if (show_source and src) else item["name"]
+        it_name = str(item.get("name") or "").strip() or str(item.get("filename") or "").strip() or "Mueble"
+        src = str(item.get("source") or "")
+        base_lbl = f"{it_name} · [{src}]" if (show_source and src) else it_name
         lbl = base_lbl
         suffix = 2
         while lbl in display_map:
@@ -943,18 +974,19 @@ def _resolve_mueble_selector_v8(
         display_map[lbl] = item
         options.append(lbl)
         if (
-            isinstance(picked_item, dict)
+            picked_name_str
             and picked_target_lbl is None
-            and item.get("name", "").strip().upper() == picked_item.get("name", "").strip().upper()
-            and (not picked_item.get("source") or item.get("source", "") == picked_item.get("source", ""))
+            and str(item.get("name") or "").strip().upper() == picked_name_str.upper()
+            and (not picked_item.get("source") or str(item.get("source") or "") == str(picked_item.get("source") or ""))
         ):
             picked_target_lbl = lbl
 
     sb_key = f"v8_sb_mueble_{ck}"
-    if st.session_state.get(f"v8_apply_pick_mueble_{ck}") and picked_target_lbl:
-        st.session_state[sb_key] = picked_target_lbl
+    if st.session_state.get(f"v8_apply_pick_mueble_{ck}"):
         st.session_state[f"v8_apply_pick_mueble_{ck}"] = False
-    elif st.session_state.get(sb_key) not in options:
+        if picked_target_lbl:
+            st.session_state[sb_key] = picked_target_lbl
+    if st.session_state.get(sb_key) not in options:
         st.session_state[sb_key] = first_opt
 
     c_sel, c_up = st.columns([2.15, 0.95], gap="small", vertical_alignment="center")
@@ -1003,12 +1035,13 @@ def _resolve_material_selector_v8(
     lbl = "🪵 Madera" if is_wood else "🧵 Tela"
     items_list = list(catalog_items)
     picked_item = st.session_state.get(f"v8_picked_{kind}_{ck}")
-    if isinstance(picked_item, dict) and picked_item.get("name"):
-        p_up = picked_item["name"].strip().upper()
-        p_id = str(picked_item.get("id") or "").strip()
+    picked_name_str = str(picked_item.get("name") or "").strip() if isinstance(picked_item, dict) else ""
+    picked_id_str = str(picked_item.get("id") or "").strip() if isinstance(picked_item, dict) else ""
+    if picked_name_str:
+        p_up = picked_name_str.upper()
         exists = any(
-            (p_id and str(x.get("id") or "").strip() == p_id)
-            or (not p_id and x.get("name", "").strip().upper() == p_up)
+            (picked_id_str and str(x.get("id") or "").strip() == picked_id_str)
+            or (not picked_id_str and str(x.get("name") or "").strip().upper() == p_up)
             for x in items_list
         )
         if not exists:
@@ -1019,7 +1052,7 @@ def _resolve_material_selector_v8(
     options: List[str] = [first_opt]
     picked_target_lbl: Optional[str] = None
     for item in items_list:
-        base_lbl = item["name"].strip() or item.get("filename") or lbl
+        base_lbl = str(item.get("name") or "").strip() or str(item.get("filename") or "").strip() or lbl
         sub = str(item.get("subcarpeta") or "").strip()
         opt_lbl = base_lbl
         if opt_lbl in display_map and sub:
@@ -1030,18 +1063,18 @@ def _resolve_material_selector_v8(
             suffix += 1
         display_map[opt_lbl] = item
         options.append(opt_lbl)
-        if isinstance(picked_item, dict) and picked_target_lbl is None:
-            p_id = str(picked_item.get("id") or "").strip()
-            if (p_id and str(item.get("id") or "").strip() == p_id) or (
-                item.get("name", "").strip().upper() == picked_item.get("name", "").strip().upper()
+        if picked_name_str and picked_target_lbl is None:
+            if (picked_id_str and str(item.get("id") or "").strip() == picked_id_str) or (
+                str(item.get("name") or "").strip().upper() == picked_name_str.upper()
             ):
                 picked_target_lbl = opt_lbl
 
     sb_key = f"v8_sb_{kind}_{ck}"
-    if st.session_state.get(f"v8_apply_pick_{kind}_{ck}") and picked_target_lbl:
-        st.session_state[sb_key] = picked_target_lbl
+    if st.session_state.get(f"v8_apply_pick_{kind}_{ck}"):
         st.session_state[f"v8_apply_pick_{kind}_{ck}"] = False
-    elif st.session_state.get(sb_key) not in options:
+        if picked_target_lbl:
+            st.session_state[sb_key] = picked_target_lbl
+    if st.session_state.get(sb_key) not in options:
         st.session_state[sb_key] = first_opt
 
     c_sel, c_up = st.columns([2.15, 0.95], gap="small", vertical_alignment="center")
@@ -1080,6 +1113,57 @@ def _resolve_material_selector_v8(
     return None, "", ""
 
 
+_V8_POP_CAT_OPTIONS: Tuple[str, ...] = (
+    "📁 Todas",
+    "🛋️ RENDER",
+    "📤 SUBIR",
+    "💰 Cotización",
+    "🏪 SM S Mueblería",
+    "🧵 Telas",
+    "🪵 Maderas",
+    "🔄 Actualizar Drive",
+)
+_V8_POP_FURNITURE_CATS = frozenset({
+    "📁 Todas",
+    "🛋️ RENDER",
+    "📤 SUBIR",
+    "💰 Cotización",
+    "🏪 SM S Mueblería",
+})
+_V8_POP_CAT_TO_SOURCE: Dict[str, str] = {
+    "🛋️ RENDER": "RENDER",
+    "📤 SUBIR": "SUBIR",
+    "💰 Cotización": "Cotización",
+    "🏪 SM S Mueblería": "SM S Mueblería",
+}
+_V8_POP_PICK_PLACEHOLDER = "➕ Seleccionar resultado para cargar..."
+
+
+def _on_pop_cat_change_v8(ck: int) -> None:
+    """Callback on_change para categoría del buscador flotante: actualiza Drive antes de instanciar widgets."""
+    cat_key = f"v8_pop_cat_{ck}"
+    if st.session_state.get(cat_key) == "🔄 Actualizar Drive":
+        st.session_state[cat_key] = "📁 Todas"
+        sheets_service._invalidate_drive_catalog_caches()
+        sheets_service._resolved_folder_ids.clear()
+        invalidate_v8_catalog_caches()
+        st.session_state["v8_render_tick"] = int(st.session_state.get("v8_render_tick", 0)) + 1
+
+
+def _on_pop_pick_change_v8(
+    ck: int,
+    pick_key: str,
+    placeholder: str = _V8_POP_PICK_PLACEHOLDER,
+) -> None:
+    """Callback on_change para selección del buscador flotante: carga la foto y reinicia el selector antes del rerun."""
+    chosen = st.session_state.get(pick_key)
+    pick_map = st.session_state.get(f"v8_pop_pick_map_{ck}") or {}
+    if chosen and chosen != placeholder and chosen in pick_map:
+        chosen_it = pick_map[chosen]
+        _pick_catalog_photo_v8(ck, chosen_it.get("kind", "mueble"), chosen_it)
+        st.session_state[pick_key] = placeholder
+
+
 def _render_floating_photo_menu_v8(
     ck: int,
     loaded_entries: List[Dict[str, Any]],
@@ -1089,6 +1173,7 @@ def _render_floating_photo_menu_v8(
     tick: int,
 ) -> None:
     """Buscador flotante rápido (popover) con recarga de catálogo por selector sin botones extra en el formulario."""
+    _ = tick
     n_loaded = len(loaded_entries)
     total_cat = len(all_muebles) + len(all_telas) + len(all_maderas)
     pop_label = f"🔍 Fotos · ✅ {n_loaded}" if n_loaded > 0 else f"🔍 Buscar ({total_cat})"
@@ -1109,35 +1194,27 @@ def _render_floating_photo_menu_v8(
                 label_visibility="collapsed",
             )
         with c_cat:
+            cat_key = f"v8_pop_cat_{ck}"
+            cat_opts = list(_V8_POP_CAT_OPTIONS)
+            if st.session_state.get(cat_key) == "🔄 Actualizar Drive":
+                _on_pop_cat_change_v8(ck)
+                st.rerun()
+            elif st.session_state.get(cat_key) not in cat_opts:
+                st.session_state[cat_key] = "📁 Todas"
             cat_filter = st.selectbox(
                 "Categoría",
-                [
-                    "📁 Todas",
-                    "🛋️ RENDER",
-                    "📤 SUBIR",
-                    "💰 Cotización",
-                    "🏪 SM S Mueblería",
-                    "🧵 Telas",
-                    "🪵 Maderas",
-                    "🔄 Actualizar Drive",
-                ],
-                key=f"v8_pop_cat_{ck}",
+                cat_opts,
+                key=cat_key,
+                on_change=_on_pop_cat_change_v8,
+                args=(ck,),
                 label_visibility="collapsed",
             )
-
-        if cat_filter == "🔄 Actualizar Drive":
-            st.session_state[f"v8_pop_cat_{ck}"] = "📁 Todas"
-            sheets_service._invalidate_drive_catalog_caches()
-            sheets_service._resolved_folder_ids.clear()
-            invalidate_v8_catalog_caches()
-            st.session_state["v8_render_tick"] = tick + 1
-            st.rerun()
 
         q_clean = q_text.strip()
         pool: List[Dict[str, str]] = []
         idle_cap = 20 if not q_clean else 0
 
-        if cat_filter in ("📁 Todas", "🛋️ RENDER", "📤 SUBIR", "💰 Cotización", "🏪 SM S Mueblería"):
+        if cat_filter in _V8_POP_FURNITURE_CATS:
             for m in all_muebles:
                 src = m.get("source") or "RENDER"
                 if cat_filter == "🛋️ RENDER" and src != "RENDER":
@@ -1148,7 +1225,7 @@ def _render_floating_photo_menu_v8(
                     continue
                 if cat_filter == "🏪 SM S Mueblería" and src != "SM S Mueblería":
                     continue
-                is_act = bool(active_names_upper and (m.get("name", "").strip().upper() in active_names_upper))
+                is_act = bool(active_names_upper and (str(m.get("name") or "").strip().upper() in active_names_upper))
                 if idle_cap and len(pool) >= idle_cap and not is_act:
                     continue
                 row_m = dict(m)
@@ -1159,7 +1236,7 @@ def _render_floating_photo_menu_v8(
 
         if cat_filter in ("📁 Todas", "🧵 Telas"):
             for t in all_telas:
-                is_act = bool(active_names_upper and (t.get("name", "").strip().upper() in active_names_upper))
+                is_act = bool(active_names_upper and (str(t.get("name") or "").strip().upper() in active_names_upper))
                 if idle_cap and len(pool) >= idle_cap and not is_act:
                     continue
                 row_t = dict(t)
@@ -1170,7 +1247,7 @@ def _render_floating_photo_menu_v8(
 
         if cat_filter in ("📁 Todas", "🪵 Maderas"):
             for w in all_maderas:
-                is_act = bool(active_names_upper and (w.get("name", "").strip().upper() in active_names_upper))
+                is_act = bool(active_names_upper and (str(w.get("name") or "").strip().upper() in active_names_upper))
                 if idle_cap and len(pool) >= idle_cap and not is_act:
                     continue
                 row_w = dict(w)
@@ -1180,14 +1257,18 @@ def _render_floating_photo_menu_v8(
                 pool.append(row_w)
 
         matches = filter_catalog_photos_by_name_v8(pool, q_clean, active_names_upper)
-        if q_clean and len(q_clean) >= 3 and not matches:
+        if q_clean and len(q_clean) >= 3 and not matches and cat_filter in _V8_POP_FURNITURE_CATS:
+            expected_src = _V8_POP_CAT_TO_SOURCE.get(cat_filter)
             for lh in _search_drive_live_cached_v8(q_clean):
-                clean_nm = os.path.splitext(lh.get("name", ""))[0].strip() or lh.get("name", "Foto")
                 src_lh = lh.get("source") or "Drive"
+                if expected_src and src_lh != expected_src:
+                    continue
+                raw_lh_nm = str(lh.get("name") or "").strip()
+                clean_nm = os.path.splitext(raw_lh_nm)[0].strip() or raw_lh_nm or "Foto"
                 matches.append({
                     "id": lh["id"],
                     "name": clean_nm,
-                    "filename": lh.get("name", f"{clean_nm}.jpg"),
+                    "filename": raw_lh_nm or f"{clean_nm}.jpg",
                     "source": src_lh,
                     "kind": "mueble",
                     "badge": f"☁️ {src_lh}",
@@ -1211,10 +1292,10 @@ def _render_floating_photo_menu_v8(
                     ):
                         pass
 
-        pick_opts = ["➕ Seleccionar resultado para cargar..."]
+        pick_opts = [_V8_POP_PICK_PLACEHOLDER]
         pick_map: Dict[str, Dict[str, str]] = {}
         for it in matches[:25]:
-            lbl_p = f"{it.get('badge', '📁')} · {it.get('name', 'Foto')}"
+            lbl_p = f"{it.get('badge', '📁')} · {str(it.get('name') or 'Foto').strip() or 'Foto'}"
             sfx = 2
             cur_lbl = lbl_p
             while cur_lbl in pick_map:
@@ -1224,20 +1305,27 @@ def _render_floating_photo_menu_v8(
             pick_opts.append(cur_lbl)
 
         pick_key = f"v8_pop_pick_{ck}"
+        st.session_state[f"v8_pop_pick_map_{ck}"] = pick_map
+        prev_pick = st.session_state.get(pick_key)
+        if prev_pick and prev_pick != _V8_POP_PICK_PLACEHOLDER and prev_pick in pick_map:
+            _on_pop_pick_change_v8(ck, pick_key, _V8_POP_PICK_PLACEHOLDER)
+            st.rerun()
         if st.session_state.get(pick_key) not in pick_opts:
             st.session_state[pick_key] = pick_opts[0]
-        chosen = st.selectbox("Resultado", pick_opts, key=pick_key, label_visibility="collapsed")
-        if chosen != pick_opts[0] and chosen in pick_map:
-            chosen_it = pick_map[chosen]
-            st.session_state[pick_key] = pick_opts[0]
-            _pick_catalog_photo_v8(ck, chosen_it.get("kind", "mueble"), chosen_it)
-            st.rerun()
+        st.selectbox(
+            "Resultado",
+            pick_opts,
+            key=pick_key,
+            on_change=_on_pop_pick_change_v8,
+            args=(ck, pick_key, _V8_POP_PICK_PLACEHOLDER),
+            label_visibility="collapsed",
+        )
 
         if matches:
             top_it = matches[0]
             prev_src = _get_search_preview_src_v8(top_it, max_dim=240, allow_network=bool(q_clean))
             if prev_src:
-                safe_nm = top_it.get("name", "Foto").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                safe_nm = str(top_it.get("name") or "Foto").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 st.markdown(
                     f'<div style="display:flex;align-items:center;gap:8px;padding:4px;background:#0F172A;'
                     f'border:1px solid #1E293B;border-radius:8px;">'
@@ -1249,9 +1337,9 @@ def _render_floating_photo_menu_v8(
                 )
 
 
-def _clear_v8_form(ck: int) -> None:
+def _clear_v8_form_state(ck: int) -> None:
     """
-    Regla 2 de GEMINI.md:
+    Regla 2 de GEMINI.md (callback-safe, sin st.rerun()):
       - Borra ÚNICAMENTE fotos cargadas, SKU de V8, medidas, notas y resultados generados.
       - JAMÁS reinicia ni modifica v8_keep_mode ni las sub-opciones activas
         (v8_keep_vista, v8_keep_matmode, v8_keep_room, v8_keep_folder).
@@ -1260,6 +1348,7 @@ def _clear_v8_form(ck: int) -> None:
         "v8_result",
         "v8_last_photo_stem",
         "v8_last_sku",
+        "v8_gen_id_",
         "v8_notas_",
         "v8_sb_",
         "v8_up_",
@@ -1267,6 +1356,7 @@ def _clear_v8_form(ck: int) -> None:
         "v8_batch_",
         "v8_clone_",
         "v8_ext2054_",
+        "v8_ext2054_cache_",
         "v8_picked_",
         "v8_preview_item_",
         "v8_apply_pick_",
@@ -1285,21 +1375,67 @@ def _clear_v8_form(ck: int) -> None:
     for k in list(st.session_state.keys()):
         if k in exact_keys or k.startswith(clear_prefixes):
             st.session_state.pop(k, None)
+    st.session_state["_v8_reset_sku_widgets"] = True
     st.session_state.clear_key_v8 = ck + 1
+
+
+def _clear_v8_form(ck: int) -> None:
+    """Compatibilidad directa: limpia el estado V8 y fuerza rerun."""
+    _clear_v8_form_state(ck)
     st.rerun()
 
 
+def _sanitize_zip_component_v8(text: str, fallback: str) -> str:
+    raw = str(text or "").strip().replace("\\", "/")
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw).strip(" ._")
+    return cleaned or fallback
+
+
+def _prepare_v8_zip_ref_entry(pack_entry: Dict[str, Any]) -> Tuple[str, bytes]:
+    """
+    Prepara un insumo del paquete V8 para el ZIP preservando PNG sin pérdida en artefactos V8
+    (lienzo de escala y calibración CIELAB) y garantizando que ningún archivo .png contenga bytes JPEG.
+    """
+    fname = str(pack_entry.get("filename") or "ref.png")
+    raw = pack_entry.get("bytes") or b""
+    role = str(pack_entry.get("role") or "")
+    if not raw:
+        return fname, b""
+    if role in ("v8_scale_canvas", "v8_calibrated_swatch"):
+        return fname, raw
+
+    prep_bytes, mime = prepare_exact_copy_image_bytes(raw)
+    is_prep_jpeg = prep_bytes.startswith(b"\xff\xd8\xff") or mime == "image/jpeg"
+    is_prep_png = prep_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    is_raw_png = raw.startswith(b"\x89PNG\r\n\x1a\n")
+    stem, ext = os.path.splitext(fname)
+    ext_low = ext.lower()
+
+    if is_prep_jpeg and ext_low not in (".jpg", ".jpeg"):
+        if ext_low == ".png" and is_raw_png and len(raw) <= 15_000_000:
+            return fname, raw
+        return f"{stem or 'ref'}.jpg", prep_bytes
+    if is_prep_png and ext_low != ".png":
+        return f"{stem or 'ref'}.png", prep_bytes
+    return fname, prep_bytes
+
+
 def _build_zip_v8(res: Dict[str, Any], include_images: bool = True) -> bytes:
-    """Empaqueta prompts e insumos/ (incluyendo <mueble>_V8_LIENZO_ESCALA.png y <tela>_V8_LUZ30.png)."""
+    """Empaqueta prompts e insumos/ (2 fotos limpias en modo Tela: mueble + <mueble>_V8_LIENZO_ESCALA.png)."""
     buf = io.BytesIO()
-    mueble_slug = res.get("mueble_name", "mueble")
+    mueble_slug = _sanitize_zip_component_v8(res.get("mueble_name", "mueble"), "mueble")
+    seen_prompts: set = set()
+    seen_gen: set = set()
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for i, it in enumerate(res.get("items", []), start=1):
             guide = it.get("attachment_guide") or []
             guide_txt = "\n".join(f"  - {g}" for g in guide) if guide else "  - Image 1: Foto del mueble"
-            out_fname = it.get("output_filename") or (f"{mueble_slug}.png" if i == 1 else f"{mueble_slug}_{i}.png")
-            out_stem = os.path.splitext(out_fname)[0]
+            out_fname_raw = it.get("output_filename") or (f"{mueble_slug}.png" if i == 1 else f"{mueble_slug}_{i}.png")
+            out_base_raw, out_ext_raw = os.path.splitext(str(out_fname_raw))
+            out_stem = _sanitize_zip_component_v8(out_base_raw, f"{mueble_slug}_{i}")
+            out_ext = _sanitize_zip_component_v8(out_ext_raw.lstrip("."), "png")
+            out_fname = f"{out_stem}.{out_ext}"
             body = (
                 f"=== NOMBRE EXACTO DE SALIDA ===\n  {out_fname}\n\n"
                 f"=== ORDEN EXACTO DE IMÁGENES V8 ===\n{guide_txt}\n\n"
@@ -1307,15 +1443,34 @@ def _build_zip_v8(res: Dict[str, Any], include_images: bool = True) -> bytes:
                 f"--- CHATGPT ---\n{it.get('chatgpt_dalle3', '')}\n\n"
                 f"--- MIDJOURNEY ---\n{it.get('midjourney_v6', '')}\n"
             )
-            z.writestr(f"prompts/{out_stem}.txt", body)
+            prompt_name = f"{out_stem}.txt"
+            sfx_p = 2
+            while prompt_name in seen_prompts:
+                prompt_name = f"{out_stem}_{sfx_p}.txt"
+                sfx_p += 1
+            seen_prompts.add(prompt_name)
+            z.writestr(f"prompts/{prompt_name}", body)
 
             gen_photo = it.get("generated_photo")
             if isinstance(gen_photo, dict) and gen_photo.get("png"):
-                z.writestr(f"fotos_generadas_2054/{out_fname}", gen_photo["png"])
+                gen_name = out_fname
+                sfx_g = 2
+                while gen_name in seen_gen:
+                    gen_name = f"{out_stem}_{sfx_g}.{out_ext}"
+                    sfx_g += 1
+                seen_gen.add(gen_name)
+                z.writestr(f"fotos_generadas_2054/{gen_name}", gen_photo["png"])
 
         if res.get("master_ais"):
+            master_base = f"00_{mueble_slug}_maestro"
+            master_name = f"{master_base}.txt"
+            sfx_m = 2
+            while master_name in seen_prompts:
+                master_name = f"{master_base}_{sfx_m}.txt"
+                sfx_m += 1
+            seen_prompts.add(master_name)
             z.writestr(
-                f"prompts/00_{mueble_slug}_maestro.txt",
+                f"prompts/{master_name}",
                 res["master_ais"] + "\n\n====================\n\n" + res.get("master_dal", ""),
             )
 
@@ -1324,10 +1479,15 @@ def _build_zip_v8(res: Dict[str, Any], include_images: bool = True) -> bytes:
             for idx, (fname, raw) in enumerate(res.get("ref_images", []), start=1):
                 if not raw:
                     continue
-                safe_name = os.path.basename(fname or f"ref_{idx}.png")
-                if safe_name in seen_in:
-                    base_s, ext_s = os.path.splitext(safe_name)
-                    safe_name = f"{base_s}_{idx}{ext_s}"
+                raw_base = os.path.basename(str(fname or f"ref_{idx}.png").replace("\\", "/"))
+                stem_i, ext_i = os.path.splitext(raw_base)
+                safe_stem_i = _sanitize_zip_component_v8(stem_i, f"ref_{idx}")
+                safe_ext_i = _sanitize_zip_component_v8(ext_i.lstrip("."), "png")
+                safe_name = f"{safe_stem_i}.{safe_ext_i}"
+                sfx_i = 2
+                while safe_name in seen_in:
+                    safe_name = f"{safe_stem_i}_{sfx_i}.{safe_ext_i}"
+                    sfx_i += 1
                 seen_in.add(safe_name)
                 z.writestr(f"insumos/{safe_name}", raw)
     return buf.getvalue()
@@ -1380,6 +1540,10 @@ def render_prompt_studio_v8() -> None:
     if "clear_key_v8" not in st.session_state:
         st.session_state.clear_key_v8 = 0
     ck = int(st.session_state.clear_key_v8)
+    if st.session_state.pop("_v8_reset_sku_widgets", False):
+        st.session_state["sku_input_v8"] = ""
+        st.session_state["field_tipo_v8"] = ""
+        st.session_state["field_medidas_v8"] = ""
 
     st.markdown(
         """
@@ -1610,6 +1774,18 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                 placeholder="📝 Notas opcionales",
                 label_visibility="collapsed",
             )
+            notas_clean = notas.strip()
+            v8_dir = parse_v8_user_fabric_directives(notas_clean)
+            v8_cal_lbls = _describe_v8_calibration_labels(v8_dir)
+            if v8_dir.has_any_override:
+                cal_parts = []
+                if v8_dir.lightness_overridden:
+                    cal_parts.append(v8_cal_lbls["cal_tag_short"])
+                if v8_dir.scale_overridden:
+                    cal_parts.append(v8_cal_lbls["scale_short"])
+                spinner_cal_txt = ", ".join(cal_parts)
+            else:
+                spinner_cal_txt = "+30% V8"
 
             # ESTRICTAMENTE LOS 3 ÚNICOS BOTONES DIRECTOS (GEMINI.md Regla 1):
             # 1) 🚀 <Modo elegido> | 2) ↘️ 3/4 Derecha | 3) 🗑️ Borrar
@@ -1628,12 +1804,13 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                     key=f"v8_btn_34_{ck}",
                 )
             with b_clr:
-                if st.button(
+                st.button(
                     "🗑️ Borrar",
                     use_container_width=True,
                     key="v8_btn_clear",
-                ):
-                    _clear_v8_form(ck)
+                    on_click=_clear_v8_form_state,
+                    args=(ck,),
+                )
 
             status_slot = st.empty()
 
@@ -1666,6 +1843,7 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                 ),
                 medidas_texto=medidas_final,
                 vista_id=vista_id,
+                custom_notes=notas_clean,
             )
             render_v8_photos_strip_76(thumbs, key_prefix=f"v8_{ck}")
 
@@ -1676,7 +1854,7 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
             if not target_furn_bytes:
                 status_slot.error("⚠️ Elige o sube la foto del mueble.")
             else:
-                status_slot.info("⏳ Analizando tela +30% V8 y generando 3/4 Derecha...")
+                status_slot.info(f"⏳ Calibrando tela ({spinner_cal_txt}) y generando 3/4 Derecha...")
                 try:
                     copied_furn_files = [
                         resolve_copied_photo_filename(fn, f"mueble_{i + 1}.png")
@@ -1690,7 +1868,7 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                         p for p in [
                             f"Tipo de mueble: {tipo}" if tipo else "",
                             f"Medidas exactas: {medidas_final}" if medidas_final else "",
-                            notas.strip(),
+                            notas_clean,
                         ] if p
                     )
                     f_ana, w_ana, t_ana = ai_prompt_service_v8.analyze_all_parallel(
@@ -1700,26 +1878,13 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                         fabric_bytes=fabric_bytes,
                         fabric_name=copied_fabric_file or fabric_name,
                         notas_ia=notas_ia,
+                        custom_notes=notas_clean,
                     )
                     resolved_tipo_34 = resolve_v8_furniture_type_hint(
                         tipo_mueble=tipo,
                         ai_furniture_item=str(f_ana.get("furniture_item") or ""),
                         furniture_name=name,
                         primary_filename=first_photo_name,
-                    )
-                    res = ai_prompt_service_v8.build_34_derecha_2054_prompts(
-                        furniture_name=name,
-                        furniture_analysis=f_ana,
-                        wood_analysis=w_ana,
-                        fabric_analysis=t_ana,
-                        notas_usuario=notas.strip(),
-                        tipo_mueble=tipo or resolved_tipo_34,
-                        medidas_texto=medidas_final,
-                        wood_label=wood_name,
-                        fabric_label=fabric_name,
-                        furniture_filenames=copied_furn_files,
-                        wood_filename=copied_wood_file,
-                        fabric_filename=copied_fabric_file,
                     )
                     pack_34 = ai_prompt_service_v8.build_v8_reference_pack(
                         mode="vista_34_der_2054",
@@ -1735,9 +1900,27 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                         wood_bytes=wood_bytes,
                         tipo_mueble=resolved_tipo_34,
                         medidas_texto=medidas_final,
+                        custom_notes=notas_clean,
+                    )
+                    res = ai_prompt_service_v8.build_34_derecha_2054_prompts(
+                        furniture_name=name,
+                        furniture_analysis=f_ana,
+                        wood_analysis=w_ana,
+                        fabric_analysis=t_ana,
+                        notas_usuario=notas_clean,
+                        tipo_mueble=tipo or resolved_tipo_34,
+                        medidas_texto=medidas_final,
+                        wood_label=wood_name,
+                        fabric_label=fabric_name,
+                        furniture_filenames=copied_furn_files,
+                        wood_filename=copied_wood_file,
+                        fabric_filename=copied_fabric_file,
+                        furniture_bytes_list=target_furn_bytes,
+                        fabric_bytes=fabric_bytes,
+                        precomputed_pack=pack_34,
                     )
                     ref_imgs = [
-                        (p["filename"], prepare_exact_copy_image_bytes(p["bytes"])[0])
+                        _prepare_v8_zip_ref_entry(p)
                         for p in pack_34
                         if p.get("bytes")
                     ]
@@ -1806,7 +1989,7 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
             if err:
                 status_slot.error(err)
             else:
-                status_slot.info(f"⏳ Calibrando escala +30% V8 y generando {mode_label}...")
+                status_slot.info(f"⏳ Calibrando escala ({spinner_cal_txt}) y generando {mode_label}...")
                 try:
                     copied_furn_files = [
                         resolve_copied_photo_filename(fn, f"mueble_{i + 1}.png")
@@ -1829,7 +2012,7 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                         p for p in [
                             f"Tipo de mueble: {eff_tipo}" if eff_tipo else "",
                             f"Medidas exactas: {medidas_final}" if medidas_final else "",
-                            notas.strip(),
+                            notas_clean,
                         ] if p
                     )
                     skip_f = mode in ("vistas_tela", "clonar_color")
@@ -1841,6 +2024,7 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                         fabric_name=(copied_fabric_file or fabric_name) if mode == "vistas_tela" else (copied_fabric_file or eff_fabric_name),
                         notas_ia=notas_ia,
                         skip_furniture=skip_f,
+                        custom_notes=notas_clean,
                     )
                     if hd_swatch_hint:
                         f_ana["is_material_swatch"] = True
@@ -1856,30 +2040,6 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                         ai_furniture_item="" if hd_swatch_hint else str(f_ana.get("furniture_item") or ""),
                         furniture_name=name,
                         primary_filename=first_photo_name,
-                    )
-
-                    res = ai_prompt_service_v8.build_prompts(
-                        mode=mode,
-                        furniture_name=name,
-                        furniture_analysis=f_ana,
-                        wood_analysis=w_ana,
-                        fabric_analysis=t_ana,
-                        notas_usuario=notas.strip(),
-                        tipo_mueble=(eff_tipo if mode == "hd" else (eff_tipo or resolved_tipo_mode)),
-                        medidas_texto=medidas_final,
-                        lugar_casa=lugar_casa,
-                        vista_id=vista_id,
-                        material_mode=material_mode,
-                        wood_label=eff_wood_name,
-                        fabric_label=(fabric_name if mode == "vistas_tela" else eff_fabric_name),
-                        white_bg_enabled=(mode != "hd"),
-                        classic_numbering=False,
-                        batch_ref_bytes=batch_ref,
-                        batch_views=copied_batch_views,
-                        furniture_filenames=copied_furn_files,
-                        wood_filename=copied_wood_file,
-                        fabric_filename=(batch_ref_fname if mode == "vistas_tela" else copied_fabric_file),
-                        batch_ref_filename=batch_ref_fname,
                     )
 
                     pack_mode = ai_prompt_service_v8.build_v8_reference_pack(
@@ -1902,9 +2062,37 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                         tipo_mueble=resolved_tipo_mode,
                         medidas_texto=medidas_final,
                         is_hd_swatch=bool(hd_swatch_hint),
+                        custom_notes=notas_clean,
+                    )
+
+                    res = ai_prompt_service_v8.build_prompts(
+                        mode=mode,
+                        furniture_name=name,
+                        furniture_analysis=f_ana,
+                        wood_analysis=w_ana,
+                        fabric_analysis=t_ana,
+                        notas_usuario=notas_clean,
+                        tipo_mueble=(eff_tipo if mode == "hd" else (eff_tipo or resolved_tipo_mode)),
+                        medidas_texto=medidas_final,
+                        lugar_casa=lugar_casa,
+                        vista_id=vista_id,
+                        material_mode=material_mode,
+                        wood_label=eff_wood_name,
+                        fabric_label=(fabric_name if mode == "vistas_tela" else eff_fabric_name),
+                        white_bg_enabled=(mode != "hd"),
+                        classic_numbering=False,
+                        batch_ref_bytes=batch_ref,
+                        batch_views=copied_batch_views,
+                        furniture_filenames=copied_furn_files,
+                        wood_filename=copied_wood_file,
+                        fabric_filename=(batch_ref_fname if mode == "vistas_tela" else copied_fabric_file),
+                        batch_ref_filename=batch_ref_fname,
+                        furniture_bytes_list=eff_m_bytes,
+                        fabric_bytes=(fabric_bytes if mode == "vistas_tela" else eff_fabric_bytes),
+                        precomputed_pack=pack_mode,
                     )
                     ref_imgs = [
-                        (p["filename"], prepare_exact_copy_image_bytes(p["bytes"])[0])
+                        _prepare_v8_zip_ref_entry(p)
                         for p in pack_mode
                         if p.get("bytes")
                     ]
@@ -1936,6 +2124,7 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
 
             gen_id = int(res.get("gen_id", 0))
             mueble_slug = res.get("mueble_name", "mueble")
+            safe_dl_slug = _sanitize_zip_component_v8(mueble_slug, "mueble")
 
             h_name, h_2054, h_zip, h_alta = st.columns([1.35, 0.85, 0.72, 0.78], gap="small", vertical_alignment="center")
             with h_name:
@@ -1949,30 +2138,47 @@ div[data-testid="stFileUploaderDropzoneInstructions"] {
                         label_visibility="collapsed",
                     )
                     if ext_up:
-                        fmt_img = ai_prompt_service_v8.format_image_2054_white(ext_up.getvalue(), target_px=2054)
-                        st.download_button(
-                            f"💾 {mueble_slug}.png",
-                            data=fmt_img["png"],
-                            file_name=f"{mueble_slug}.png",
-                            mime="image/png",
-                            use_container_width=True,
-                            key=f"v8_ext_png_{ck}_{gen_id}",
+                        raw_ext = ext_up.getvalue()
+                        ext_sig = (
+                            getattr(ext_up, "name", "imagen"),
+                            len(raw_ext),
+                            hashlib.sha1(raw_ext).hexdigest(),
                         )
-                        st.download_button(
-                            f"💾 {mueble_slug}.jpg",
-                            data=fmt_img["jpg"],
-                            file_name=f"{mueble_slug}.jpg",
-                            mime="image/jpeg",
-                            use_container_width=True,
-                            key=f"v8_ext_jpg_{ck}_{gen_id}",
-                        )
+                        ext_cache_key = f"v8_ext2054_cache_{ck}"
+                        cached_ext = st.session_state.get(ext_cache_key)
+                        fmt_img = None
+                        if isinstance(cached_ext, dict) and cached_ext.get("sig") == ext_sig:
+                            fmt_img = cached_ext.get("data")
+                        else:
+                            try:
+                                fmt_img = ai_prompt_service_v8.format_image_2054_white(raw_ext, target_px=2054)
+                                st.session_state[ext_cache_key] = {"sig": ext_sig, "data": fmt_img}
+                            except Exception as exc:  # noqa: BLE001
+                                st.error(f"❌ No se pudo convertir la imagen a 2054×2054: {exc}")
+                        if fmt_img:
+                            st.download_button(
+                                f"💾 {safe_dl_slug}.png",
+                                data=fmt_img["png"],
+                                file_name=f"{safe_dl_slug}.png",
+                                mime="image/png",
+                                use_container_width=True,
+                                key=f"v8_ext_png_{ck}_{gen_id}",
+                            )
+                            st.download_button(
+                                f"💾 {safe_dl_slug}.jpg",
+                                data=fmt_img["jpg"],
+                                file_name=f"{safe_dl_slug}.jpg",
+                                mime="image/jpeg",
+                                use_container_width=True,
+                                key=f"v8_ext_jpg_{ck}_{gen_id}",
+                            )
             with h_zip:
                 if "_zip_bytes_cache" not in res:
                     res["_zip_bytes_cache"] = _build_zip_v8(res, include_images=True)
                 st.download_button(
                     "📦 ZIP",
                     data=res["_zip_bytes_cache"],
-                    file_name=f"{mueble_slug}.zip",
+                    file_name=f"{safe_dl_slug}.zip",
                     mime="application/zip",
                     use_container_width=True,
                     key=f"v8_dl_{ck}_{gen_id}",

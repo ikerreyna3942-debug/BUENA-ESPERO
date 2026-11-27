@@ -307,6 +307,7 @@ def main():
         else:
             version = "V8"
             if st.button("← Prompts", use_container_width=True, key="btn_back_prompts"):
+                st.session_state["v8_render_tick"] = int(st.session_state.get("v8_render_tick", 0)) + 1
                 st.session_state["_pending_active_app"] = "🤖 Prompts + IA"
                 st.rerun()
     with c_links:
