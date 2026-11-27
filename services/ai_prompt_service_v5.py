@@ -1,3 +1,6 @@
+"""Motor interno de prompts retenido para V6 (prompt_studio_unified / unified_prompt_service).
+No eliminar: V6 importa directamente este servicio aunque la UI V5 fue deprecada."""
+
 import os
 import io
 import re

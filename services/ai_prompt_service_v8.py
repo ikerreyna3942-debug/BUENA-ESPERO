@@ -531,16 +531,24 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 "4) texture_detail: Precise 3D yarn & weave physical structure in English.\n"
                 "5) light_interaction: Surface sheen ('Dead-matte natural fiber', 'Soft matte textile', 'Subtle satin jacquard sheen', or 'Directional velvet sheen')."
             )
-            res = self._call_gemini(
-                client=client,
-                contents=[f"You are an expert luxury upholstery textile engineer. {instructions}", cal_roi],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=MaterialAnalysisV7,
-                    temperature=0.1,
-                ),
-                api_key=key,
-            )
+            from services.observability import classify_error, log_event, observe_call
+
+            with observe_call(
+                "ai_prompt_service_v8",
+                "analyze_material",
+                meta={"material_type": "fabric"},
+            ) as obs:
+                res = self._call_gemini(
+                    client=client,
+                    contents=[f"You are an expert luxury upholstery textile engineer. {instructions}", cal_roi],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=MaterialAnalysisV7,
+                        temperature=0.1,
+                    ),
+                    api_key=key,
+                )
+                obs["model"] = self._preferred_model
             vis_data = json.loads(res.text)
             merged = dict(det)
             if vis_data.get("name") and "fallback" not in str(vis_data.get("name", "")).lower():
@@ -555,7 +563,17 @@ class AIPromptServiceV8(AIPromptServiceV7):
             merged["has_visible_pattern"] = bool(det.get("has_visible_pattern") or vis_data.get("has_visible_pattern"))
             return merged
         except Exception as e:
-            print(f"[AIPromptServiceV8] Aviso en análisis Vision de tela calibrada: {e}")
+            from services.observability import classify_error, log_event, safe_error_text
+
+            log_event(
+                "v8.analyze_material.fallback",
+                service="ai_prompt_service_v8",
+                operation="analyze_material",
+                level="warning",
+                status="fallback",
+                error_class=classify_error(e),
+                meta={"material_type": "fabric", "error": safe_error_text(e, 220)},
+            )
             return det
 
     def analyze_all_parallel(
@@ -570,6 +588,8 @@ class AIPromptServiceV8(AIPromptServiceV7):
         custom_notes: str = "",
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """Ejecuta en paralelo con ThreadPoolExecutor el análisis de mueble, madera y tela calibrada V8."""
+        from services.observability import copy_context_for_thread
+
         f_ana: Dict[str, Any] = {}
         w_ana: Optional[Dict[str, Any]] = None
         t_ana: Optional[Dict[str, Any]] = None
@@ -577,30 +597,42 @@ class AIPromptServiceV8(AIPromptServiceV7):
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             fut_f = (
                 executor.submit(
-                    self.analyze_furniture_for_enhancement,
-                    furniture_bytes,
-                    None,
-                    None,
-                    None,
-                    notas_ia,
+                    copy_context_for_thread(
+                        self.analyze_furniture_for_enhancement,
+                        furniture_bytes,
+                        None,
+                        None,
+                        None,
+                        notas_ia,
+                    )
                 )
                 if (furniture_bytes and not skip_furniture)
                 else None
             )
             fut_w = (
-                executor.submit(self.analyze_material, wood_bytes, None, "wood", wood_name)
+                executor.submit(
+                    copy_context_for_thread(
+                        self.analyze_material,
+                        wood_bytes,
+                        None,
+                        "wood",
+                        wood_name,
+                    )
+                )
                 if wood_bytes
                 else None
             )
             fut_t = (
                 executor.submit(
-                    self.analyze_material,
-                    fabric_bytes,
-                    None,
-                    "fabric",
-                    fabric_name,
-                    None,
-                    custom_notes,
+                    copy_context_for_thread(
+                        self.analyze_material,
+                        fabric_bytes,
+                        None,
+                        "fabric",
+                        fabric_name,
+                        None,
+                        custom_notes,
+                    )
                 )
                 if fabric_bytes
                 else None
@@ -2226,8 +2258,18 @@ class AIPromptServiceV8(AIPromptServiceV7):
                         view_cam_cc = str(v_ana_cc["camera_angle"]).strip()
                     if v_ana_cc.get("geometric_structure") and "attached photo" not in str(v_ana_cc.get("geometric_structure", "")).lower():
                         view_geom_cc = str(v_ana_cc["geometric_structure"]).strip()
-                except Exception:
-                    pass
+                except Exception as exc_cc:
+                    from services.observability import classify_error, log_event, safe_error_text
+
+                    log_event(
+                        "v8.batch_view_analysis.failed",
+                        service="ai_prompt_service_v8",
+                        operation="batch_clonar_color",
+                        level="warning",
+                        status="fallback",
+                        error_class=classify_error(exc_cc),
+                        meta={"error": safe_error_text(exc_cc, 220)},
+                    )
 
             bg_clause_cc = (
                 "pure seamless solid white background (#FFFFFF, RGB 255,255,255) at exact 2054 x 2054 px with 0% ground shadow, 0% contact shadow, 0% drop shadow, and 0% floor reflections"
@@ -2291,8 +2333,18 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     view_cam = str(v_ana["camera_angle"]).strip()
                 if v_ana.get("geometric_structure") and "attached photo" not in str(v_ana.get("geometric_structure", "")).lower():
                     view_geom = str(v_ana["geometric_structure"]).strip()
-            except Exception:
-                pass
+            except Exception as exc_vt:
+                from services.observability import classify_error, log_event, safe_error_text
+
+                log_event(
+                    "v8.batch_view_analysis.failed",
+                    service="ai_prompt_service_v8",
+                    operation="batch_vistas_tela",
+                    level="warning",
+                    status="fallback",
+                    error_class=classify_error(exc_vt),
+                    meta={"error": safe_error_text(exc_vt, 220)},
+                )
 
         if slots.get("canvas_idx"):
             c_idx = slots["canvas_idx"]
@@ -2877,8 +2929,10 @@ class AIPromptServiceV8(AIPromptServiceV7):
                 )
                 return vname, vbytes, pdict, guide_list
 
+            from services.observability import copy_context_for_thread
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                batch_results = list(executor.map(_run_v8, views))
+                batch_results = list(executor.map(copy_context_for_thread(_run_v8), views))
 
             for idx, (vname, vbytes, pdict, guide_list) in enumerate(batch_results, start=1):
                 v_file_canon = self._canonical_photo_filename(vname, f"vista_{idx}.png")
@@ -3240,12 +3294,25 @@ class AIPromptServiceV8(AIPromptServiceV7):
           - Verifica pureza >= 95% en el borde exterior 5% (#FFFFFF) y reintenta con hoja de mosaico
             puro si algún modelo filtrara baldosas al fondo.
         """
+        from services.observability import classify_error, log_event, observe_call, safe_error_text
+
         if not primary_bytes:
             return None, "Falta la imagen base para generar la fotografía."
 
         key = self.get_api_key(api_key)
         client = self.get_client(key) if key else None
         last_err_msg = ""
+
+        if client and time.time() < self._img_quota_exhausted_until:
+            log_event(
+                "v8.image_gen.quota_cooldown_skip",
+                service="ai_prompt_service_v8",
+                operation="generate_catalog_photo",
+                level="warning",
+                status="cooldown_skip",
+                error_class="quota_429",
+                meta={"cooldown_remaining_s": round(self._img_quota_exhausted_until - time.time(), 1)},
+            )
 
         if client and time.time() >= self._img_quota_exhausted_until:
             try:
@@ -3270,7 +3337,16 @@ class AIPromptServiceV8(AIPromptServiceV7):
                             texture_scale_factor=eff_tsf,
                             calibration_label=cal_lbls["cal_es_desc"],
                         )
-                    except Exception:
+                    except Exception as exc_art:
+                        log_event(
+                            "v8.image_gen.conditioning_canvas_failed",
+                            service="ai_prompt_service_v8",
+                            operation="generate_catalog_photo",
+                            level="warning",
+                            status="degraded",
+                            error_class=classify_error(exc_art),
+                            meta={"error": safe_error_text(exc_art, 220)},
+                        )
                         v8_art = None
 
                 def _assemble_contents(use_mosaic_only_slot: bool = False) -> List[Any]:
@@ -3309,53 +3385,84 @@ class AIPromptServiceV8(AIPromptServiceV7):
                     try:
                         for retry_idx in (0, 1):
                             contents_img = _assemble_contents(use_mosaic_only_slot=(retry_idx == 1))
-                            resp = client.models.generate_content(
+                            with observe_call(
+                                "ai_prompt_service_v8",
+                                "generate_catalog_photo",
                                 model=m,
-                                contents=contents_img,
-                                config=types.GenerateContentConfig(
-                                    response_modalities=["IMAGE", "TEXT"],
-                                ),
-                            )
-                            raw_out: Optional[bytes] = None
-                            for cand in getattr(resp, "candidates", None) or []:
-                                content_obj = getattr(cand, "content", None)
-                                for part in getattr(content_obj, "parts", None) or []:
-                                    inl = getattr(part, "inline_data", None)
-                                    data_val = getattr(inl, "data", None) if inl is not None else None
-                                    if data_val:
-                                        raw_out = base64.b64decode(data_val) if isinstance(data_val, str) else bytes(data_val)
+                                attempt=retry_idx + 1,
+                                meta={"border_retry_pass": retry_idx == 1, "pure_white_border": pure_white_border},
+                            ) as obs:
+                                resp = client.models.generate_content(
+                                    model=m,
+                                    contents=contents_img,
+                                    config=types.GenerateContentConfig(
+                                        response_modalities=["IMAGE", "TEXT"],
+                                    ),
+                                )
+                                raw_out: Optional[bytes] = None
+                                for cand in getattr(resp, "candidates", None) or []:
+                                    content_obj = getattr(cand, "content", None)
+                                    for part in getattr(content_obj, "parts", None) or []:
+                                        inl = getattr(part, "inline_data", None)
+                                        data_val = getattr(inl, "data", None) if inl is not None else None
+                                        if data_val:
+                                            raw_out = base64.b64decode(data_val) if isinstance(data_val, str) else bytes(data_val)
+                                            break
+                                    if raw_out:
                                         break
-                                if raw_out:
+                                if not raw_out:
+                                    obs["status"] = "degraded"
+                                    obs["meta"]["empty_image"] = True
                                     break
-                            if not raw_out:
-                                break
-                            formatted = self.format_image_2054_white(
-                                raw_out,
-                                target_px=2054,
-                                pure_white_border=pure_white_border,
-                            )
-                            purity = (
-                                self._compute_white_border_purity(formatted["png"], border_frac=0.05)
-                                if pure_white_border
-                                else 1.0
-                            )
-                            formatted["model"] = m
-                            formatted["is_fallback"] = False
-                            formatted["border_white_purity"] = round(purity, 4)
-                            if purity > best_purity:
-                                best_formatted = formatted
-                                best_purity = purity
-                            if (not pure_white_border) or purity >= 0.95 or v8_art is None:
-                                return formatted, None
-                            if retry_idx == 1 and best_formatted is not None:
-                                return best_formatted, None
+                                formatted = self.format_image_2054_white(
+                                    raw_out,
+                                    target_px=2054,
+                                    pure_white_border=pure_white_border,
+                                )
+                                purity = (
+                                    self._compute_white_border_purity(formatted["png"], border_frac=0.05)
+                                    if pure_white_border
+                                    else 1.0
+                                )
+                                formatted["model"] = m
+                                formatted["is_fallback"] = False
+                                formatted["border_white_purity"] = round(purity, 4)
+                                obs["meta"]["border_white_purity"] = formatted["border_white_purity"]
+                                if purity > best_purity:
+                                    best_formatted = formatted
+                                    best_purity = purity
+                                if (not pure_white_border) or purity >= 0.95 or v8_art is None:
+                                    return formatted, None
+                                if retry_idx == 1 and best_formatted is not None:
+                                    return best_formatted, None
+                                obs["status"] = "retry"
+                                log_event(
+                                    "v8.image_gen.white_border_retry",
+                                    service="ai_prompt_service_v8",
+                                    operation="generate_catalog_photo",
+                                    level="warning",
+                                    status="retry",
+                                    model=m,
+                                    attempt=retry_idx + 1,
+                                    meta={"border_white_purity": formatted["border_white_purity"]},
+                                )
                         if best_formatted is not None:
                             return best_formatted, None
                     except Exception as e:
                         err_up = str(e).upper()
+                        err_cls = classify_error(e)
                         last_err_msg = self.format_gemini_error(e)
-                        print(f"[AIPromptServiceV8] Aviso generación de imagen ({m}): {e}")
                         if any(tok in err_up for tok in ("LEAKED", "API_KEY_INVALID", "API KEY NOT VALID", "401", "403")):
+                            log_event(
+                                "v8.image_gen.auth_aborted",
+                                service="ai_prompt_service_v8",
+                                operation="generate_catalog_photo",
+                                level="error",
+                                status="error",
+                                model=m,
+                                error_class="auth_401_403",
+                                meta={"error": safe_error_text(e, 220)},
+                            )
                             try:
                                 from services.gemini_runtime import mark_key_rejected
                                 mark_key_rejected(key)
@@ -3363,18 +3470,66 @@ class AIPromptServiceV8(AIPromptServiceV7):
                                 pass
                             break
                         if best_formatted is not None:
+                            log_event(
+                                "v8.image_gen.model_failed",
+                                service="ai_prompt_service_v8",
+                                operation="generate_catalog_photo",
+                                level="warning",
+                                status="degraded",
+                                model=m,
+                                error_class=err_cls,
+                                meta={"error": safe_error_text(e, 220), "returned_best_purity": round(best_purity, 4)},
+                            )
                             return best_formatted, None
                         if any(tok in err_up for tok in ("429", "RESOURCE_EXHAUSTED", "QUOTA")):
                             quota_errors += 1
+                            log_event(
+                                "v8.image_gen.model_failed",
+                                service="ai_prompt_service_v8",
+                                operation="generate_catalog_photo",
+                                level="warning",
+                                status="degraded",
+                                model=m,
+                                error_class="quota_429",
+                                meta={"error": safe_error_text(e, 220), "quota_errors": quota_errors},
+                            )
                             continue
+                        log_event(
+                            "v8.image_gen.model_failed",
+                            service="ai_prompt_service_v8",
+                            operation="generate_catalog_photo",
+                            level="warning",
+                            status="degraded",
+                            model=m,
+                            error_class=err_cls,
+                            meta={"error": safe_error_text(e, 220)},
+                        )
                         continue
 
                 if best_formatted is not None:
                     return best_formatted, None
                 if attempted_models > 0 and quota_errors == attempted_models:
                     self._img_quota_exhausted_until = time.time() + 300.0
+                    log_event(
+                        "v8.image_gen.quota_cooldown_triggered",
+                        service="ai_prompt_service_v8",
+                        operation="generate_catalog_photo",
+                        level="warning",
+                        status="degraded",
+                        error_class="quota_429",
+                        meta={"cooldown_s": 300, "attempted_models": attempted_models},
+                    )
             except Exception as e_outer:
                 last_err_msg = self.format_gemini_error(e_outer)
+                log_event(
+                    "v8.image_gen.outer_failed",
+                    service="ai_prompt_service_v8",
+                    operation="generate_catalog_photo",
+                    level="error",
+                    status="error",
+                    error_class=classify_error(e_outer),
+                    meta={"error": safe_error_text(e_outer, 220)},
+                )
 
         if allow_flux_fallback:
             return super().generate_catalog_photo(

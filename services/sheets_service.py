@@ -276,8 +276,17 @@ class SheetsService:
         return self.ensure_connected()
 
     def _init_service(self):
+        from services.observability import classify_error, log_event, observe_call, safe_error_text
+
         if build is None:
             self.connection_status = "Librerías Google API no disponibles"
+            log_event(
+                "sheets.init.sdk_unavailable",
+                service="sheets_service",
+                operation="_init_service",
+                level="warning",
+                status="degraded",
+            )
             return
 
         # 1. Priorizar OAuth (Principal para Drive y Sheets, evita construir clientes SA descartados)
@@ -296,21 +305,29 @@ class SheetsService:
 
         if oauth_json and UserCredentials is not None:
             try:
-                from google.auth.transport.requests import Request as GoogleAuthRequest
-                user_info = json.loads(oauth_json)
-                user_creds = UserCredentials.from_authorized_user_info(
-                    user_info, scopes=self.scopes
-                )
-                if not user_creds.valid:
-                    user_creds.refresh(GoogleAuthRequest())
-                self._active_creds = user_creds
-                self.drive_service = self._build_client("drive", "v3", user_creds)
-                self.service = self._build_client("sheets", "v4", user_creds)
-                self.connection_status = "Conectado OAuth (kevin.reyna@grupoanipa.com)"
-                print("[SheetsService] Conectado exitosamente con OAuth de kevin.reyna@grupoanipa.com")
+                with observe_call("sheets_service", "init_oauth", meta={"auth_mode": "oauth"}):
+                    from google.auth.transport.requests import Request as GoogleAuthRequest
+                    user_info = json.loads(oauth_json)
+                    user_creds = UserCredentials.from_authorized_user_info(
+                        user_info, scopes=self.scopes
+                    )
+                    if not user_creds.valid:
+                        user_creds.refresh(GoogleAuthRequest())
+                    self._active_creds = user_creds
+                    self.drive_service = self._build_client("drive", "v3", user_creds)
+                    self.service = self._build_client("sheets", "v4", user_creds)
+                    self.connection_status = "Conectado OAuth (kevin.reyna@grupoanipa.com)"
                 return
             except Exception as e:
-                print(f"[SheetsService] OAuth fallo, intentando respaldo SA: {e}")
+                log_event(
+                    "sheets.init.oauth_fallback_to_sa",
+                    service="sheets_service",
+                    operation="_init_service",
+                    level="warning",
+                    status="fallback",
+                    error_class=classify_error(e),
+                    meta={"auth_mode": "oauth", "error": safe_error_text(e, 220)},
+                )
 
         # 2. Cargar Service Account de respaldo si OAuth falla
         sa_creds = None
@@ -320,20 +337,29 @@ class SheetsService:
             env_creds = base64.b64decode("ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAiYW50aWdyYXZpdHktaW50ZWdyYWNpb24iLAogICJwcml2YXRlX2tleV9pZCI6ICIzZjk2ODBmYTA5NzdmNTc3M2QwOTk2YmY1ZjEwYTlhYmY3NmJmMGMyIiwKICAicHJpdmF0ZV9rZXkiOiAiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tXG5NSUlFdmdJQkFEQU5CZ2txaGtpRzl3MEJBUUVGQUFTQ0JLZ3dnZ1NrQWdFQUFvSUJBUUR5Zmp1ZW9aQVRpa3BLXG5xRHJyYy9lTkdXckFmallEQmJiMGNtc3lGTmJzbDZtMDRidUx4ZTJnSWlBOHR2R1dZN3d4cWRyQVZLNldsT0lHXG54Vkd4RTc4S213eFhVT1lLelpUVkZkb1I3dStaK2RiK01DSHNGNy9oMXc5aEpFRWRWQzEvZDNKdm1nU1VsbC9DXG5pOFhmVUk4SElPRTRmaEtjczlRKzBGNm9HZWxDQU9Ed2NzUnZYMkZjcVFqRVN6RTZKL2hLZ00ySENXSWgvV2g5XG5XbCtKc2w4dlZrdjlRNkNWWkk5Q1czaCs2anVuT2Z3TU9KZGRPODFtN1ltUlc2OEN5M1E2RGFub2drRU9KUHF6XG54NXFzSGU4TkNLaG9PL1RIMmJORU9NU2FVSjBzSUEvWG5yaGRPQU5hVEY4RFo2eDlFa3QzcEVpbWhhcWhnRWorXG44d2hyM0I1dkFnTUJBQUVDZ2dFQUFiak1MRXNkaWR1eUt6Vm1kU0g2VUtuMkNnVnlReW83UzJwWTNGN1I4TG4rXG5ya2lnVnN1R3lPM3kwYWI2QzhDd2k4Uk54OWV5RjZ2SEhJV2dCYWp3dkI3bXVlTzJHTDdUck1yUWtxb3JVUE01XG5iR0EySHBob1NuZTkwMjM0K1QvN3NtL3d3OTMyTGFaKzE3aE5wU3pMNkZleGYyMW9tdHBrVTMvYmF4RW9DTW5jXG5qand2a1kxUlp6SGF4L0w5T3dyckNkdjZpVlpkMlo3SVJ0S0JHYzdwalpaU0lidFcvNlpzaWhES1g5TVhYc2tXXG5yU3JRR2xGdnlUSmpHVVV0NXMzU3Z5czlvNHRGc1FnWHo0RFpVRkgrSmlWdy9raHMwY3dFOEtRN3pma1R1NVB5XG5rVTh6NnRUSkNqWVdkL0x6d05jTmJVWFFlYmR1OXFnc0k1K2RHekdkZVFLQmdRRDlIRVFYdU9YTk9xd3poNFRPXG5JbzRSQWdhK1lZQytwdVlFYjRzZ1cxN1dsRUhTemJRbHhyVkhjYTcrdElVYjQ1dmhzTmVsR1hoZWpVVUE5NndYXG5Zb2JTUDdVOGZISmsvcUNXSDI5cEExcWRVV0pNMVRyKzdKTWIxZDYyeW1yQ1ZVM1QrN292ZHh5NGxBYnF3aGxSXG5vSUJkNUpkSFhMUk1xeTBpOUVlNzJSZVU5d0tCZ1FEMVF1L2ZnY1A4bTd4VFhHcERBc1dyNmg5akJjSk1MVXVOXG5JeHdIdVBLMkI2UFFxaGcydDIwTGJSUWdmYUl5a3pyb0hjK2JVRkRWZmJ1MElVc2tIRzVmejYzWEg1RDN3THZFXG5LdjBEeWVwazh5bG5vY2lzcGM2SlBHNTZKbFMvUDRUYzBxQzA0NjFDNnViUVlROVZnNWo0MUgvcjBSNGdmdjR3XG5mUDVIaUIxOFNRS0JnR25FZUFmWnNkMnkyT2FuaUsyQzd3N1lZKzBHWFlCTnlleXNsOXlya2RQbEhDUjA1UVNzXG5KbkIyWndQMGQzTVNCNytsNEZjVGI2TkRNVVNZT29lREdvZWRLNlRjOUFpVUJwTDFDOTg4RVkrUHhKNEt0SjUyXG5TWHJtUWl6c0pQU1VKUE9pUzBrdVl3Z1dnMVZ5U3BZN2xhaW1yemlZMnBiM0tPTmtaTjF3ZUZROUFvR0JBSXk0XG5KUzBXSlQ3d2svTTRXUGV0eFlESHljNWs1WUFUbFArYm4xK0c3Q3NvNHdLOE5UeGZyYjhhakt1L3FhcGU4ek51XG50MGtqb2QxOFVKQWZjaDk3K0pBY2RsK3hpdG03eVgvYU1tVlVHcHBsTWVKMTNzL0FLbXB2TSt2OXhpNGM0YnhaXG5WVCswU2hyVThDMnJJc01yeUQ4c25XRE9FUDBRSUFQdUUyOHpWOGVSQW9HQkFMaTdDNWlaejFpUDFKbzVpZ0RpXG44bHAvRDNGM01LN2JneS9QZUpkN1JBLzg4WGxaMHRSUmFRdDNFdVdkdFRlbVlyOEV1Q1lRYnBOOFRCd28yQms0XG50bE5xUkVZY1lXSG9ob1p2ZHVqZjdlSTVucyt6UTlsb0JpNFc1SGdZLzE5RkNqZGFtcUljUWphVmY2b04wZU5SXG4xdnQvUWp6RFk0YUdqV2RBRllpN294V3Rcbi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS1cbiIsCiAgImNsaWVudF9lbWFpbCI6ICJwcm95ZWN0by0xQGFudGlncmF2aXR5LWludGVncmFjaW9uLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAiY2xpZW50X2lkIjogIjEwMTE2MjUwNjA0MzM3OTc2OTgyNiIsCiAgImF1dGhfdXJpIjogImh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwKICAidG9rZW5fdXJpIjogImh0dHBzOi8vb2F1dGgyLmdvb2dsZWFwaXMuY29tL3Rva2VuIiwKICAiYXV0aF9wcm92aWRlcl94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL29hdXRoMi92MS9jZXJ0cyIsCiAgImNsaWVudF94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3JvYm90L3YxL21ldGFkYXRhL3g1MDkvcHJveWVjdG8tMSU0MGFudGlncmF2aXR5LWludGVncmFjaW9uLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAidW5pdmVyc2VfZG9tYWluIjogImdvb2dsZWFwaXMuY29tIgp9Cg==").decode('utf-8')
         if env_creds and service_account is not None:
             try:
-                cred_dict = json.loads(env_creds) if isinstance(env_creds, str) else env_creds
-                if "private_key" in cred_dict and isinstance(cred_dict["private_key"], str):
-                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
-                self.client_email = cred_dict.get("client_email", "")
-                sa_creds = service_account.Credentials.from_service_account_info(
-                    cred_dict, scopes=self.scopes
-                )
-                self._active_creds = sa_creds
-                self.service = self._build_client("sheets", "v4", sa_creds)
-                self.drive_service = self._build_client("drive", "v3", sa_creds)
-                self.connection_status = f"Conectado SA ({self.client_email})"
+                with observe_call("sheets_service", "init_service_account", meta={"auth_mode": "service_account"}):
+                    cred_dict = json.loads(env_creds) if isinstance(env_creds, str) else env_creds
+                    if "private_key" in cred_dict and isinstance(cred_dict["private_key"], str):
+                        cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                    self.client_email = cred_dict.get("client_email", "")
+                    sa_creds = service_account.Credentials.from_service_account_info(
+                        cred_dict, scopes=self.scopes
+                    )
+                    self._active_creds = sa_creds
+                    self.service = self._build_client("sheets", "v4", sa_creds)
+                    self.drive_service = self._build_client("drive", "v3", sa_creds)
+                    self.connection_status = f"Conectado SA ({self.client_email})"
             except Exception as e:
-                self.sa_error = str(e)
-                print(f"[SheetsService] Error Service Account: {e}")
+                self.sa_error = safe_error_text(e, 500)
+                log_event(
+                    "sheets.init.sa_failed",
+                    service="sheets_service",
+                    operation="_init_service",
+                    level="error",
+                    status="error",
+                    error_class=classify_error(e),
+                    meta={"auth_mode": "service_account", "error": safe_error_text(e, 220)},
+                )
 
     def _load_disk_catalog_cache(self) -> None:
         try:
@@ -630,6 +656,8 @@ class SheetsService:
 
     def get_drive_file_bytes(self, drive_id: str, raise_on_error: bool = False) -> Optional[bytes]:
         """Descarga el contenido binario de una imagen directamente desde Google Drive API autenticada (caché LRU acotado en MB)."""
+        from services.observability import classify_error, log_event, observe_call, safe_error_text
+
         if not drive_id:
             if raise_on_error:
                 raise RuntimeError("Google Drive no está conectado o falta el ID del archivo.")
@@ -643,40 +671,52 @@ class SheetsService:
                 raise RuntimeError("Google Drive no está conectado o falta el ID del archivo.")
             return None
         try:
-            data: Optional[bytes] = None
-            try:
-                data = self._stream_drive_media_http(drive_id)
-            except RuntimeError:
-                raise
-            except Exception:
-                data = None
+            with observe_call("sheets_service", "get_drive_file_bytes") as obs:
+                data: Optional[bytes] = None
+                try:
+                    data = self._stream_drive_media_http(drive_id)
+                except RuntimeError:
+                    raise
+                except Exception:
+                    data = None
 
-            if not data:
-                with self._drive_api_lock:
-                    request = self.drive_service.files().get_media(fileId=drive_id, supportsAllDrives=True)
-                    raw = request.execute()
-                    if isinstance(raw, (bytes, bytearray)) and raw:
-                        if len(raw) > MAX_DRIVE_DOWNLOAD_BYTES:
-                            raise RuntimeError(
-                                f"La foto supera el límite seguro de memoria ({MAX_DRIVE_DOWNLOAD_BYTES // (1024 * 1024)} MB)."
-                            )
-                        data = bytes(raw)
-                    elif MediaIoBaseDownload is not None:
-                        fh = io.BytesIO()
-                        downloader = MediaIoBaseDownload(fh, request, chunksize=512 * 1024)
-                        done = False
-                        while not done:
-                            _, done = downloader.next_chunk()
-                            if fh.tell() > MAX_DRIVE_DOWNLOAD_BYTES:
+                if not data:
+                    with self._drive_api_lock:
+                        request = self.drive_service.files().get_media(fileId=drive_id, supportsAllDrives=True)
+                        raw = request.execute()
+                        if isinstance(raw, (bytes, bytearray)) and raw:
+                            if len(raw) > MAX_DRIVE_DOWNLOAD_BYTES:
                                 raise RuntimeError(
                                     f"La foto supera el límite seguro de memoria ({MAX_DRIVE_DOWNLOAD_BYTES // (1024 * 1024)} MB)."
                                 )
-                        data = fh.getvalue()
-            if data:
-                self._drive_file_bytes_cache[drive_id] = data
-            return data
+                            data = bytes(raw)
+                        elif MediaIoBaseDownload is not None:
+                            fh = io.BytesIO()
+                            downloader = MediaIoBaseDownload(fh, request, chunksize=512 * 1024)
+                            done = False
+                            while not done:
+                                _, done = downloader.next_chunk()
+                                if fh.tell() > MAX_DRIVE_DOWNLOAD_BYTES:
+                                    raise RuntimeError(
+                                        f"La foto supera el límite seguro de memoria ({MAX_DRIVE_DOWNLOAD_BYTES // (1024 * 1024)} MB)."
+                                    )
+                            data = fh.getvalue()
+                if data:
+                    self._drive_file_bytes_cache[drive_id] = data
+                    obs["meta"]["bytes"] = len(data)
+                else:
+                    obs["status"] = "degraded"
+                return data
         except Exception as e:
-            print(f"[SheetsService] Error descargando archivo de Drive {drive_id}: {e}")
+            log_event(
+                "sheets.drive_download.failed",
+                service="sheets_service",
+                operation="get_drive_file_bytes",
+                level="warning",
+                status="error",
+                error_class=classify_error(e),
+                meta={"error": safe_error_text(e, 220)},
+            )
             if raise_on_error:
                 raise RuntimeError(f"Falló la descarga autenticada de Drive: {e}") from e
             return None
@@ -698,6 +738,8 @@ class SheetsService:
 
     def ensure_public_read_permission(self, file_id: str) -> tuple[bool, str]:
         """Garantiza permiso 'Cualquiera con el enlace (lector)' en Drive (con supportsAllDrives=True y lock)."""
+        from services.observability import classify_error, log_event, observe_call, safe_error_text
+
         clean_id = str(file_id or "").strip()
         if not clean_id:
             return False, "ID de archivo vacío"
@@ -707,18 +749,27 @@ class SheetsService:
 
         create_err = ""
         try:
-            with self._drive_api_lock:
-                self.drive_service.permissions().create(
-                    fileId=clean_id,
-                    body={"role": "reader", "type": "anyone"},
-                    supportsAllDrives=True,
-                ).execute()
+            with observe_call("sheets_service", "ensure_public_read_permission"):
+                with self._drive_api_lock:
+                    self.drive_service.permissions().create(
+                        fileId=clean_id,
+                        body={"role": "reader", "type": "anyone"},
+                        supportsAllDrives=True,
+                    ).execute()
             status = (True, "Cualquiera con el enlace (lector)")
             self._last_permission_status[clean_id] = status
             return status
         except Exception as exc:
             create_err = str(exc)
-            print(f"[SheetsService] permissions().create(anyone) falló en {clean_id}: {exc}")
+            log_event(
+                "sheets.permission.create_failed",
+                service="sheets_service",
+                operation="ensure_public_read_permission",
+                level="warning",
+                status="fallback",
+                error_class=classify_error(exc),
+                meta={"error": safe_error_text(exc, 220)},
+            )
 
         # Verificar si ya tenía permiso público heredado o previo
         try:
@@ -733,10 +784,18 @@ class SheetsService:
                     status = (True, "Cualquiera con el enlace (lector)")
                     self._last_permission_status[clean_id] = status
                     return status
-        except Exception:
-            pass
+        except Exception as exc_list:
+            log_event(
+                "sheets.permission.list_failed",
+                service="sheets_service",
+                operation="ensure_public_read_permission",
+                level="warning",
+                status="error",
+                error_class=classify_error(exc_list),
+                meta={"error": safe_error_text(exc_list, 220)},
+            )
 
-        status = (False, f"No se pudo hacer público ({create_err[:120]})")
+        status = (False, f"No se pudo hacer público ({safe_error_text(create_err, 120)})")
         self._last_permission_status[clean_id] = status
         return status
 
@@ -1147,49 +1206,61 @@ class SheetsService:
         mime_type: Optional[str] = None,
     ) -> Optional[str]:
         """Sube cualquier archivo (imagen o documento) a una carpeta de Google Drive e invalida cachés al instante."""
+        from services.observability import classify_error, log_event, observe_call, safe_error_text
+
         if not data or not folder_id:
             return None
         self.ensure_connected()
         if not self.drive_service:
             return None
         try:
-            clean_name = str(filename or "archivo").strip() or "archivo"
-            mime = (mime_type or "").strip() or self.guess_mime_type(clean_name, default="application/octet-stream")
-            media_cls = MediaIoBaseUpload
-            if media_cls is None:
-                try:
-                    from googleapiclient.http import MediaIoBaseUpload as _mcls
-                    media_cls = _mcls
-                except Exception:
-                    media_cls = None
-            media = media_cls(io.BytesIO(data), mimetype=mime, resumable=True) if media_cls is not None else io.BytesIO(data)
-            file_metadata = {
-                "name": clean_name,
-                "parents": [folder_id],
-            }
-            with self._drive_api_lock:
-                uploaded = self.drive_service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields="id, name, webViewLink",
-                    supportsAllDrives=True,
-                ).execute()
-            file_id = uploaded.get("id")
-            if file_id:
-                self._invalidate_drive_catalog_caches()
-                self.ensure_public_read_permission(file_id)
-                link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
-                stem = os.path.splitext(clean_name)[0].strip().upper()
-                if self._drive_catalog is not None:
-                    self._drive_catalog[clean_name.upper()] = link
-                    self._drive_catalog[stem] = link
-                if self._fn_catalog is not None:
-                    self._fn_catalog[clean_name.upper()] = link
-                    self._fn_catalog[stem] = link
-                return link
-            return uploaded.get("webViewLink")
+            with observe_call("sheets_service", "upload_file_bytes_to_drive", meta={"bytes": len(data)}) as obs:
+                clean_name = str(filename or "archivo").strip() or "archivo"
+                mime = (mime_type or "").strip() or self.guess_mime_type(clean_name, default="application/octet-stream")
+                obs["meta"]["mime_type"] = mime
+                media_cls = MediaIoBaseUpload
+                if media_cls is None:
+                    try:
+                        from googleapiclient.http import MediaIoBaseUpload as _mcls
+                        media_cls = _mcls
+                    except Exception:
+                        media_cls = None
+                media = media_cls(io.BytesIO(data), mimetype=mime, resumable=True) if media_cls is not None else io.BytesIO(data)
+                file_metadata = {
+                    "name": clean_name,
+                    "parents": [folder_id],
+                }
+                with self._drive_api_lock:
+                    uploaded = self.drive_service.files().create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields="id, name, webViewLink",
+                        supportsAllDrives=True,
+                    ).execute()
+                file_id = uploaded.get("id")
+                if file_id:
+                    self._invalidate_drive_catalog_caches()
+                    self.ensure_public_read_permission(file_id)
+                    link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+                    stem = os.path.splitext(clean_name)[0].strip().upper()
+                    if self._drive_catalog is not None:
+                        self._drive_catalog[clean_name.upper()] = link
+                        self._drive_catalog[stem] = link
+                    if self._fn_catalog is not None:
+                        self._fn_catalog[clean_name.upper()] = link
+                        self._fn_catalog[stem] = link
+                    return link
+                return uploaded.get("webViewLink")
         except Exception as e:
-            print(f"[SheetsService] Error subiendo archivo a Google Drive ({filename}): {e}")
+            log_event(
+                "sheets.drive_upload.failed",
+                service="sheets_service",
+                operation="upload_file_bytes_to_drive",
+                level="error",
+                status="error",
+                error_class=classify_error(e),
+                meta={"error": safe_error_text(e, 220)},
+            )
             return None
 
     def upload_image_bytes_to_drive(self, file_bytes: bytes, filename: str, folder_id: str) -> Optional[str]:
@@ -1353,9 +1424,12 @@ class SheetsService:
         ttl: int = 1800,
     ) -> Dict[str, List[Dict[str, str]]]:
         """Escanea múltiples carpetas raíz de Google Drive simultáneamente en un solo BFS por lotes (con soporte a accesos directos)."""
+        from services.observability import classify_error, log_event, observe_call, safe_error_text
+
         now = time.time()
         results: Dict[str, List[Dict[str, str]]] = {}
         pending_roots: Dict[str, str] = {}
+        cache_hits = 0
 
         for key, fid in folder_map.items():
             if not fid:
@@ -1372,128 +1446,158 @@ class SheetsService:
                             break
             if cached and (now - cached[0]) < ttl:
                 results[key] = list(cached[1])
+                cache_hits += 1
             else:
                 pending_roots[key] = fid
                 results[key] = []
 
         if not pending_roots:
+            log_event(
+                "sheets.drive_bfs.cache_hit",
+                service="sheets_service",
+                operation="get_multiple_drive_folders_files",
+                level="info",
+                status="ok",
+                meta={"roots": len(folder_map), "cache_hits": cache_hits},
+            )
             return results
 
         self.ensure_connected()
         if not self.drive_service:
             return results
 
-        image_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff", ".gif", ".jfif", ".avif")
-        folder_mime = "application/vnd.google-apps.folder"
-        shortcut_mime = "application/vnd.google-apps.shortcut"
-        collected: Dict[str, List[Dict[str, str]]] = {k: [] for k in pending_roots}
-        had_error = False
+        with observe_call(
+            "sheets_service",
+            "get_multiple_drive_folders_files",
+            meta={"pending_roots": len(pending_roots), "cache_hits": cache_hits},
+        ) as obs:
+            image_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tiff", ".gif", ".jfif", ".avif")
+            folder_mime = "application/vnd.google-apps.folder"
+            shortcut_mime = "application/vnd.google-apps.shortcut"
+            collected: Dict[str, List[Dict[str, str]]] = {k: [] for k in pending_roots}
+            had_error = False
+            api_calls = 0
 
-        # Mapa parent_folder_id -> Lista de (root_key, subcarpeta_label)
-        current_level: Dict[str, List[tuple]] = {}
-        visited_folders = set()
-        subfolders_by_root: Dict[str, List[str]] = {r_fid: [r_fid] for r_fid in pending_roots.values()}
-        for r_key, r_fid in pending_roots.items():
-            current_level.setdefault(r_fid, []).append((r_key, ""))
-            visited_folders.add(r_fid)
+            # Mapa parent_folder_id -> Lista de (root_key, subcarpeta_label)
+            current_level: Dict[str, List[tuple]] = {}
+            visited_folders = set()
+            subfolders_by_root: Dict[str, List[str]] = {r_fid: [r_fid] for r_fid in pending_roots.values()}
+            for r_key, r_fid in pending_roots.items():
+                current_level.setdefault(r_fid, []).append((r_key, ""))
+                visited_folders.add(r_fid)
 
-        depth = 0
-        while current_level and depth <= max_depth:
-            parent_ids = list(current_level.keys())
-            next_level: Dict[str, List[tuple]] = {}
-            for start in range(0, len(parent_ids), 25):
-                batch_ids = parent_ids[start:start + 25]
-                parent_clause = " or ".join(f"'{pid}' in parents" for pid in batch_ids)
-                query = f"({parent_clause}) and trashed = false"
-                page_token = None
-                try:
-                    while True:
-                        with self._drive_api_lock:
-                            res = self.drive_service.files().list(
-                                q=query,
-                                fields="nextPageToken,files(id,name,mimeType,parents,thumbnailLink,shortcutDetails)",
-                                pageSize=1000,
-                                pageToken=page_token,
-                                supportsAllDrives=True,
-                                includeItemsFromAllDrives=True,
-                            ).execute()
-                        for f in res.get("files", []):
-                            f_id = f.get("id", "")
-                            name = f.get("name", "")
-                            mime_type = f.get("mimeType", "")
-                            if not f_id or not name or name.startswith("."):
-                                continue
-                            parents = f.get("parents") or []
-                            matched_owners: List[tuple] = []
-                            for p in parents:
-                                if p in current_level:
-                                    matched_owners.extend(current_level[p])
-                            if not matched_owners:
-                                continue
-                            eff_id = f_id
-                            eff_mime = mime_type
-                            if mime_type == shortcut_mime:
-                                sc = f.get("shortcutDetails") or {}
-                                target_id = sc.get("targetId", "")
-                                target_mime = sc.get("targetMimeType", "")
-                                if target_id:
-                                    eff_id = target_id
-                                if target_mime:
-                                    eff_mime = target_mime
+            depth = 0
+            while current_level and depth <= max_depth:
+                parent_ids = list(current_level.keys())
+                next_level: Dict[str, List[tuple]] = {}
+                for start in range(0, len(parent_ids), 25):
+                    batch_ids = parent_ids[start:start + 25]
+                    parent_clause = " or ".join(f"'{pid}' in parents" for pid in batch_ids)
+                    query = f"({parent_clause}) and trashed = false"
+                    page_token = None
+                    try:
+                        while True:
+                            api_calls += 1
+                            with self._drive_api_lock:
+                                res = self.drive_service.files().list(
+                                    q=query,
+                                    fields="nextPageToken,files(id,name,mimeType,parents,thumbnailLink,shortcutDetails)",
+                                    pageSize=1000,
+                                    pageToken=page_token,
+                                    supportsAllDrives=True,
+                                    includeItemsFromAllDrives=True,
+                                ).execute()
+                            for f in res.get("files", []):
+                                f_id = f.get("id", "")
+                                name = f.get("name", "")
+                                mime_type = f.get("mimeType", "")
+                                if not f_id or not name or name.startswith("."):
+                                    continue
+                                parents = f.get("parents") or []
+                                matched_owners: List[tuple] = []
+                                for p in parents:
+                                    if p in current_level:
+                                        matched_owners.extend(current_level[p])
+                                if not matched_owners:
+                                    continue
+                                eff_id = f_id
+                                eff_mime = mime_type
+                                if mime_type == shortcut_mime:
+                                    sc = f.get("shortcutDetails") or {}
+                                    target_id = sc.get("targetId", "")
+                                    target_mime = sc.get("targetMimeType", "")
+                                    if target_id:
+                                        eff_id = target_id
+                                    if target_mime:
+                                        eff_mime = target_mime
 
-                            if eff_mime == folder_mime:
-                                for r_key, _ in matched_owners:
-                                    r_fid_owner = pending_roots.get(r_key)
-                                    if r_fid_owner and eff_id not in subfolders_by_root.setdefault(r_fid_owner, [r_fid_owner]):
-                                        subfolders_by_root[r_fid_owner].append(eff_id)
-                                if recursive and depth < max_depth and eff_id not in visited_folders:
-                                    visited_folders.add(eff_id)
+                                if eff_mime == folder_mime:
                                     for r_key, _ in matched_owners:
-                                        next_level.setdefault(eff_id, []).append((r_key, name))
-                            elif eff_mime.startswith("image/") or name.lower().endswith(image_exts):
-                                clean_name = os.path.splitext(name)[0].strip()
-                                t_link = f.get("thumbnailLink", "")
-                                for r_key, sub_label in matched_owners:
-                                    collected[r_key].append({
-                                        "id": eff_id,
-                                        "name": clean_name,
-                                        "filename": name,
-                                        "link": f"https://drive.google.com/file/d/{eff_id}/view",
-                                        "subcarpeta": sub_label,
-                                        "mimeType": eff_mime,
-                                        "thumbnailLink": t_link,
-                                    })
-                        page_token = res.get("nextPageToken")
-                        if not page_token:
-                            break
-                except Exception as e:
-                    had_error = True
-                    print(f"[SheetsService] Error escaneando lote multi-carpeta Drive: {e}")
-            if not recursive:
-                break
-            current_level = next_level
-            depth += 1
+                                        r_fid_owner = pending_roots.get(r_key)
+                                        if r_fid_owner and eff_id not in subfolders_by_root.setdefault(r_fid_owner, [r_fid_owner]):
+                                            subfolders_by_root[r_fid_owner].append(eff_id)
+                                    if recursive and depth < max_depth and eff_id not in visited_folders:
+                                        visited_folders.add(eff_id)
+                                        for r_key, _ in matched_owners:
+                                            next_level.setdefault(eff_id, []).append((r_key, name))
+                                elif eff_mime.startswith("image/") or name.lower().endswith(image_exts):
+                                    clean_name = os.path.splitext(name)[0].strip()
+                                    t_link = f.get("thumbnailLink", "")
+                                    for r_key, sub_label in matched_owners:
+                                        collected[r_key].append({
+                                            "id": eff_id,
+                                            "name": clean_name,
+                                            "filename": name,
+                                            "link": f"https://drive.google.com/file/d/{eff_id}/view",
+                                            "subcarpeta": sub_label,
+                                            "mimeType": eff_mime,
+                                            "thumbnailLink": t_link,
+                                        })
+                            page_token = res.get("nextPageToken")
+                            if not page_token:
+                                break
+                    except Exception as e:
+                        had_error = True
+                        obs["status"] = "degraded"
+                        obs["error_class"] = classify_error(e)
+                        log_event(
+                            "sheets.drive_bfs.batch_failed",
+                            service="sheets_service",
+                            operation="get_multiple_drive_folders_files",
+                            level="warning",
+                            status="degraded",
+                            error_class=classify_error(e),
+                            meta={"depth": depth, "batch_size": len(batch_ids), "error": safe_error_text(e, 220)},
+                        )
+                if not recursive:
+                    break
+                current_level = next_level
+                depth += 1
 
-        ts = time.time()
-        saved_any = False
-        for r_key, r_fid in pending_roots.items():
-            seen_ids = set()
-            unique_files = []
-            for f in collected.get(r_key, []):
-                if f["id"] not in seen_ids:
-                    seen_ids.add(f["id"])
-                    unique_files.append(f)
-            unique_files.sort(key=lambda x: x["name"].upper())
-            if unique_files or not had_error:
-                cache_key = f"{r_fid}:{int(recursive)}:{max_depth}"
-                self._drive_folder_tree_cache[cache_key] = (ts, unique_files)
-                self._drive_subfolder_ids_cache[r_fid] = (ts, list(subfolders_by_root.get(r_fid, [r_fid])))
-                saved_any = True
-            results[r_key] = list(unique_files)
+            ts = time.time()
+            saved_any = False
+            total_files = 0
+            for r_key, r_fid in pending_roots.items():
+                seen_ids = set()
+                unique_files = []
+                for f in collected.get(r_key, []):
+                    if f["id"] not in seen_ids:
+                        seen_ids.add(f["id"])
+                        unique_files.append(f)
+                unique_files.sort(key=lambda x: x["name"].upper())
+                if unique_files or not had_error:
+                    cache_key = f"{r_fid}:{int(recursive)}:{max_depth}"
+                    self._drive_folder_tree_cache[cache_key] = (ts, unique_files)
+                    self._drive_subfolder_ids_cache[r_fid] = (ts, list(subfolders_by_root.get(r_fid, [r_fid])))
+                    saved_any = True
+                results[r_key] = list(unique_files)
+                total_files += len(unique_files)
 
-        if saved_any:
-            self._save_disk_catalog_cache()
-        return results
+            obs["meta"]["api_calls"] = api_calls
+            obs["meta"]["files_found"] = total_files
+            if saved_any:
+                self._save_disk_catalog_cache()
+            return results
 
     def get_drive_folder_files(
         self,
@@ -2037,6 +2141,8 @@ class SheetsService:
 
     def _load_sku_catalog_cache(self):
         """Carga en memoria el catálogo de SKUs de DATOS GENERAL directamente en vivo desde Google Sheets y actualiza el caché de respaldo."""
+        from services.observability import classify_error, log_event, observe_call, safe_error_text
+
         self._sku_sync_attempted_at = time.time()
         self.ensure_connected()
         disk_cache = Path(__file__).resolve().parent.parent / "sku_catalog_cache.json"
@@ -2044,69 +2150,80 @@ class SheetsService:
         # 1. INTENTAR SIEMPRE EN VIVO CON GOOGLE SHEETS
         if self.service:
             try:
-                tab_dg = self.get_datos_general_tab_name()
-                res = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id,
-                    range=f"'{tab_dg}'!A4:AJ",
-                    valueRenderOption="FORMATTED_VALUE"
-                ).execute()
-                rows = res.get("values", [])
-                live_cache = {}
-                for r in rows:
-                    row_sku = str(r[0]).strip() if len(r) > 0 and r[0] else ""
-                    if not row_sku:
-                        continue
-                    row_sku_upper = row_sku.upper()
-                    nombre = str(r[1]).strip() if len(r) > 1 and r[1] else ""
-                    frente = str(r[2]).strip() if len(r) > 2 and r[2] else ""
-                    fondo = str(r[3]).strip() if len(r) > 3 and r[3] else ""
-                    alto = str(r[4]).strip() if len(r) > 4 and r[4] else ""
-                    diam = str(r[5]).strip() if len(r) > 5 and r[5] else ""
-                    piso = str(r[6]).strip() if len(r) > 6 and r[6] else ""
-                    cat = str(r[15]).strip() if len(r) > 15 and r[15] else ""
-                    tipo = str(r[24]).strip() if len(r) > 24 and r[24] else ""
+                with observe_call("sheets_service", "load_sku_catalog_live") as obs:
+                    tab_dg = self.get_datos_general_tab_name()
+                    res = self.service.spreadsheets().values().get(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f"'{tab_dg}'!A4:AJ",
+                        valueRenderOption="FORMATTED_VALUE"
+                    ).execute()
+                    rows = res.get("values", [])
+                    live_cache = {}
+                    for r in rows:
+                        row_sku = str(r[0]).strip() if len(r) > 0 and r[0] else ""
+                        if not row_sku:
+                            continue
+                        row_sku_upper = row_sku.upper()
+                        nombre = str(r[1]).strip() if len(r) > 1 and r[1] else ""
+                        frente = str(r[2]).strip() if len(r) > 2 and r[2] else ""
+                        fondo = str(r[3]).strip() if len(r) > 3 and r[3] else ""
+                        alto = str(r[4]).strip() if len(r) > 4 and r[4] else ""
+                        diam = str(r[5]).strip() if len(r) > 5 and r[5] else ""
+                        piso = str(r[6]).strip() if len(r) > 6 and r[6] else ""
+                        cat = str(r[15]).strip() if len(r) > 15 and r[15] else ""
+                        tipo = str(r[24]).strip() if len(r) > 24 and r[24] else ""
 
-                    tipo_final = tipo if tipo else cat
+                        tipo_final = tipo if tipo else cat
 
-                    medidas_parts = []
-                    if diam and diam.upper() not in ["N/A", "NONE", "0", "N/D", "-"]:
-                        medidas_parts.append(f"D. {diam} cm")
-                    else:
-                        if frente: medidas_parts.append(f"{frente} cm frente")
-                        if fondo: medidas_parts.append(f"{fondo} cm fondo")
-                    if alto: medidas_parts.append(f"{alto} cm alto")
-                    if piso and piso.upper() not in ["N/A", "NONE", "0", "-"]:
-                        medidas_parts.append(f"{piso} cm piso al asiento")
-                    medidas_str = " x ".join(medidas_parts) if medidas_parts else ""
+                        medidas_parts = []
+                        if diam and diam.upper() not in ["N/A", "NONE", "0", "N/D", "-"]:
+                            medidas_parts.append(f"D. {diam} cm")
+                        else:
+                            if frente: medidas_parts.append(f"{frente} cm frente")
+                            if fondo: medidas_parts.append(f"{fondo} cm fondo")
+                        if alto: medidas_parts.append(f"{alto} cm alto")
+                        if piso and piso.upper() not in ["N/A", "NONE", "0", "-"]:
+                            medidas_parts.append(f"{piso} cm piso al asiento")
+                        medidas_str = " x ".join(medidas_parts) if medidas_parts else ""
 
-                    foto_mueble = str(r[26]).strip() if len(r) > 26 and r[26] else ""
-                    foto_tela = str(r[29]).strip() if len(r) > 29 and r[29] else ""
-                    foto_madera = str(r[32]).strip() if len(r) > 32 and r[32] else ""
-                    foto_swatch = str(r[35]).strip() if len(r) > 35 and r[35] else ""
+                        foto_mueble = str(r[26]).strip() if len(r) > 26 and r[26] else ""
+                        foto_tela = str(r[29]).strip() if len(r) > 29 and r[29] else ""
+                        foto_madera = str(r[32]).strip() if len(r) > 32 and r[32] else ""
+                        foto_swatch = str(r[35]).strip() if len(r) > 35 and r[35] else ""
 
-                    live_cache[row_sku_upper] = {
-                        "sku": row_sku,
-                        "nombre": nombre,
-                        "tipo_mueble": tipo_final,
-                        "medidas": medidas_str,
-                        "foto_mueble_nom": foto_mueble,
-                        "foto_tela_nom": foto_tela,
-                        "foto_madera_nom": foto_madera,
-                        "foto_swatch_nom": foto_swatch
-                    }
+                        live_cache[row_sku_upper] = {
+                            "sku": row_sku,
+                            "nombre": nombre,
+                            "tipo_mueble": tipo_final,
+                            "medidas": medidas_str,
+                            "foto_mueble_nom": foto_mueble,
+                            "foto_tela_nom": foto_tela,
+                            "foto_madera_nom": foto_madera,
+                            "foto_swatch_nom": foto_swatch
+                        }
 
-                # La lectura en vivo fue exitosa: el caché refleja EXACTAMENTE la hoja
-                # (si se borró un SKU en Sheets, desaparece también aquí)
-                self._sku_catalog_cache = live_cache
-                self._sku_catalog_last_sync = time.time()
-                try:
-                    with open(disk_cache, "w", encoding="utf-8") as cf:
-                        json.dump(live_cache, cf, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
+                    # La lectura en vivo fue exitosa: el caché refleja EXACTAMENTE la hoja
+                    # (si se borró un SKU en Sheets, desaparece también aquí)
+                    self._sku_catalog_cache = live_cache
+                    self._sku_catalog_last_sync = time.time()
+                    obs["meta"]["source"] = "sheets_live"
+                    obs["meta"]["sku_count"] = len(live_cache)
+                    try:
+                        with open(disk_cache, "w", encoding="utf-8") as cf:
+                            json.dump(live_cache, cf, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
                 return
             except Exception as e:
-                print(f"[SheetsService] Advertencia sincronizando en vivo con Google Sheets: {e}")
+                log_event(
+                    "sheets.sku_catalog.live_sync_failed",
+                    service="sheets_service",
+                    operation="_load_sku_catalog_cache",
+                    level="warning",
+                    status="fallback",
+                    error_class=classify_error(e),
+                    meta={"error": safe_error_text(e, 220)},
+                )
 
         # 2. FALLBACK A DISCO SI NO HAY CONEXIÓN A INTERNET O FALLÓ LA API
         if disk_cache.exists():
@@ -2116,6 +2233,14 @@ class SheetsService:
                     loaded = json.load(cf)
                     if loaded and isinstance(loaded, dict):
                         self._sku_catalog_cache = loaded
+                        log_event(
+                            "sheets.sku_catalog.disk_fallback",
+                            service="sheets_service",
+                            operation="_load_sku_catalog_cache",
+                            level="warning",
+                            status="fallback",
+                            meta={"source": "sku_catalog_cache.json", "sku_count": len(loaded)},
+                        )
                         return
             except Exception:
                 pass
@@ -2398,14 +2523,17 @@ class SheetsService:
             updates.append({"range": f"'{tab_dg}'!A{fila}", "values": [[sku_val]]})
 
         if updates:
+            from services.observability import observe_call
+
             body = {
                 "valueInputOption": "USER_ENTERED",
                 "data": updates
             }
-            self.service.spreadsheets().values().batchUpdate(
-                spreadsheetId=self.spreadsheet_id,
-                body=body
-            ).execute()
+            with observe_call("sheets_service", "update_product_row_safe", meta={"cells": len(updates)}):
+                self.service.spreadsheets().values().batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body=body
+                ).execute()
 
         # 10. Actualizar caché local
         try:
@@ -2447,12 +2575,24 @@ class SheetsService:
                 with open(cache_path, "w", encoding="utf-8") as f:
                     json.dump(prods, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"[SheetsService] Error actualizando cache local: {e}")
+            from services.observability import classify_error, log_event, safe_error_text
+
+            log_event(
+                "sheets.local_cache_update.failed",
+                service="sheets_service",
+                operation="update_product_row_safe",
+                level="warning",
+                status="degraded",
+                error_class=classify_error(e),
+                meta={"error": safe_error_text(e, 220)},
+            )
 
         return True
 
     def register_many_in_fotos_normalizadas(self, photos: List[Dict[str, str]]) -> bool:
         """Registra varios nombres y enlaces con una lectura y una escritura por lote."""
+        from services.observability import classify_error, log_event, observe_call, safe_error_text
+
         self.ensure_connected()
         if not self.service:
             return False
@@ -2490,73 +2630,83 @@ class SheetsService:
             return True
 
         try:
-            tab_fn = self.get_fotos_normalizadas_tab_name()
-            response = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"'{tab_fn}'!A4:P"
-            ).execute()
-            rows = response.get("values", [])
-            existing_rows = {photo_type: {} for photo_type in columns}
-            last_rows = {photo_type: 3 for photo_type in columns}
+            with observe_call("sheets_service", "register_many_in_fotos_normalizadas", meta={"photos": len(prepared)}) as obs:
+                tab_fn = self.get_fotos_normalizadas_tab_name()
+                response = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"'{tab_fn}'!A4:P"
+                ).execute()
+                rows = response.get("values", [])
+                existing_rows = {photo_type: {} for photo_type in columns}
+                last_rows = {photo_type: 3 for photo_type in columns}
 
-            for offset, row in enumerate(rows):
-                sheet_row = offset + 4
-                for photo_type, (_, _, name_index, link_index) in columns.items():
-                    name = row[name_index].strip() if len(row) > name_index and row[name_index] else ""
-                    link = row[link_index].strip() if len(row) > link_index and row[link_index] else ""
-                    if name:
-                        last_rows[photo_type] = sheet_row
-                        existing_rows[photo_type].setdefault(name.upper(), (sheet_row, link))
+                for offset, row in enumerate(rows):
+                    sheet_row = offset + 4
+                    for photo_type, (_, _, name_index, link_index) in columns.items():
+                        name = row[name_index].strip() if len(row) > name_index and row[name_index] else ""
+                        link = row[link_index].strip() if len(row) > link_index and row[link_index] else ""
+                        if name:
+                            last_rows[photo_type] = sheet_row
+                            existing_rows[photo_type].setdefault(name.upper(), (sheet_row, link))
 
-            updates = []
-            for photo_type, name, name_key, link in prepared:
-                name_col, link_col, _, _ = columns[photo_type]
-                existing = existing_rows[photo_type].get(name_key)
-                if existing:
-                    row_number, current_link = existing
-                    if link and link.strip() != (current_link or "").strip():
+                updates = []
+                for photo_type, name, name_key, link in prepared:
+                    name_col, link_col, _, _ = columns[photo_type]
+                    existing = existing_rows[photo_type].get(name_key)
+                    if existing:
+                        row_number, current_link = existing
+                        if link and link.strip() != (current_link or "").strip():
+                            updates.append({
+                                "range": f"'{tab_fn}'!{link_col}{row_number}",
+                                "values": [[link]],
+                            })
+                            existing_rows[photo_type][name_key] = (row_number, link)
+                        continue
+
+                    row_number = last_rows[photo_type] + 1
+                    last_rows[photo_type] = row_number
+                    existing_rows[photo_type][name_key] = (row_number, link)
+                    updates.append({
+                        "range": f"'{tab_fn}'!{name_col}{row_number}",
+                        "values": [[name]],
+                    })
+                    if link:
                         updates.append({
                             "range": f"'{tab_fn}'!{link_col}{row_number}",
                             "values": [[link]],
                         })
-                        existing_rows[photo_type][name_key] = (row_number, link)
-                    continue
 
-                row_number = last_rows[photo_type] + 1
-                last_rows[photo_type] = row_number
-                existing_rows[photo_type][name_key] = (row_number, link)
-                updates.append({
-                    "range": f"'{tab_fn}'!{name_col}{row_number}",
-                    "values": [[name]],
-                })
-                if link:
-                    updates.append({
-                        "range": f"'{tab_fn}'!{link_col}{row_number}",
-                        "values": [[link]],
-                    })
+                obs["meta"]["updates"] = len(updates)
+                if updates:
+                    self.service.spreadsheets().values().batchUpdate(
+                        spreadsheetId=self.spreadsheet_id,
+                        body={"valueInputOption": "USER_ENTERED", "data": updates},
+                    ).execute()
 
-            if updates:
-                self.service.spreadsheets().values().batchUpdate(
-                    spreadsheetId=self.spreadsheet_id,
-                    body={"valueInputOption": "USER_ENTERED", "data": updates},
-                ).execute()
-
-            for photo_type, name, name_key, link in prepared:
-                if not link:
-                    continue
-                clean_name = os.path.splitext(name_key)[0].strip()
-                if self._fn_catalogs_by_type is not None:
-                    catalog = self._fn_catalogs_by_type.get(photo_type)
-                    if catalog is not None:
-                        catalog[name_key] = link
-                        catalog[clean_name] = link
-                if self._fn_catalog is not None:
-                    self._fn_catalog[name_key] = link
-                    self._fn_catalog[clean_name] = link
-                self._drive_link_cache[f"{photo_type}:{clean_name}"] = link
-            return True
+                for photo_type, name, name_key, link in prepared:
+                    if not link:
+                        continue
+                    clean_name = os.path.splitext(name_key)[0].strip()
+                    if self._fn_catalogs_by_type is not None:
+                        catalog = self._fn_catalogs_by_type.get(photo_type)
+                        if catalog is not None:
+                            catalog[name_key] = link
+                            catalog[clean_name] = link
+                    if self._fn_catalog is not None:
+                        self._fn_catalog[name_key] = link
+                        self._fn_catalog[clean_name] = link
+                    self._drive_link_cache[f"{photo_type}:{clean_name}"] = link
+                return True
         except Exception as error:
-            print(f"[SheetsService] Error registrando fotos normalizadas: {error}")
+            log_event(
+                "sheets.fotos_normalizadas.register_failed",
+                service="sheets_service",
+                operation="register_many_in_fotos_normalizadas",
+                level="error",
+                status="error",
+                error_class=classify_error(error),
+                meta={"error": safe_error_text(error, 220)},
+            )
             return False
 
     def register_in_fotos_normalizadas(self, foto_tipo: str, nombre_foto: str, link_foto: str = "") -> bool:

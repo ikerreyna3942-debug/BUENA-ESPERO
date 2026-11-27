@@ -296,9 +296,12 @@ def main():
         )
     with c_ver:
         if active_app == "🤖 Prompts + IA":
+            _valid_versions = ["🤖 V8", "V7", "V6", "V1"]
+            if st.session_state.get("sidebar_version") not in _valid_versions:
+                st.session_state["sidebar_version"] = "🤖 V8"
             ver_raw = st.selectbox(
                 "Versión:",
-                ["🤖 V8", "V7", "V6", "V5", "V4", "V3", "V2", "V1"],
+                _valid_versions,
                 index=0,
                 key="sidebar_version",
                 label_visibility="collapsed",
@@ -324,33 +327,28 @@ def main():
             unsafe_allow_html=True,
         )
 
+    from services.observability import set_run_context
+
     if active_app == "🚀 Alta de Fotos":
+        set_run_context("alta_fotos")
         from modules.alta_fotos_hub import render_alta_fotos_hub
         render_alta_fotos_hub()
         return
 
     if version == "V8":
+        set_run_context("studio_v8")
         from modules.prompt_studio_v8 import render_prompt_studio_v8
         render_prompt_studio_v8()
     elif version == "V7":
+        set_run_context("studio_v7")
         from modules.prompt_studio_v7 import render_prompt_studio_v7
         render_prompt_studio_v7()
     elif version == "V6":
+        set_run_context("studio_v6")
         from modules.prompt_studio_unified import render_prompt_studio_unified
         render_prompt_studio_unified()
-    elif version == "V5":
-        from modules.prompt_studio_v5 import render_prompt_studio_v5
-        render_prompt_studio_v5()
-    elif version == "V4":
-        from modules.prompt_studio_v4 import render_prompt_studio_v4
-        render_prompt_studio_v4()
-    elif version == "V3":
-        from modules.prompt_studio_v3 import render_prompt_studio_v3
-        render_prompt_studio_v3()
-    elif version == "V2":
-        from modules.prompt_studio_v2 import render_prompt_studio_v2
-        render_prompt_studio_v2()
     else:
+        set_run_context("studio_v1")
         from modules.prompt_studio_v1 import render_prompt_studio
         render_prompt_studio()
 
